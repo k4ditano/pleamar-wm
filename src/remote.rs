@@ -1229,6 +1229,9 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     let mut sending_kbps = 0.0f64;
     let (mut sent_bytes, mut sent_since) = (0usize, Instant::now());
     let mut low_since: Option<Instant> = None;
+    // The frames' channel: since when too much waits in it, and when it last did.
+    let mut high_since: Option<Instant> = None;
+    let mut channel_trouble = Instant::now();
     let mut used = Instant::now();
     // (`PLEAMAR_REMOTE_UNUSED`, in seconds: to check it without waiting.)
     let unused = std::env::var("PLEAMAR_REMOTE_UNUSED").ok().and_then(|v| v.parse().ok()).map_or(UNUSED, Duration::from_secs);
@@ -1324,6 +1327,37 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     }
                 }
                 PeerEvent::Estimate(_) => {}
+                PeerEvent::Backlog(bytes) if direct => {
+                    // The frames' own channel: what waits in it says how the
+                    // way is doing. Over 300 ms of it for a while: less (it
+                    // would only grow, and every frame come later). Little
+                    // waiting while it carries plenty, or calm for long: more.
+                    let ms = bytes as f64 * 8.0 / flow.kbps as f64;
+                    if ms > 300.0 {
+                        let since = *high_since.get_or_insert_with(Instant::now);
+                        if since.elapsed() >= Duration::from_millis(500) && last_rate.elapsed() > Duration::from_secs(1) {
+                            high_since = None;
+                            flow.kbps = (flow.kbps * 7 / 10).max(KBPS_MIN);
+                            flow.fps = if flow.kbps < KBPS_MIN * 3 / 2 { 30 } else { 60 };
+                            last_rate = Instant::now();
+                            channel_trouble = Instant::now();
+                            retune = true;
+                            println!("remote · {ms:.0} ms waiting on the frames' channel: {} kb/s, {} a second", flow.kbps, flow.fps);
+                        }
+                    } else {
+                        high_since = None;
+                        let busy = sending_kbps > flow.kbps as f64 * 0.4;
+                        let calm = channel_trouble.elapsed() > Duration::from_secs(if busy { 4 } else { 15 });
+                        if ms < 60.0 && calm && flow.kbps < KBPS_MAX && last_rate.elapsed() > Duration::from_secs(2) {
+                            flow.kbps = (flow.kbps * 5 / 4).min(KBPS_MAX);
+                            flow.fps = 60;
+                            last_rate = Instant::now();
+                            retune = true;
+                            println!("remote · the frames' channel keeps up: {} kb/s, {} a second", flow.kbps, flow.fps);
+                        }
+                    }
+                }
+                PeerEvent::Backlog(_) => {}
                 PeerEvent::Gone => gone = true,
             }
         }
@@ -1466,9 +1500,12 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     }
                     ("hello", _) => {
                         video_wanted = rest.trim() == "video";
-                        if video_wanted {
+                        // (Already started for the phone a moment ago: that one goes on.)
+                        if video_wanted && video.is_none() {
                             restart = true;
                             why = "the page says hello".into();
+                        } else if video_wanted {
+                            whole = true;
                         } else {
                             pending = Some(true);
                         }

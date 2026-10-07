@@ -46,8 +46,11 @@ pub enum PeerEvent {
     Line(String),
     /// The page lost too much: it needs a whole frame.
     WholeFrame,
-    /// How much the way takes now, in kb/s.
+    /// How much the way takes now, in kb/s (measured on the video track).
     Estimate(u32),
+    /// Bytes waiting on the frames' own channel (every 250 ms while it carries
+    /// them): the video track's estimate measures nothing then.
+    Backlog(usize),
     Gone,
 }
 
@@ -125,7 +128,14 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     let mut broken = false;
     // Frames dropped because the channel was full, told every few seconds.
     let (mut dropped, mut told) = (0u32, Instant::now());
+    let mut backlog_told = Instant::now();
     while alive.load(Ordering::Relaxed) {
+        if let Some(id) = channel.filter(|_| backlog_told.elapsed() >= Duration::from_millis(250)) {
+            backlog_told = Instant::now();
+            if let Some(mut ch) = rtc.channel(id) {
+                let _ = events.send(PeerEvent::Backlog(ch.buffered_amount()));
+            }
+        }
         // The frames that came, onto the way.
         while let Ok((key, data)) = frames.try_recv() {
             if let Some(id) = channel {
@@ -195,6 +205,9 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                     Event::ChannelOpen(id, label) if label == "video" => {
                         println!("remote · the frames go by their own channel (decoded by the page)");
                         channel = Some(id);
+                        // Nothing to find out on the video track any more: no
+                        // padding sent on it to probe the way.
+                        rtc.bwe().set_desired_bitrate(str0m::bwe::Bitrate::kbps(0));
                         broken = true;
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
@@ -202,6 +215,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                     Event::ChannelClose(id) if channel == Some(id) => {
                         println!("remote · the page closed the frames' channel: by the video track now");
                         channel = None;
+                        rtc.bwe().set_desired_bitrate(str0m::bwe::Bitrate::kbps(20_000));
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
                     Event::ChannelData(d) if !d.binary => {
@@ -213,7 +227,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                         last_keyframe_ask = Instant::now();
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
-                    Event::EgressBitrateEstimate(str0m::bwe::BweKind::Twcc { estimate, .. }) => {
+                    Event::EgressBitrateEstimate(str0m::bwe::BweKind::Twcc { estimate, .. }) if channel.is_none() => {
                         let _ = events.send(PeerEvent::Estimate((estimate.as_u64() / 1000) as u32));
                     }
                     _ => {}

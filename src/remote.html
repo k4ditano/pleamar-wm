@@ -258,7 +258,9 @@
         vdc = pc.createDataChannel('video', { ordered: true });
         vdc.binaryType = 'arraybuffer';
         vdc.onmessage = (e) => piece(e.data);
-        vdc.onclose = () => plog('the frames\' channel closed');
+        // Closed under it (the system, with the page hidden): the video track
+        // instead, which home sends on from then.
+        vdc.onclose = () => { plog('the frames\' channel closed'); if (dcVideo) { dcVideo = false; pieces = null; vdc = null; showDirect(isDirect); } };
         vdc.onerror = (e) => plog('the frames\' channel: ' + (e.error ? e.error.message : 'error'));
       }
       pc.ontrack = (e) => {
@@ -457,7 +459,10 @@
       },
       error: (e) => {
         seen.errors++;
-        plog('decoder error: ' + e.name + ': ' + e.message + ' · ' + seen.codec + ' · ' + (dcVideo ? 'channel' : isDirect ? 'track' : 'socket'));
+        plog('decoder error: ' + e.name + ': ' + e.message + ' · ' + seen.codec + ' · ' + (dcVideo ? 'channel' : isDirect ? 'track' : 'socket') + (document.hidden ? ' · hidden' : ''));
+        // Hidden, the system takes the decoder away (not the frames' fault):
+        // a new one with the next whole frame, when it is seen again.
+        if (document.hidden) { decoder = null; return; }
         if (dcVideo && ++vdcErrors >= 2) { trackInstead(); return; }
         toast('Video: ' + e.message); newDecoder(); hand('full');
       },
