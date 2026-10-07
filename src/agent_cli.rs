@@ -375,7 +375,9 @@ fn go(args: &[String]) -> Result<(), String> {
                 let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
                 format!("{dir}/pleamar-agent-look.png")
             });
-            let shot = std::process::Command::new("grim").arg("-").output().map_err(|e| format!("grim: {e} (install grim to look)"))?;
+            // At scale 1: grim's own default is the greatest monitor's scale
+            // (a HiDPI monitor, the phone's), and the boxes are the desktop's units.
+            let shot = std::process::Command::new("grim").args(["-s", "1", "-"]).output().map_err(|e| format!("grim: {e} (install grim to look)"))?;
             if !shot.status.success() {
                 return Err(format!("grim: {}", String::from_utf8_lossy(&shot.stderr).trim()));
             }
