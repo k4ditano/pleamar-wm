@@ -495,7 +495,8 @@ Qt (Dolphin), Firefox, Vulkan, OpenGL and GTK on X11 all do.
   between them (a swipe up from the bottom) and the dock's programs to open
   more. Taps, holds (the right button), scrolling that glides on, pinch to
   zoom, the phone's keyboard. Meanwhile the real monitors are covered; a
-  key or the mouse at the desk brings the session back, locked; given back
+  key typed or the mouse at the desk (not a headset's volume or a media
+  key) brings the session back, locked; given back
   from the phone (or the phone gone for three minutes), every window
   returns to its monitor and pool. On a tablet the apps get the room they
   have at the desk, and lying down two go side by side, with a line between

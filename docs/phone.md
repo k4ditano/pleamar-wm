@@ -125,7 +125,11 @@ goes a moment), and the page brings it back by itself.
 ## Settings
 
 `session.conf`: `phone lock COMMAND` is what locks the session when it comes
-back to the desk (by default `marea lock`; `phone lock none`, nothing). The
+back to the desk (by default `marea lock`; `phone lock none`, nothing). What
+brings it back is a key typed at the desk (letters, numbers, arrows, Super),
+a mouse button or the mouse moved: not the volume, media or power keys a
+headset or a remote sends by themselves. The session's log says which device
+did it (`session · at the desk:`). The
 page tells it is on a phone or a tablet by itself (an iPad's Safari, which
 says it is a Mac, by its fingers); `?phone=1` or `?phone=0` says so.
 

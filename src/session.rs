@@ -978,9 +978,16 @@ impl State {
         if self.monitors.iter().any(|m| m.crtc.is_none()) {
             use smithay::backend::input::Event;
             let here = |name: String| !name.starts_with("pleamar remote");
+            // A key someone types with, not one a headset, a power button or
+            // a remote sends by itself (volume, media, power, sleep): the
+            // keyboard's own keys, its arrows and pad, and Super.
+            let typed = |code: u32| code < 112 || code == 119 || (125..=127).contains(&code);
             let at_desk = match &event {
-                InputEvent::Keyboard { event } => event.state() == KeyState::Pressed && here(event.device().name().to_owned()),
-                InputEvent::PointerButton { event } => event.state() == ButtonState::Pressed && here(event.device().name().to_owned()),
+                InputEvent::Keyboard { event } => {
+                    let code = event.key_code().raw().saturating_sub(8);
+                    (event.state() == KeyState::Pressed && here(event.device().name().to_owned()) && typed(code)).then(|| format!("key {code} on «{}»", event.device().name()))
+                }
+                InputEvent::PointerButton { event } => (event.state() == ButtonState::Pressed && here(event.device().name().to_owned())).then(|| format!("button {} on «{}»", event.button_code(), event.device().name())),
                 InputEvent::PointerMotion { event } if here(event.device().name().to_owned()) => {
                     // (Still for a second, it starts counting again.)
                     if self.desk_moved_at.elapsed() > Duration::from_secs(1) {
@@ -988,11 +995,12 @@ impl State {
                     }
                     self.desk_moved_at = std::time::Instant::now();
                     self.desk_moved += event.delta_x().abs() + event.delta_y().abs();
-                    self.desk_moved > 60.0
+                    (self.desk_moved > 60.0).then(|| format!("«{}» moved", event.device().name()))
                 }
-                _ => false,
+                _ => None,
             };
-            if at_desk {
+            if let Some(what) = at_desk {
+                println!("session · at the desk: {what}");
                 self.take_back();
                 return;
             }
