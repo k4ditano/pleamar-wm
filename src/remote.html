@@ -250,7 +250,7 @@
       pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });
       dc = pc.createDataChannel('input', { ordered: true });
-      dcVideo = false; pieces = null; vdcErrors = 0;
+      dcVideo = false; pieces = null; vdcErrors = 0; failed = []; seen.decodedHere = 0;
       // Only if it decodes what home makes (H.264 High, as the card makes it).
       const decodes = 'VideoDecoder' in window && await VideoDecoder.isConfigSupported({ codec: 'avc1.640033', optimizeForLatency: true }).then((r) => r.supported, () => false);
       plog('direct way offered · decodes H.264 High here: ' + decodes);
@@ -321,7 +321,7 @@
     const way = dcVideo ? 'the channel' : isDirect ? 'the video track' : 'the socket';
     let line = '';
     if (seen.came || seen.errors) {
-      line = 'decoded ' + seen.out + ' of ' + seen.came + (seen.cut ? ', ' + seen.cut + ' cut short' : '') + (seen.errors ? ', ' + seen.errors + ' errors' : '') + (decoder ? ', ' + decoder.decodeQueueSize + ' waiting' : '');
+      line = 'decoded ' + seen.out + ' of ' + seen.came + (seen.reconf ? ', new parameters ' + seen.reconf + '×' : '') + (seen.cut ? ', ' + seen.cut + ' cut short' : '') + (seen.errors ? ', ' + seen.errors + ' errors' : '') + (decoder ? ', ' + decoder.decodeQueueSize + ' waiting' : '');
     }
     if (isDirect && !dcVideo && pc) {
       try {
@@ -333,7 +333,7 @@
       } catch (_) {}
     }
     if (line) plog('10 s by ' + way + ': ' + line + (net ? ' · ' + net + ' ms there and back' : ''));
-    seen.came = seen.out = seen.cut = seen.errors = 0;
+    seen.came = seen.out = seen.cut = seen.errors = seen.reconf = 0;
   }, 10000);
 
   function connect() {
@@ -445,13 +445,17 @@
   let decoder = null, configured = false, needKey = true;
   // Counted for the log (every 10 s): frames that came, decoded, cut short
   // (a piece missing when a newer one began), decoder errors.
-  const seen = { came: 0, out: 0, cut: 0, errors: 0, codec: '' };
+  const seen = { came: 0, out: 0, cut: 0, errors: 0, codec: '', sps: null, reconf: 0, decodedHere: 0 };
+  // When the decoder failed lately on the channel (more than a few in a while,
+  // and it is let be: the video track instead).
+  let failed = [];
   function newDecoder() {
     if (decoder) { try { decoder.close(); } catch (_) {} }
     configured = false; needKey = true;
     decoder = new VideoDecoder({
       output: (f) => {
         seen.out++;
+        if (dcVideo) seen.decodedHere++;
         // Shown: home measures the way (and this computer) with it (the socket's).
         if (!dcVideo) send('got ' + Math.round(f.timestamp / 1000));
         if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) { canvas.width = f.displayWidth; canvas.height = f.displayHeight; }
@@ -463,10 +467,29 @@
         // Hidden, the system takes the decoder away (not the frames' fault):
         // a new one with the next whole frame, when it is seen again.
         if (document.hidden) { decoder = null; return; }
-        if (dcVideo && ++vdcErrors >= 2) { trackInstead(); return; }
+        // Never decoded one here, or failing again and again: the video track.
+        // Once in a while (it decoded hundreds): a new decoder, a whole frame.
+        const now = performance.now();
+        failed = failed.filter((t) => now - t < 30000);
+        failed.push(now);
+        if (dcVideo && (++vdcErrors >= 2 && seen.decodedHere === 0 || failed.length >= 4)) { trackInstead(); return; }
         toast('Video: ' + e.message); newDecoder(); hand('full');
       },
     });
+  }
+  // The stream's parameters (its SPS NAL), as text to compare: they change
+  // with each new bitrate (home's encoder writes it in them, with a whole
+  // frame), and Safari's decoder fails on frames of the new ones unless it is
+  // configured again.
+  function spsOf(d) {
+    for (let k = 0; k + 4 < d.length; k++) {
+      if (d[k] === 0 && d[k + 1] === 0 && d[k + 2] === 1 && (d[k + 3] & 0x1f) === 7) {
+        let e = k + 4;
+        while (e + 2 < d.length && !(d[e] === 0 && d[e + 1] === 0 && (d[e + 2] === 1 || d[e + 2] === 0))) e++;
+        return Array.prototype.join.call(d.subarray(k + 3, e), ',');
+      }
+    }
+    return null;
   }
   // avc1.PPCCLL from the stream's own parameters (its SPS).
   function codecOf(d) {
@@ -483,6 +506,9 @@
     const key = all[1] === 1, data = all.subarray(6), seq = new DataView(buf).getUint32(2);
     if (needKey && !key) return;
     seen.came++;
+    const sps = key ? spsOf(data) : null;
+    if (configured && sps && sps !== seen.sps) { configured = false; seen.reconf++; }
+    if (sps) seen.sps = sps;
     if (!configured) {
       const codec = codecOf(data) || 'avc1.640028';
       if (codec !== seen.codec) plog('decoder: ' + codec + (codecOf(data) ? '' : ' (no SPS in the first frame)'));

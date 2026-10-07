@@ -1348,8 +1348,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         high_since = None;
                         let busy = sending_kbps > flow.kbps as f64 * 0.4;
                         let calm = channel_trouble.elapsed() > Duration::from_secs(if busy { 4 } else { 15 });
-                        if ms < 60.0 && calm && flow.kbps < KBPS_MAX && last_rate.elapsed() > Duration::from_secs(2) {
-                            flow.kbps = (flow.kbps * 5 / 4).min(KBPS_MAX);
+                        // (In few steps: each new bitrate costs a whole frame, the
+                        // encoder's own doing.)
+                        if ms < 60.0 && calm && flow.kbps < KBPS_MAX && last_rate.elapsed() > Duration::from_secs(3) {
+                            flow.kbps = (flow.kbps * 3 / 2).min(KBPS_MAX);
                             flow.fps = 60;
                             last_rate = Instant::now();
                             retune = true;
