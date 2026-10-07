@@ -214,7 +214,7 @@ struct Encoder {
 
 /// The encoders tried, in order, and what makes each answer at once.
 const ENCODERS: &[(&str, &[(&str, &str)])] = &[
-    ("h264_nvenc", &[("preset", "p1"), ("tune", "ull"), ("zerolatency", "1"), ("delay", "0"), ("rc", "vbr"), ("rc-lookahead", "0"), ("forced-idr", "1"), ("b_ref_mode", "disabled")]),
+    ("h264_nvenc", &[("preset", "p1"), ("tune", "ull"), ("zerolatency", "1"), ("delay", "0"), ("rc", "vbr"), ("rc-lookahead", "0"), ("forced-idr", "1"), ("b_ref_mode", "disabled"), ("level", "5.1")]),
     ("libx264", &[("preset", "ultrafast"), ("tune", "zerolatency"), ("forced-idr", "1")]),
 ];
 
@@ -245,6 +245,9 @@ impl Encoder {
             (*ctx).framerate = ff::AVRational { num: fps as i32, den: 1 };
             (*ctx).pix_fmt = if rgb { ff::AVPixelFormat::AV_PIX_FMT_BGR0 } else { ff::AVPixelFormat::AV_PIX_FMT_YUV420P };
             (*ctx).max_b_frames = 0;
+            // One level whatever the bitrate (it would follow it otherwise, and
+            // a new bitrate would be another stream to the page's decoder).
+            (*ctx).level = 51;
             // A whole frame every ten seconds anyway; the page asks for one when it loses something.
             (*ctx).gop_size = (fps * 10) as i32;
             set_rate(ctx, kbps);

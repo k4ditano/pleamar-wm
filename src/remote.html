@@ -280,10 +280,26 @@
       send('rtc ' + pc.localDescription.sdp);
     } catch (e) { console.warn('direct way', e); plog('direct way failed: ' + e); }
   }
+  // How late the frames come: home stamps each one with its clock ([4, ms:
+  // u32]); the least of (here − there) lately is the way empty, and what is
+  // above it is waiting in line somewhere (a router, the wifi). Told home
+  // every quarter of a second, which sends less when it grows.
+  const late = { buckets: [], worst: 0, at: 0, peak: 0 };
+  function stamp(buf) {
+    const now = performance.now(), d = now - new DataView(buf).getUint32(1);
+    // The least of each second, for the last ten.
+    const b = late.buckets, sec = Math.floor(now / 1000);
+    if (!b.length || b[b.length - 1].sec !== sec) { b.push({ sec, min: d }); if (b.length > 10) b.shift(); }
+    else b[b.length - 1].min = Math.min(b[b.length - 1].min, d);
+    late.worst = Math.max(late.worst, d - Math.min(...b.map((x) => x.min)));
+    late.peak = Math.max(late.peak, late.worst);
+    if (now - late.at > 250) { hand('q ' + Math.round(late.worst)); late.worst = 0; late.at = now; }
+  }
   // A piece of a frame from the channel: [2, whole?, seq: u32, piece: u16,
   // pieces: u16] and its bytes. Whole, it goes to the decoder as the
   // socket's frames do; one left incomplete by a newer one is dropped.
   function piece(buf) {
+    if (new Uint8Array(buf, 0, 1)[0] === 4) return stamp(buf);
     const v = new DataView(buf);
     const seq = v.getUint32(2), k = v.getUint16(6), n = v.getUint16(8);
     if (!dcVideo) { dcVideo = true; plog('the frames come by their channel'); newDecoder(); showDirect(isDirect); }
@@ -332,7 +348,8 @@
         });
       } catch (_) {}
     }
-    if (line) plog('10 s by ' + way + ': ' + line + (net ? ' · ' + net + ' ms there and back' : ''));
+    if (line) plog('10 s by ' + way + ': ' + line + (dcVideo ? ' · waited up to ' + Math.round(late.peak) + ' ms on the way' : '') + (net ? ' · ' + net + ' ms there and back' : ''));
+    late.peak = 0;
     seen.came = seen.out = seen.cut = seen.errors = seen.reconf = 0;
   }, 10000);
 
@@ -473,7 +490,8 @@
         failed = failed.filter((t) => now - t < 30000);
         failed.push(now);
         if (dcVideo && (++vdcErrors >= 2 && seen.decodedHere === 0 || failed.length >= 4)) { trackInstead(); return; }
-        toast('Video: ' + e.message); newDecoder(); hand('full');
+        if (!dcVideo) toast('Video: ' + e.message);
+        newDecoder(); hand('full');
       },
     });
   }
@@ -507,7 +525,9 @@
     if (needKey && !key) return;
     seen.came++;
     const sps = key ? spsOf(data) : null;
-    if (configured && sps && sps !== seen.sps) { configured = false; seen.reconf++; }
+    // New parameters (a new bitrate): a decoder of its own, as at the start
+    // (Safari's, configured again in place, still failed on them).
+    if (configured && sps && sps !== seen.sps) { newDecoder(); needKey = false; seen.reconf++; }
     if (sps) seen.sps = sps;
     if (!configured) {
       const codec = codecOf(data) || 'avc1.640028';

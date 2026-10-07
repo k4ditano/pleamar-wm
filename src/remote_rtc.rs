@@ -146,6 +146,13 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                 let Some(mut ch) = rtc.channel(id) else { continue };
                 let parts = data.len().div_ceil(PIECE).max(1);
                 let mut whole = ch.buffered_amount() < CHANNEL_FULL;
+                // Its time first ([4, ms: u32]): the page sees from them how
+                // long they wait on the way, and tells it back (`q MS`).
+                if whole {
+                    let mut m = vec![4u8];
+                    m.extend_from_slice(&(started.elapsed().as_millis() as u32).to_be_bytes());
+                    whole = ch.write(true, &m).unwrap_or(false);
+                }
                 for (k, piece) in data.chunks(PIECE).enumerate() {
                     if !whole {
                         break;

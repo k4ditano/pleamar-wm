@@ -1232,6 +1232,14 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     // The frames' channel: since when too much waits in it, and when it last did.
     let mut high_since: Option<Instant> = None;
     let mut channel_trouble = Instant::now();
+    // How long the frames wait on the way, as the page measures it (`q`), and
+    // since when it is too long.
+    let (mut waits, mut waits_at, mut waits_since) = (0.0f64, Instant::now() - Duration::from_secs(60), None::<Instant>);
+    // A frame was lost on its way out: none but a whole one may follow (the
+    // others would be decoded against what the page never had).
+    let mut gap = false;
+    // The encoder could not start on the phone's monitor (it was going): again in a moment.
+    let mut retry: Option<Instant> = None;
     let mut used = Instant::now();
     // (`PLEAMAR_REMOTE_UNUSED`, in seconds: to check it without waiting.)
     let unused = std::env::var("PLEAMAR_REMOTE_UNUSED").ok().and_then(|v| v.parse().ok()).map_or(UNUSED, Duration::from_secs);
@@ -1346,11 +1354,15 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         }
                     } else {
                         high_since = None;
+                        // More only while it carries plenty and the frames do not
+                        // wait on the way (a still screen proves nothing: the
+                        // first scroll at a rate the wifi cannot take came late).
                         let busy = sending_kbps > flow.kbps as f64 * 0.4;
-                        let calm = channel_trouble.elapsed() > Duration::from_secs(if busy { 4 } else { 15 });
+                        let quick = waits_at.elapsed() < Duration::from_secs(1) && waits < 25.0;
+                        let calm = channel_trouble.elapsed() > Duration::from_secs(4);
                         // (In few steps: each new bitrate costs a whole frame, the
                         // encoder's own doing.)
-                        if ms < 60.0 && calm && flow.kbps < KBPS_MAX && last_rate.elapsed() > Duration::from_secs(3) {
+                        if ms < 60.0 && busy && quick && calm && flow.kbps < KBPS_MAX && last_rate.elapsed() > Duration::from_secs(3) {
                             flow.kbps = (flow.kbps * 3 / 2).min(KBPS_MAX);
                             flow.fps = 60;
                             last_rate = Instant::now();
@@ -1513,6 +1525,26 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         }
                     }
                     ("got", [seq]) => flow.got(*seq as u32),
+                    // How long the frames wait on the way now (ms over the
+                    // way's own time): over 80 for half a second, less.
+                    ("q", [ms]) if direct => {
+                        waits = *ms;
+                        waits_at = Instant::now();
+                        if waits > 80.0 {
+                            let since = *waits_since.get_or_insert_with(Instant::now);
+                            if since.elapsed() >= Duration::from_millis(500) && last_rate.elapsed() > Duration::from_secs(1) && flow.kbps > KBPS_MIN {
+                                waits_since = None;
+                                flow.kbps = (flow.kbps * 7 / 10).max(KBPS_MIN);
+                                flow.fps = if flow.kbps < KBPS_MIN * 3 / 2 { 30 } else { 60 };
+                                last_rate = Instant::now();
+                                channel_trouble = Instant::now();
+                                retune = true;
+                                println!("remote · frames wait {waits:.0} ms on the way: {} kb/s, {} a second", flow.kbps, flow.fps);
+                            }
+                        } else {
+                            waits_since = None;
+                        }
+                    }
                     // What happens in the page (its errors, its decoder, its way), in this log.
                     ("log", _) => {
                         if page_minute.elapsed() > Duration::from_secs(60) {
@@ -1634,12 +1666,18 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     tally.behind += 1;
                 }
                 whole = true;
+                gap = true;
             }
             // Its monitor went (a phone turned: put up again in its new shape),
             // or it stopped: again, for the monitor there is now.
             if let Some(end) = video.as_mut().and_then(|v| v.child.try_wait().ok().flatten()).filter(|_| video_started.elapsed() > Duration::from_millis(700)) {
                 restart = true;
                 why = format!("the encoder stopped ({end})");
+            }
+            if retry.is_some_and(|t| Instant::now() >= t) && video.is_none() && !restart {
+                retry = None;
+                restart = true;
+                why = "trying again".into();
             }
             // The way there filling up (a slower moment of the network, the
             // buffers of whoever is in between): stop sending until it has
@@ -1691,6 +1729,13 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         video = Some(v);
                         let _ = ws.send(Message::Text(format!("video {monitor}").into()));
                     }
+                    // On the phone, its monitor going or coming (the desk took
+                    // it, it turned): not pictures for good, the video again in
+                    // a moment (or parked, when the desk has it).
+                    Err(e) if on_phone => {
+                        println!("remote · no video for now: {e}");
+                        retry = Some(Instant::now() + Duration::from_secs(1));
+                    }
                     Err(e) => {
                         println!("remote · no video: {e}");
                         // No video here: squares of JPEG, as for an old browser.
@@ -1711,12 +1756,17 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                 tally.keys += key as u32;
                 tally.bytes += data.len();
                 if direct {
+                    if gap && !key {
+                        continue;
+                    }
+                    gap = false;
                     sent_bytes += data.len();
                     if let Some(p) = &peer {
                         if !p.send(key, data) {
                             // The way is full: from a whole frame again.
                             tally.full += 1;
                             whole = true;
+                            gap = true;
                         }
                     }
                     continue;
