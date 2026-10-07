@@ -183,6 +183,11 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                         broken = true;
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
+                    // The page could not decode them: the video track again, from a whole frame.
+                    Event::ChannelClose(id) if channel == Some(id) => {
+                        channel = None;
+                        let _ = events.send(PeerEvent::WholeFrame);
+                    }
                     Event::ChannelData(d) if !d.binary => {
                         if let Ok(line) = String::from_utf8(d.data) {
                             let _ = events.send(PeerEvent::Line(line));

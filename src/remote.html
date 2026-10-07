@@ -219,7 +219,16 @@
   let dc = null, pc = null, isDirect = false;
   // The frames on a channel of their own, decoded here as soon as each is
   // whole (no jitter buffer), when this browser decodes (WebCodecs).
-  let vdc = null, dcVideo = false, pieces = null;
+  let vdc = null, dcVideo = false, pieces = null, vdcErrors = 0;
+  // It did not decode them after all: the channel closed, and the video
+  // track (home sends on it again) shown instead.
+  function trackInstead() {
+    if (!dcVideo) return;
+    dcVideo = false; pieces = null;
+    try { vdc.close(); } catch (_) {}
+    vdc = null;
+    showDirect(isDirect);
+  }
   const hand = (t) => { if (isDirect && dc && dc.readyState === 'open') dc.send(t); else send(t); };
 
   // The direct way: WebRTC, offered by the socket; the picture and the hands
@@ -231,8 +240,10 @@
       pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });
       dc = pc.createDataChannel('input', { ordered: true });
-      dcVideo = false; pieces = null;
-      if ('VideoDecoder' in window) {
+      dcVideo = false; pieces = null; vdcErrors = 0;
+      // Only if it decodes what home makes (H.264 High, as the card makes it).
+      const decodes = 'VideoDecoder' in window && await VideoDecoder.isConfigSupported({ codec: 'avc1.640033', optimizeForLatency: true }).then((r) => r.supported, () => false);
+      if (decodes) {
         vdc = pc.createDataChannel('video', { ordered: true });
         vdc.binaryType = 'arraybuffer';
         vdc.onmessage = (e) => piece(e.data);
@@ -398,7 +409,10 @@
         if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) { canvas.width = f.displayWidth; canvas.height = f.displayHeight; }
         ctx.drawImage(f, 0, 0); f.close(); frames++;
       },
-      error: (e) => { toast('Video: ' + e.message); newDecoder(); hand('full'); },
+      error: (e) => {
+        if (dcVideo && ++vdcErrors >= 2) { trackInstead(); return; }
+        toast('Video: ' + e.message); newDecoder(); hand('full');
+      },
     });
   }
   // avc1.PPCCLL from the stream's own parameters (its SPS).
