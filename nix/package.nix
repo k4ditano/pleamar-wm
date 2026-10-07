@@ -21,6 +21,7 @@
   pam,
   pipewire,
   openssl,
+  ffmpeg,
   grim,
   wf-recorder,
   wl-clipboard,
@@ -60,8 +61,12 @@ rustPlatform.buildRustPackage {
     pipewire
     # `pleamar-wm remote`'s direct way (WebRTC) encrypts with it.
     openssl
+    # …and its video (`pleamar-wm-stream`, built with it): the card's encoder.
+    ffmpeg
   ];
 
+  # The session and the remote's video (`stream`).
+  cargoBuildFlags = [ "--workspace" ];
   doCheck = false;
 
   postInstall = ''

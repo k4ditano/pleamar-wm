@@ -217,6 +217,9 @@
   const send = (t) => { if (ws && ws.readyState === 1) ws.send(t); };
   // The hands by the direct way when it is open (they go straight home).
   let dc = null, pc = null, isDirect = false;
+  // The frames on a channel of their own, decoded here as soon as each is
+  // whole (no jitter buffer), when this browser decodes (WebCodecs).
+  let vdc = null, dcVideo = false, pieces = null;
   const hand = (t) => { if (isDirect && dc && dc.readyState === 'open') dc.send(t); else send(t); };
 
   // The direct way: WebRTC, offered by the socket; the picture and the hands
@@ -228,6 +231,12 @@
       pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });
       dc = pc.createDataChannel('input', { ordered: true });
+      dcVideo = false; pieces = null;
+      if ('VideoDecoder' in window) {
+        vdc = pc.createDataChannel('video', { ordered: true });
+        vdc.binaryType = 'arraybuffer';
+        vdc.onmessage = (e) => piece(e.data);
+      }
       pc.ontrack = (e) => {
         // No waiting to smooth it out: each frame as soon as it is whole.
         try { e.receiver.jitterBufferTarget = 0; } catch (_) {}
@@ -245,12 +254,31 @@
       send('rtc ' + pc.localDescription.sdp);
     } catch (e) { console.warn('direct way', e); }
   }
+  // A piece of a frame from the channel: [2, whole?, seq: u32, piece: u16,
+  // pieces: u16] and its bytes. Whole, it goes to the decoder as the
+  // socket's frames do; one left incomplete by a newer one is dropped.
+  function piece(buf) {
+    const v = new DataView(buf);
+    const seq = v.getUint32(2), k = v.getUint16(6), n = v.getUint16(8);
+    if (!dcVideo) { dcVideo = true; newDecoder(); showDirect(isDirect); }
+    if (!pieces || pieces.seq !== seq) pieces = { seq, n, got: 0, parts: new Array(n), size: 0 };
+    if (!pieces.parts[k]) { pieces.parts[k] = new Uint8Array(buf, 10); pieces.got++; pieces.size += buf.byteLength - 10; }
+    if (pieces.got < pieces.n) return;
+    const whole = new Uint8Array(6 + pieces.size);
+    whole.set(new Uint8Array(buf, 0, 6));
+    let at = 6;
+    for (const p of pieces.parts) { whole.set(p, at); at += p.length; }
+    pieces = null;
+    video(whole.buffer);
+  }
   function showDirect(on) {
     isDirect = on;
-    videoEl.style.display = on ? 'block' : 'none';
-    canvas.style.display = on ? 'none' : '';
-    if (on && 'requestVideoFrameCallback' in videoEl) {
-      const count = () => { frames++; if (isDirect) videoEl.requestVideoFrameCallback(count); };
+    // Its frames on the channel: drawn here, as the socket's.
+    const track = on && !dcVideo;
+    videoEl.style.display = track ? 'block' : 'none';
+    canvas.style.display = track ? 'none' : '';
+    if (track && 'requestVideoFrameCallback' in videoEl) {
+      const count = () => { frames++; if (isDirect && !dcVideo) videoEl.requestVideoFrameCallback(count); };
       videoEl.requestVideoFrameCallback(count);
     }
   }
@@ -365,12 +393,12 @@
     configured = false; needKey = true;
     decoder = new VideoDecoder({
       output: (f) => {
-        // Shown: home measures the way (and this computer) with it.
-        send('got ' + Math.round(f.timestamp / 1000));
+        // Shown: home measures the way (and this computer) with it (the socket's).
+        if (!dcVideo) send('got ' + Math.round(f.timestamp / 1000));
         if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) { canvas.width = f.displayWidth; canvas.height = f.displayHeight; }
         ctx.drawImage(f, 0, 0); f.close(); frames++;
       },
-      error: (e) => { toast('Video: ' + e.message); newDecoder(); send('full'); },
+      error: (e) => { toast('Video: ' + e.message); newDecoder(); hand('full'); },
     });
   }
   // avc1.PPCCLL from the stream's own parameters (its SPS).
@@ -392,7 +420,7 @@
       configured = true;
     }
     // Hopelessly behind: start again from a whole frame (home slows down by itself before this).
-    if (decoder.decodeQueueSize > 40) { newDecoder(); send('full'); return; }
+    if (decoder.decodeQueueSize > 40) { newDecoder(); hand('full'); return; }
     needKey = false;
     decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: seq * 1000, data }));
   }
@@ -428,7 +456,7 @@
   // The pointer: where it is over the picture, as a fraction of it.
   const at = (e) => {
     let r = canvas.getBoundingClientRect();
-    if (isDirect && videoEl.videoWidth) {
+    if (isDirect && !dcVideo && videoEl.videoWidth) {
       // The picture inside the video's box (fitted, with bands around).
       const box = videoEl.getBoundingClientRect();
       const k = Math.min(box.width / videoEl.videoWidth, box.height / videoEl.videoHeight);
@@ -603,14 +631,15 @@
   }
   // Its own pixels, even (the video wants them so), and a scale that stays
   // the same however it is held. A phone: about 440 points across its short
-  // side, a little more room than its own apps. A tablet: a point a little
-  // larger than its own, so the apps have the room they have at the desk
-  // (an iPad: about 750 × 1070) and fingers still find what they press.
+  // side, a little more room than its own apps. A tablet: its own points, at
+  // its own pixel ratio (an iPad: 2): every pixel of an app is one of the
+  // screen. A little larger (2.2) left the programs that only draw at whole
+  // scales (Telegram) drawn at 3 and shrunk, and soft.
   function measure() {
     const dpr = window.devicePixelRatio || 1;
     const w = Math.round(innerWidth * dpr / 2) * 2, h = Math.round(innerHeight * dpr / 2) * 2;
     const scale = TABLET
-      ? Math.min(3.5, Math.max(1, Math.round(dpr * 1.1 * 20) / 20))
+      ? Math.min(3.5, Math.max(1, Math.round(dpr * 20) / 20))
       : Math.min(3.5, Math.max(1.25, Math.round(Math.min(w, h) / 440 * 20) / 20));
     return [w, h, scale.toFixed(2)];
   }

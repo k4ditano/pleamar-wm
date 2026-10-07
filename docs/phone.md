@@ -55,9 +55,11 @@ window manager and the shell are scenes.
 ## A tablet
 
 A tablet (its short side 600 CSS pixels or more: every iPad, Android
-tablets) gets the same session with more room. Its points are a little
-larger than its own (the scale is its pixel ratio × 1.1: an iPad Air is
-about 745 × 1070 points), so the apps have the room they have at the desk.
+tablets) gets the same session with more room. Its points are its own (the
+scale is its pixel ratio: an iPad Air is 820 × 1180 points), so every pixel
+of an app is one of the screen: a larger point (× 1.1 was tried) left the
+programs that only draw at whole scales, like Telegram, drawn at 3 and
+shrunk to 2.2, and soft.
 
 - **Turned on its side** —a tablet or a phone—, the page asks for the new
   size and the phone's monitor takes it where it is: the windows stay on it
@@ -146,6 +148,27 @@ Headless, four windows, three runs (2026-10-07):
 | Asked for → every window on the phone | 188–197 ms |
 | Given back → every window in its monitor and pool | 58–264 ms |
 | The arrival, as it is seen | the deck at once; the app in front opens out of it 1.3 s later |
+
+From a key to its picture (2026-10-07, headless, a tablet's 1640 × 2360,
+a terminal that changes colour with each key; `PLEAMAR_DEBUG_CAPTURE=1` on
+the session and `PLEAMAR_REMOTE_TRACE=1`, `PLEAMAR_STREAM_TRACE=1` on the
+remote say where the time goes):
+
+| | before | now |
+| --- | --- | --- |
+| The key at home → its frame out of the encoder | 220–430 ms after the change (wf-recorder) | 75–130 ms in all |
+| The key on the page → its frame on the page | 450–850 ms | 80–107 ms (median 90) |
+| Frames a second, text scrolling as fast as it comes | ~18 | ~51 |
+| Frames sent with an app still in front | ~16 a second | none |
+
+What did it: the video made by `pleamar-wm-stream` (a monitor's change
+copied, encoded and out at once; two copies asked for at a time; a new
+bitrate or a whole frame without starting again); the monitor's pictures
+read straight from what was put together, into buffers kept, on a thread of
+their own; the phone's monitor on a steady 60 Hz clock; the frames on a
+data channel, decoded by the page (no jitter buffer); and nothing moving
+where it is not seen (the curtain at 20 frames a second, the water behind
+the apps still).
 
 The phone's monitor is painted at the phone's own pixels (1080 × 2344 at
 scale 2.45 on a 393-point-wide phone: about 440 points across), so text is

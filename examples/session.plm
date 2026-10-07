@@ -7859,7 +7859,10 @@ scene Session {
     prop phb.x.2 = 0.35 ~spring(9, 7)
     prop phb.y.2 = 0.85 ~spring(9, 7)
     fact phb.seed = 0
-    every 4s..7s while phone >= 0 {
+    // Only while it is seen (the cards, or no app): behind an app it kept the
+    // phone's monitor put together, read back and encoded, frame after
+    // frame, for a picture that did not change.
+    every 4s..7s while phone >= 0 and ph.home {
         phb.seed = phb.seed + 1
         phb.x.0: 0.1 + 0.5 * random(phb.seed * 3 + 1)
         phb.y.0: 0.1 + 0.4 * random(phb.seed * 3 + 2)
@@ -8275,6 +8278,10 @@ scene Session {
         level: overlay
         screens: each max 4
         open: curtain.shown > 0.001 and screen.index != phone
+        // Nobody is at the desk to watch it: a few frames a second. At the
+        // monitor's own rate (165 Hz) its blurs took most of the card while
+        // the phone's monitor and its encoder were waiting for it.
+        rate: 20
         // (Each copy, its own monitor's: the surface's own measure is one for all of them.)
         let cw.w = pick(screen.index, screen.0.width, screen.1.width, screen.2.width, screen.3.width)
         let cw.h = pick(screen.index, screen.0.height, screen.1.height, screen.2.height, screen.3.height)
@@ -8355,7 +8362,10 @@ scene Session {
         level: overlay
         screens: each max 4
         captures: hidden
-        open: remote.shown > 0.001
+        // Not on the phone's monitor: nobody sits at it, and a surface left out
+        // of its pictures made each of them be drawn again without it,
+        // instead of read straight from what was put together.
+        open: remote.shown > 0.001 and screen.index != phone
         let rm.w = remote_mark.width
         let rm.h = remote_mark.height
         let rm.here = remote.screen == screen.index

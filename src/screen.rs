@@ -589,6 +589,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
     // The two small textures the blur goes back and forth between, kept while their size holds.
     let mut blur_room: Option<[wgpu::Texture; 2]> = None;
     let mut bound: Vec<Bound> = Vec::new();
+    let mut readback = Readback::default();
     let mut round = 0u64;
     // What changed in each of the last times it was put together, and when
     // each of the output's buffers was last put together: each is only put
@@ -648,6 +649,9 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             }
             if st.quit {
                 return;
+            }
+            if capture_debug() {
+                eprintln!("capture · {:.1} {} composing ({} pictures asked)", wall_ms(), st.name, st.captures.len());
             }
             st.dirty = false;
             let mut quads: Vec<(Source, [i32; 4], bool)> = Vec::new();
@@ -723,6 +727,16 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                 !on_change || changed.is_none() || changes.iter().any(|(r, who)| who != owner && p[0] < r[0] + r[2] && p[0] + p[2] > r[0] && p[1] < r[1] + r[3] && p[1] + p[3] > r[1])
             });
             st.captures = waiting;
+            // One picture for each program each time: a recorder that asks for
+            // the next one ahead (so as not to miss a time) gets it the next
+            // time something changes, not this same picture twice.
+            let mut each = std::collections::HashSet::new();
+            let (due, later): (Vec<_>, Vec<_>) = due.into_iter().partition(|c| each.insert(c.3));
+            // (A plain one —not waiting for a change— is due at once: again.)
+            if later.iter().any(|c| !c.2) {
+                st.dirty = true;
+            }
+            st.captures.extend(later);
             // A picture is taken of all of it: put together whole.
             if !due.is_empty() {
                 changed = None;
@@ -1036,9 +1050,17 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
         part(3, &mut parts);
         // The pictures asked for: what was just put together, again, whole,
         // into a texture of its own, and read back.
+        if capture_debug() && !captures.is_empty() {
+            let t = std::time::Instant::now();
+            done.wait(&device, Duration::from_secs(1));
+            eprintln!("capture ·   the putting together took the card {:.1} ms more", t.elapsed().as_secs_f64() * 1000.0);
+        }
         for (id, piece, _, _) in &captures {
-            let pixels = capture(&device, &queue, &pipeline, &groups, &unshared, &bound, size, *piece);
-            layers::tell(ToLayers::Captured { id: *id, pixels });
+            let t = std::time::Instant::now();
+            capture(&device, &queue, &pipeline, &groups, &unshared, &bound, size, *piece, Some(&target), &mut readback, *id);
+            if capture_debug() {
+                eprintln!("capture · {:.1} picture asked of the card in {:.1} ms", wall_ms(), t.elapsed().as_secs_f64() * 1000.0);
+            }
         }
         // What has not been shown for a while is not kept (a surface's frames
         // take turns, so one that was not used this time may be the next).
@@ -1105,74 +1127,144 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
     }
 }
 
+/// `PLEAMAR_DEBUG_CAPTURE=1`: when a monitor is put together and its pictures
+/// read back, on the wall clock (ms), to follow one change to a recorder.
+pub fn capture_debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PLEAMAR_DEBUG_CAPTURE").is_some())
+}
+
+pub fn wall_ms() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+}
+
+/// Where the pictures of a monitor are read back: kept while its size holds
+/// (made anew each time, a picture of a big monitor spent most of its time
+/// making them).
+#[derive(Default)]
+struct Readback {
+    texture: Option<wgpu::Texture>,
+    /// Each with whether it is still being read (a picture on its way).
+    buffers: Vec<(u64, wgpu::Buffer, Arc<std::sync::atomic::AtomicBool>)>,
+}
+
 /// A piece of the monitor as it has just been put together (what the
 /// programs and the scene show; not the cursor, which is on its own plane),
-/// read back: BGRA, rows with no padding.
-fn capture(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &wgpu::RenderPipeline, groups: &[Option<usize>], unshared: &[usize], bound: &[Bound], size: (u32, u32), piece: [i32; 4]) -> Option<Vec<u8>> {
+/// read back: BGRA, rows with no padding. Copied straight from what was put
+/// together when all of it is for pictures too (`direct`); drawn again
+/// without what is only for the monitor if not. Read on a thread of its own
+/// and handed to whoever asked from there (`ToLayers::Captured`): the
+/// monitor goes on meanwhile, instead of waiting for the card.
+#[allow(clippy::too_many_arguments)]
+fn capture(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &wgpu::RenderPipeline, groups: &[Option<usize>], unshared: &[usize], bound: &[Bound], size: (u32, u32), piece: [i32; 4], target: Option<&wgpu::Texture>, room: &mut Readback, id: u64) {
     let x0 = piece[0].clamp(0, size.0 as i32) as u32;
     let y0 = piece[1].clamp(0, size.1 as i32) as u32;
     let x1 = (piece[0] + piece[2]).clamp(x0 as i32, size.0 as i32) as u32;
     let y1 = (piece[1] + piece[3]).clamp(y0 as i32, size.1 as i32) as u32;
     let (w, h) = (x1 - x0, y1 - y0);
     if w == 0 || h == 0 {
-        return None;
+        layers::tell(ToLayers::Captured { id, pixels: None });
+        return;
     }
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("a picture"),
-        size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Bgra8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&Default::default());
+    let t_made = std::time::Instant::now();
     let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("a picture"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(pipeline);
-        pass.set_scissor_rect(x0, y0, w, h);
-        // All that was put together but what is only for the monitor.
-        for (_, k) in groups.iter().enumerate().filter(|(i, _)| !unshared.contains(i)).filter_map(|(i, k)| k.map(|k| (i, k))) {
-            pass.set_bind_group(0, &bound[k].group, &[]);
-            pass.draw(0..4, 0..1);
+    let direct = target.filter(|t| unshared.is_empty() && t.usage().contains(wgpu::TextureUsages::COPY_SRC) && t.size().width == size.0 && t.size().height == size.1);
+    let source = match direct {
+        Some(t) => t.clone(),
+        None => {
+            if room.texture.as_ref().is_none_or(|t| t.size().width != size.0 || t.size().height != size.1) {
+                room.texture = Some(device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("a picture"),
+                    size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                }));
+            }
+            let texture = room.texture.clone().unwrap();
+            let view = texture.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("a picture"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_scissor_rect(x0, y0, w, h);
+            // All that was put together but what is only for the monitor.
+            for (_, k) in groups.iter().enumerate().filter(|(i, _)| !unshared.contains(i)).filter_map(|(i, k)| k.map(|k| (i, k))) {
+                pass.set_bind_group(0, &bound[k].group, &[]);
+                pass.draw(0..4, 0..1);
+            }
+            drop(pass);
+            texture
         }
-    }
+    };
     let row = (w * 4).div_ceil(256) * 256;
-    let out = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let bytes = (row * h) as u64;
+    use std::sync::atomic::Ordering::{Acquire, Release};
+    room.buffers.retain(|b| b.0 == bytes);
+    let (out, busy) = match room.buffers.iter().find(|b| !b.2.load(Acquire)) {
+        Some(b) => (b.1.clone(), b.2.clone()),
+        None => {
+            let b = device.create_buffer(&wgpu::BufferDescriptor { label: Some("a picture, read back"), size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+            let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            // A few kept; more at once (a slow card) are made and let go.
+            if room.buffers.len() < 3 {
+                room.buffers.push((bytes, b.clone(), busy.clone()));
+            }
+            (b, busy)
+        }
+    };
+    busy.store(true, Release);
     encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d { x: x0, y: y0, z: 0 }, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyTextureInfo { texture: &source, mip_level: 0, origin: wgpu::Origin3d { x: x0, y: y0, z: 0 }, aspect: wgpu::TextureAspect::All },
         wgpu::TexelCopyBufferInfo { buffer: &out, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None } },
         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
     queue.submit(Some(encoder.finish()));
-    let mapped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mapped = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let flag = mapped.clone();
-    out.slice(..).map_async(wgpu::MapMode::Read, move |r| flag.store(r.is_ok(), std::sync::atomic::Ordering::Release));
-    let sent = pleamar::Sent::after(queue);
-    sent.wait(device, Duration::from_secs(2));
-    let start = std::time::Instant::now();
-    while !mapped.load(std::sync::atomic::Ordering::Acquire) && start.elapsed() < Duration::from_secs(2) {
-        let _ = device.poll(wgpu::PollType::Poll);
-        std::thread::sleep(Duration::from_micros(250));
-    }
-    if !mapped.load(std::sync::atomic::Ordering::Acquire) {
-        return None;
-    }
-    let data = out.slice(..).get_mapped_range().ok()?;
-    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        pixels.extend_from_slice(&data[(y * row) as usize..(y * row + w * 4) as usize]);
-    }
-    Some(pixels)
+    out.slice(..).map_async(wgpu::MapMode::Read, move |r| flag.store(if r.is_ok() { 1 } else { 2 }, Release));
+    let t_sub = std::time::Instant::now();
+    let direct = direct.is_some();
+    let device = device.clone();
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        while mapped.load(Acquire) == 0 && start.elapsed() < Duration::from_secs(2) {
+            let _ = device.poll(wgpu::PollType::Poll);
+            std::thread::sleep(Duration::from_micros(100));
+        }
+        if mapped.load(Acquire) != 1 {
+            // (Still mapping, or it failed: that buffer is not used again.)
+            layers::tell(ToLayers::Captured { id, pixels: None });
+            return;
+        }
+        let t_map = std::time::Instant::now();
+        let pixels = out.slice(..).get_mapped_range().ok().map(|data| {
+            let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+            if row == w * 4 {
+                pixels.extend_from_slice(&data[..(w * h * 4) as usize]);
+            } else {
+                for y in 0..h {
+                    pixels.extend_from_slice(&data[(y * row) as usize..(y * row + w * 4) as usize]);
+                }
+            }
+            pixels
+        });
+        out.unmap();
+        busy.store(false, Release);
+        if capture_debug() {
+            let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1000.0;
+            eprintln!("capture ·   {} recorded {:.1} · card {:.1} · copied {:.1} ms", if direct { "direct," } else { "drawn again," }, ms(t_made, t_sub), ms(t_sub, t_map), t_map.elapsed().as_secs_f64() * 1000.0);
+        }
+        layers::tell(ToLayers::Captured { id, pixels });
+    });
 }
 
 /// Where a program's video frame is painted as RGB, to be put together from.

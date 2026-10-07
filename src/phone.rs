@@ -9,7 +9,7 @@ use pleamar::scene::ToRender;
 use pleamar::wgpu;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How often it refreshes: the stream to the phone is at most this.
 pub const PHONE_MHZ: i32 = 60_000;
@@ -18,6 +18,8 @@ pub struct Virtual {
     size: (u32, u32),
     textures: Vec<wgpu::Texture>,
     shown: Option<usize>,
+    /// Its next refresh: a steady clock, as a screen's.
+    next: Instant,
     /// Its monitor, once made: what it tells when a flip "lands".
     screen: Arc<OnceLock<Screen>>,
     to_render: Sender<ToRender>,
@@ -28,7 +30,7 @@ impl Virtual {
     /// be once it is made (it is made from this output).
     pub fn new(size: (u32, u32), to_render: Sender<ToRender>) -> (Virtual, Arc<OnceLock<Screen>>) {
         let own = Arc::new(OnceLock::new());
-        (Virtual { size, textures: Vec::new(), shown: None, screen: own.clone(), to_render }, own)
+        (Virtual { size, textures: Vec::new(), shown: None, next: Instant::now(), screen: own.clone(), to_render }, own)
     }
 }
 
@@ -53,13 +55,25 @@ impl Output for Virtual {
     }
 
     fn show(&mut self, which: usize, done: pleamar::Sent, device: &wgpu::Device, _: &wgpu::Queue, _: bool) -> bool {
-        done.wait(device, Duration::from_millis(200));
         self.shown = Some(which);
-        // The flip "lands" on its next refresh.
-        let Some(sc) = self.screen.get().cloned() else { return false };
-        let tx = self.to_render.clone();
+        let Some(sc) = self.screen.get().cloned() else {
+            done.wait(device, Duration::from_millis(200));
+            return false;
+        };
+        // The flip "lands" on its next refresh of a steady clock, once the card
+        // has finished it: putting it together takes part of a refresh, not
+        // one more. (Waiting for the card here and then a whole refresh more
+        // made it some 40 a second, and every picture of it later.)
+        let period = Duration::from_micros(1_000_000_000 / PHONE_MHZ as u64);
+        let now = Instant::now();
+        self.next = (self.next + period).max(now);
+        let at = self.next;
+        let (tx, device) = (self.to_render.clone(), device.clone());
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_micros(1_000_000_000 / PHONE_MHZ as u64));
+            done.wait(&device, Duration::from_millis(200));
+            if let Some(wait) = at.checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            }
             screen::landed(&sc, &tx);
         });
         true

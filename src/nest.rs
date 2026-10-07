@@ -1753,6 +1753,9 @@ impl State {
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
         let secs = ts.tv_sec as u64;
         p.frame.ready((secs >> 32) as u32, secs as u32, ts.tv_nsec as u32);
+        if crate::screen::capture_debug() {
+            eprintln!("capture · {:.1} handed to the program", crate::screen::wall_ms());
+        }
     }
 
     /// A program's buffer held for long is a program that cannot draw again
@@ -3520,6 +3523,9 @@ impl Dispatch<ZwlrScreencopyFrameV1, u64> for State {
         let Some(p) = state.pictures.get_mut(id) else { return };
         p.buffer = Some(buffer);
         p.damage = damage;
+        if crate::screen::capture_debug() {
+            eprintln!("capture · {:.1} asked (damage {damage})", crate::screen::wall_ms());
+        }
         layers::capture(p.monitor, *id, p.piece, damage, owner);
     }
 

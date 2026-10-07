@@ -10,6 +10,12 @@
 //! computer is seen from outside (one STUN question), the H.264 frames the
 //! monitor gives, and the page's keys and pointer coming back on a data
 //! channel.
+//!
+//! The frames go on a data channel of their own (`video`) when the page opens
+//! one —it decodes them itself (WebCodecs), each as soon as it is whole—, and
+//! as a video track only if not: a track goes through the browser's jitter
+//! buffer, which waits to smooth the picture out, and here every millisecond
+//! between a touch and its picture counts more than smoothness.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +27,16 @@ use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Frequency, MediaKind, MediaTime, Mid, Pt};
 use str0m::net::{Protocol, Receive};
+use str0m::channel::ChannelId;
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig};
+
+/// A frame on the `video` channel goes in pieces of at most this (the
+/// browsers' messages are only sure up to 64 KB; a whole frame of a tablet is
+/// several hundred).
+const PIECE: usize = 16 * 1024;
+/// More than this waiting to go on the channel: the way is full, the frames
+/// are dropped until it empties, and then a whole one.
+const CHANNEL_FULL: usize = 1 << 20;
 
 /// What the connection says to the viewer.
 pub enum PeerEvent {
@@ -64,7 +79,9 @@ pub fn answer(offer: &str, kbps: u32) -> Result<(String, Peer), String> {
     let local = local_ip().ok_or("no network here")?;
     let socket = UdpSocket::bind((local, 0)).map_err(|e| e.to_string())?;
     let here = socket.local_addr().map_err(|e| e.to_string())?;
-    let mut rtc = RtcConfig::new().enable_bwe(Some(str0m::bwe::Bitrate::kbps(kbps as u64))).build(Instant::now());
+    // Room on the channel for a whole frame of a tablet (some hundreds of KB:
+    // str0m's own 128 KB turned them away, and every one asked for again).
+    let mut rtc = RtcConfig::new().enable_bwe(Some(str0m::bwe::Bitrate::kbps(kbps as u64))).set_sctp_max_buffered_amount(4 << 20).build(Instant::now());
     // What it may find out the way takes, up to what is worth sending.
     rtc.bwe().set_desired_bitrate(str0m::bwe::Bitrate::kbps(20_000));
     rtc.add_local_candidate(Candidate::host(here, "udp").map_err(|e| e.to_string())?);
@@ -98,9 +115,42 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     let mut video: Option<(Mid, Pt)> = None;
     let mut buf = vec![0u8; 2000];
     let mut last_keyframe_ask = Instant::now() - Duration::from_secs(10);
+    // The page's own channel for the frames, once open; and a frame dropped on
+    // it (only a whole one can follow).
+    let mut channel: Option<ChannelId> = None;
+    let mut seq = 0u32;
+    let mut broken = false;
     while alive.load(Ordering::Relaxed) {
         // The frames that came, onto the way.
-        while let Ok((_, data)) = frames.try_recv() {
+        while let Ok((key, data)) = frames.try_recv() {
+            if let Some(id) = channel {
+                seq = seq.wrapping_add(1);
+                if broken && !key {
+                    continue;
+                }
+                let Some(mut ch) = rtc.channel(id) else { continue };
+                let parts = data.len().div_ceil(PIECE).max(1);
+                let mut whole = ch.buffered_amount() < CHANNEL_FULL;
+                for (k, piece) in data.chunks(PIECE).enumerate() {
+                    if !whole {
+                        break;
+                    }
+                    // [2, whole?, seq: u32, piece: u16, pieces: u16] and the piece.
+                    let mut m = Vec::with_capacity(piece.len() + 10);
+                    m.extend_from_slice(&[2, key as u8]);
+                    m.extend_from_slice(&seq.to_be_bytes());
+                    m.extend_from_slice(&(k as u16).to_be_bytes());
+                    m.extend_from_slice(&(parts as u16).to_be_bytes());
+                    m.extend_from_slice(piece);
+                    whole = ch.write(true, &m).unwrap_or(false);
+                }
+                broken = !whole;
+                if broken && last_keyframe_ask.elapsed() > Duration::from_millis(300) {
+                    last_keyframe_ask = Instant::now();
+                    let _ = events.send(PeerEvent::WholeFrame);
+                }
+                continue;
+            }
             let Some((mid, pt)) = video else { continue };
             let now = Instant::now();
             let rtp = MediaTime::new((now - started).as_micros() as u64 * 9 / 100, Frequency::NINETY_KHZ);
@@ -127,6 +177,11 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                         if let Some(pt) = pt {
                             video = Some((m.mid, pt));
                         }
+                    }
+                    Event::ChannelOpen(id, label) if label == "video" => {
+                        channel = Some(id);
+                        broken = true;
+                        let _ = events.send(PeerEvent::WholeFrame);
                     }
                     Event::ChannelData(d) if !d.binary => {
                         if let Ok(line) = String::from_utf8(d.data) {

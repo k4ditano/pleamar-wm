@@ -31,9 +31,9 @@ const PAGE: &str = include_str!("remote.html");
 /// lives for days— that hears another one from its server is older than it.
 const PAGE_VERSION: u64 = fnv(PAGE.as_bytes());
 /// Its icon on a home screen (the orb it greets with).
-const ICON_180: &[u8] = include_bytes!("../assets/remote/icon-180.png");
-const ICON_192: &[u8] = include_bytes!("../assets/remote/icon-192.png");
-const ICON_512: &[u8] = include_bytes!("../assets/remote/icon-512.png");
+const ICON_180: &[u8] = include_bytes!("icons/icon-180.png");
+const ICON_192: &[u8] = include_bytes!("icons/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("icons/icon-512.png");
 const PORT: u16 = 8765;
 const TILE: usize = 64;
 /// How long a session lasts without being used, and at most.
@@ -732,13 +732,17 @@ const ENCODERS: &[(&str, &[&str])] = &[
     ("libx264", &["preset=ultrafast", "tune=zerolatency", "bf=0", "g=1800"]),
 ];
 
-/// A monitor as video: wf-recorder taking it 60 (or 30) times a second (the
-/// compositor's own copies) into H.264, cut here into frames.
+/// A monitor as video: `pleamar-wm-stream` (ours, next to this program:
+/// each change out as soon as it is encoded, told a new bitrate or to send a
+/// whole frame while it runs), or else wf-recorder taking it 60 (or 30)
+/// times a second into H.264, cut here into frames.
 struct Video {
     child: std::process::Child,
     frames: mpsc::Receiver<(bool, Vec<u8>)>,
     /// The page fell behind and frames were dropped: start again from a whole one.
     behind: Arc<std::sync::atomic::AtomicBool>,
+    /// Ours: what it is told while it runs.
+    orders: Option<std::process::ChildStdin>,
 }
 
 impl Drop for Video {
@@ -751,6 +755,51 @@ impl Drop for Video {
 impl Video {
     /// At that many kilobits a second (more in a burst: a page scrolled).
     fn start(monitor: &str, kbps: u32, fps: u32) -> Result<Video, String> {
+        match Video::ours(monitor, kbps, fps) {
+            Ok(v) => return Ok(v),
+            Err(e) => println!("remote · {e}: wf-recorder instead"),
+        }
+        Video::recorder(monitor, kbps, fps)
+    }
+
+    fn ours(monitor: &str, kbps: u32, fps: u32) -> Result<Video, String> {
+        use std::os::fd::AsRawFd;
+        let path = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("pleamar-wm-stream"))).filter(|p| p.exists()).ok_or("no pleamar-wm-stream next to pleamar-wm")?;
+        let mut child = std::process::Command::new(&path)
+            .args([monitor, &fps.to_string(), &kbps.to_string()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("pleamar-wm-stream: {e}"))?;
+        let out = child.stdout.take().ok_or("no output")?;
+        let orders = child.stdin.take();
+        let mut poll = libc::pollfd { fd: out.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let ready = unsafe { libc::poll(&mut poll, 1, 4000) } > 0 && poll.revents & libc::POLLIN != 0;
+        if !ready || child.try_wait().ok().flatten().is_some() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("pleamar-wm-stream did not start".into());
+        }
+        let (tx, rx) = mpsc::sync_channel(24);
+        let behind = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let late = behind.clone();
+        std::thread::spawn(move || read_frames(out, tx, late));
+        Ok(Video { child, frames: rx, behind, orders })
+    }
+
+    /// A new bitrate, while it runs; false if this one cannot (start it again).
+    fn rate(&mut self, kbps: u32, fps: u32) -> bool {
+        self.orders.as_mut().is_some_and(|o| writeln!(o, "rate {kbps} {fps}").is_ok())
+    }
+
+    /// A whole frame next; false if this one cannot (start it again).
+    fn whole(&mut self) -> bool {
+        self.behind.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.orders.as_mut().is_some_and(|o| writeln!(o, "key").is_ok())
+    }
+
+    fn recorder(monitor: &str, kbps: u32, fps: u32) -> Result<Video, String> {
         use std::os::fd::AsRawFd;
         let mut why = String::new();
         for (codec, params) in ENCODERS {
@@ -781,9 +830,27 @@ impl Video {
             let behind = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let late = behind.clone();
             std::thread::spawn(move || cut_frames(out, tx, late));
-            return Ok(Video { child, frames: rx, behind });
+            return Ok(Video { child, frames: rx, behind, orders: None });
         }
         Err(format!("no encoder worked: {why}"))
+    }
+}
+
+/// Ours, read as it comes: each frame says how long it is.
+fn read_frames(mut out: std::process::ChildStdout, tx: mpsc::SyncSender<(bool, Vec<u8>)>, behind: Arc<std::sync::atomic::AtomicBool>) {
+    let mut head = [0u8; 5];
+    while out.read_exact(&mut head).is_ok() {
+        let n = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
+        let mut data = vec![0u8; n];
+        if out.read_exact(&mut data).is_err() {
+            return;
+        }
+        trace(&format!("encoded {n} bytes{}", if head[4] & 1 != 0 { " (key)" } else { "" }));
+        match tx.try_send((head[4] & 1 != 0, data)) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => behind.store(true, std::sync::atomic::Ordering::Relaxed),
+            Err(mpsc::TrySendError::Disconnected(_)) => return,
+        }
     }
 }
 
@@ -810,6 +877,7 @@ fn cut_frames(out: std::process::ChildStdout, tx: mpsc::SyncSender<(bool, Vec<u8
             continue;
         }
         for frame in access_units(&buf) {
+            trace(&format!("encoded {} bytes{}", frame.1.len(), if frame.0 { " (key)" } else { "" }));
             match tx.try_send(frame) {
                 Ok(()) => {}
                 Err(mpsc::TrySendError::Full(_)) => behind.store(true, std::sync::atomic::Ordering::Relaxed),
@@ -819,6 +887,15 @@ fn cut_frames(out: std::process::ChildStdout, tx: mpsc::SyncSender<(bool, Vec<u8
         buf.clear();
     }
     drop(out);
+}
+
+/// `PLEAMAR_REMOTE_TRACE=1`: each step of a key and a frame, with the time
+/// (ms, monotonic), to see where the time goes between a key and its picture.
+fn trace(what: &str) {
+    static ON: std::sync::OnceLock<Option<Instant>> = std::sync::OnceLock::new();
+    if let Some(t0) = ON.get_or_init(|| std::env::var_os("PLEAMAR_REMOTE_TRACE").map(|_| Instant::now())) {
+        println!("trace {:.1} {what}", t0.elapsed().as_secs_f64() * 1000.0);
+    }
 }
 
 /// H.264 (Annex B) cut into frames: a frame is the parameters and notes
@@ -1082,6 +1159,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     let mut video_wanted = false;
     let mut video: Option<Video> = None;
     let mut restart = false;
+    // Without starting again (ours can): a whole frame next, a new bitrate.
+    let mut whole = false;
+    let mut retune = false;
+    let mut video_started = Instant::now();
     let mut size = (1u32, 1u32);
     let mut waiting = false;
     let mut pending: Option<bool> = None;
@@ -1092,6 +1173,9 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     let mut direct = false;
     let mut hands_direct = false;
     let mut last_rate = Instant::now();
+    // What the direct way is actually carrying, in kb/s (each second).
+    let mut sending_kbps = 0.0f64;
+    let (mut sent_bytes, mut sent_since) = (0usize, Instant::now());
     let mut low_since: Option<Instant> = None;
     let mut used = Instant::now();
     // (`PLEAMAR_REMOTE_UNUSED`, in seconds: to check it without waiting.)
@@ -1150,33 +1234,38 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                 PeerEvent::Connected => {
                     // The picture goes this way now, from a whole frame.
                     direct = true;
-                    restart = true;
+                    whole = true;
                     println!("remote · the direct way is open");
                     let _ = ws.send(Message::Text("direct".into()));
                 }
-                PeerEvent::WholeFrame => restart = true,
+                PeerEvent::WholeFrame => whole = true,
                 PeerEvent::Estimate(k) if direct => {
                     // What the way takes. Less only when it says so for a
-                    // while (a still screen sends little, and one low guess
-                    // while a monitor starts again is not the way being
-                    // full); more only now and then.
+                    // while AND it was being filled: the estimate only grows
+                    // with what is sent, so a still screen (which sends next
+                    // to nothing) made it fall, and the first scroll after it
+                    // came blurred and at 30 a second. More when it says so.
                     let k = k.clamp(KBPS_MIN, KBPS_MAX);
-                    if k < flow.kbps * 7 / 10 {
+                    let filled = sending_kbps > k as f64 * 0.6;
+                    if k < flow.kbps * 7 / 10 && filled {
                         let since = *low_since.get_or_insert_with(Instant::now);
                         if since.elapsed() > Duration::from_secs(3) {
                             low_since = None;
-                            flow.kbps = (k * 9 / 10).max(3000);
-                            flow.fps = if k < 2500 { 30 } else { 60 };
+                            flow.kbps = (k * 9 / 10).max(KBPS_MIN);
+                            // Fewer frames only on a way really poor.
+                            flow.fps = if k < KBPS_MIN * 3 / 2 { 30 } else { 60 };
                             last_rate = Instant::now();
-                            restart = true;
+                            retune = true;
                         }
                     } else {
-                        low_since = None;
-                        if k > flow.kbps * 13 / 10 && last_rate.elapsed() > Duration::from_secs(15) {
+                        if !filled || k >= flow.kbps * 7 / 10 {
+                            low_since = None;
+                        }
+                        if k > flow.kbps * 13 / 10 && last_rate.elapsed() > Duration::from_secs(5) {
                             flow.kbps = (k * 9 / 10).min(KBPS_MAX);
                             flow.fps = 60;
                             last_rate = Instant::now();
-                            restart = true;
+                            retune = true;
                         }
                     }
                 }
@@ -1189,7 +1278,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             peer = None;
             if direct {
                 direct = false;
-                restart = true;
+                whole = true;
                 println!("remote · the direct way closed: by the socket again");
                 let _ = ws.send(Message::Text("indirect".into()));
             }
@@ -1366,7 +1455,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     }
                     ("full", _) => {
                         if video_wanted {
-                            restart = true;
+                            whole = true;
                         } else {
                             pending = Some(true);
                             waiting = false;
@@ -1379,7 +1468,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     }
                     ("b", [b, d]) => h.button(*b as u32, *d != 0.0),
                     ("w", [dx, dy]) => h.wheel(*dx, *dy),
-                    ("k", [c, d]) => h.key(*c as u16, *d != 0.0),
+                    ("k", [c, d]) => {
+                        trace(&format!("key {c} {d}"));
+                        h.key(*c as u16, *d != 0.0)
+                    }
                     ("rel", _) => h.release(),
                     ("paste", _) => {
                         // Your text in the clipboard here; then the page's
@@ -1425,6 +1517,11 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
         // As video: frames as they come; fallen behind, from a whole one again.
         if video_wanted {
             if video.as_ref().is_some_and(|v| v.behind.load(std::sync::atomic::Ordering::Relaxed)) {
+                whole = true;
+            }
+            // Its monitor went (a phone turned: put up again in its new shape),
+            // or it stopped: again, for the monitor there is now.
+            if video.as_mut().is_some_and(|v| v.child.try_wait().ok().flatten().is_some()) && video_started.elapsed() > Duration::from_millis(700) {
                 restart = true;
             }
             // The way there filling up (a slower moment of the network, the
@@ -1437,16 +1534,36 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         while let Some(Ok(_)) = video.as_ref().map(|v| v.frames.try_recv()) {}
                         continue;
                     }
-                    Pace::Again => restart = true,
+                    // (What waited was dropped: a whole frame too.)
+                    Pace::Again => {
+                        retune = true;
+                        whole = true;
+                    }
                 }
             }
             if flow.stats_due() {
                 let _ = ws.send(Message::Text(format!("stats {} {} {}", flow.rtt.round(), flow.kbps, flow.fps).into()));
             }
+            // Told to the one running, if it can be; started again if not.
+            if !restart && video.is_some() {
+                if std::mem::take(&mut retune) && !video.as_mut().is_some_and(|v| v.rate(flow.kbps, flow.fps)) {
+                    restart = true;
+                }
+                if std::mem::take(&mut whole) {
+                    if video.as_mut().is_some_and(|v| v.whole()) {
+                        flow.restarted();
+                    } else {
+                        restart = true;
+                    }
+                }
+            }
             if restart {
                 restart = false;
+                retune = false;
+                whole = false;
                 video = None;
                 flow.restarted();
+                video_started = Instant::now();
                 match Video::start(&monitors[monitor].0, flow.kbps, flow.fps) {
                     Ok(v) => {
                         video = Some(v);
@@ -1460,13 +1577,19 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                     }
                 }
             }
+            if sent_since.elapsed() >= Duration::from_secs(1) {
+                sending_kbps = sent_bytes as f64 * 8.0 / 1000.0 / sent_since.elapsed().as_secs_f64();
+                sent_bytes = 0;
+                sent_since = Instant::now();
+            }
             let mut sent = false;
             while let Some(Ok((key, data))) = video.as_ref().map(|v| v.frames.try_recv()) {
                 if direct {
+                    sent_bytes += data.len();
                     if let Some(p) = &peer {
                         if !p.send(key, data) {
                             // The way is full: from a whole frame again.
-                            restart = true;
+                            whole = true;
                         }
                     }
                     continue;

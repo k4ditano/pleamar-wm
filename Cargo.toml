@@ -6,6 +6,15 @@ license = "BSD-3-Clause"
 description = "A window manager written as a pleamar scene: a Wayland compositor that fills a scene's `windows`"
 repository = "https://github.com/k4ditano/pleamar-wm"
 
+[workspace]
+# `stream`: the remote's video, a program of its own (it links the system's
+# ffmpeg, which the session itself does not need; and a fault in an encoder
+# ends that program, not the remote). Built apart, `cargo build --release -p
+# pleamar-wm-stream`: without ffmpeg's development files it does not build,
+# and the remote uses wf-recorder instead.
+members = [".", "stream"]
+default-members = ["."]
+
 [dependencies]
 pleamar = { path = "../pleamar" }
 libc = "0.2"

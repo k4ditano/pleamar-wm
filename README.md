@@ -145,7 +145,8 @@ Then log out and choose **pleamar-wm**, or from a TTY of its own (Ctrl+Alt+F3,
 log in there): `pleamar-session`. `pleamar-update` keeps it up to date.
 
 To use it from another computer, with only a browser there (it needs
-`wf-recorder` and `grim`, `wl-clipboard` for the clipboard and `/dev/uinput`
+ffmpeg's libraries for its video —`wf-recorder` is used if they are not
+there— and `grim`, `wl-clipboard` for the clipboard and `/dev/uinput`
 writable by you): `pleamar-update --remote` checks all that, makes the
 password and the codes and starts it with the session. By hand:
 
@@ -472,10 +473,12 @@ Qt (Dolphin), Firefox, Vulkan, OpenGL and GTK on X11 all do.
   app (`~/.config/pleamar/remote.conf`); `pleamar-wm remote` serves it, and
   something in front makes it reachable and encrypted (`tailscale funnel
   --bg --https=8443 http://127.0.0.1:8765`). The picture is H.264 from the
-  card (NVENC; libx264 without one) through wf-recorder; the page and home
-  meet over the page's socket and then speak directly over UDP (WebRTC),
-  or keep to the socket if the networks do not let it, with the rate
-  following the way. The hands are a pointer and a keyboard made with
+  card (NVENC; libx264 without one), made by `pleamar-wm-stream` as soon as
+  the monitor changes, with its bitrate changed while it runs; the page and
+  home meet over the page's socket and then speak directly over UDP
+  (WebRTC), the frames on a data channel decoded by the page itself as each
+  one comes (no jitter buffer), or keep to the socket if the networks do
+  not let it, with the rate following the way. The hands are a pointer and a keyboard made with
   uinput: the session's own shortcuts and bar, not the agent's. While
   someone is in, the session marks it on the monitors on a surface left out
   of captures (`captures: hidden`), so the picture sent does not carry it;
