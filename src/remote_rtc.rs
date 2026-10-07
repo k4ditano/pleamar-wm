@@ -103,13 +103,16 @@ pub fn answer(offer: &str, kbps: u32) -> Result<(String, Peer), String> {
     let alive = Arc::new(AtomicBool::new(true));
     let still = alive.clone();
     std::thread::spawn(move || {
-        let _ = run(rtc, socket, frames_rx, events_tx.clone(), still);
+        match run(rtc, socket, frames_rx, events_tx.clone(), still) {
+            Ok(why) => println!("remote · the direct way ends: {why}"),
+            Err(e) => println!("remote · the direct way broke: {e}"),
+        }
         let _ = events_tx.send(PeerEvent::Gone);
     });
     Ok((answer.to_sdp_string(), Peer { frames: frames_tx, events: events_rx, alive }))
 }
 
-fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>, events: mpsc::Sender<PeerEvent>, alive: Arc<AtomicBool>) -> Result<(), String> {
+fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>, events: mpsc::Sender<PeerEvent>, alive: Arc<AtomicBool>) -> Result<&'static str, String> {
     let here = socket.local_addr().map_err(|e| e.to_string())?;
     let started = Instant::now();
     let mut video: Option<(Mid, Pt)> = None;
@@ -120,6 +123,8 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     let mut channel: Option<ChannelId> = None;
     let mut seq = 0u32;
     let mut broken = false;
+    // Frames dropped because the channel was full, told every few seconds.
+    let (mut dropped, mut told) = (0u32, Instant::now());
     while alive.load(Ordering::Relaxed) {
         // The frames that came, onto the way.
         while let Ok((key, data)) = frames.try_recv() {
@@ -145,6 +150,14 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                     whole = ch.write(true, &m).unwrap_or(false);
                 }
                 broken = !whole;
+                if broken {
+                    dropped += 1;
+                }
+                if dropped > 0 && told.elapsed() > Duration::from_secs(5) {
+                    println!("remote · the frames' channel was full: {dropped} frames dropped ({} KB waiting)", ch.buffered_amount() / 1024);
+                    dropped = 0;
+                    told = Instant::now();
+                }
                 if broken && last_keyframe_ask.elapsed() > Duration::from_millis(300) {
                     last_keyframe_ask = Instant::now();
                     let _ = events.send(PeerEvent::WholeFrame);
@@ -168,7 +181,8 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
             }
             Output::Event(e) => {
                 match e {
-                    Event::IceConnectionStateChange(IceConnectionState::Disconnected) => return Ok(()),
+                    Event::IceConnectionStateChange(IceConnectionState::Disconnected) => return Ok("the page is not reachable any more"),
+                    Event::IceConnectionStateChange(state) => println!("remote · the direct way: {state:?}"),
                     Event::Connected => {
                         let _ = events.send(PeerEvent::Connected);
                     }
@@ -179,12 +193,14 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                         }
                     }
                     Event::ChannelOpen(id, label) if label == "video" => {
+                        println!("remote · the frames go by their own channel (decoded by the page)");
                         channel = Some(id);
                         broken = true;
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
                     // The page could not decode them: the video track again, from a whole frame.
                     Event::ChannelClose(id) if channel == Some(id) => {
+                        println!("remote · the page closed the frames' channel: by the video track now");
                         channel = None;
                         let _ = events.send(PeerEvent::WholeFrame);
                     }
@@ -223,7 +239,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
         rtc.handle_input(input).map_err(|e| e.to_string())?;
     }
     rtc.disconnect();
-    Ok(())
+    Ok("closed from here")
 }
 
 /// The H.264 the page takes, one frame per packet group (mode 1): High

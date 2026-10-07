@@ -195,7 +195,16 @@
   setInterval(() => send('ping ' + performance.now().toFixed(1)), 2000);
   let ws, monitors = [], current = 0, pending = 0, frames = 0, lastFps = performance.now(), queue = Promise.resolve();
 
-  const toast = (t) => { toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => toastEl.classList.remove('show'), 1800); };
+  // What happens here, told home for its log (pleamar-wm's): kept until the
+  // socket is open, the last ones only.
+  function plog(t) {
+    const line = 'log ' + t;
+    if (ws && ws.readyState === 1) ws.send(line);
+    else { (plog.q = plog.q || []).push(line); if (plog.q.length > 40) plog.q.shift(); }
+  }
+  window.addEventListener('error', (e) => plog('error: ' + e.message + ' at ' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  window.addEventListener('unhandledrejection', (e) => plog('error (promise): ' + (e.reason && (e.reason.name + ': ' + e.reason.message) || e.reason)));
+  const toast = (t) => { plog('shown: ' + t); toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => toastEl.classList.remove('show'), 1800); };
 
   // KeyboardEvent.code → Linux evdev key code: where the key is, not what it
   // writes, so home's own layout makes the characters.
@@ -224,6 +233,7 @@
   // track (home sends on it again) shown instead.
   function trackInstead() {
     if (!dcVideo) return;
+    plog('the frames by the video track instead (not decoded here)');
     dcVideo = false; pieces = null;
     try { vdc.close(); } catch (_) {}
     vdc = null;
@@ -243,10 +253,13 @@
       dcVideo = false; pieces = null; vdcErrors = 0;
       // Only if it decodes what home makes (H.264 High, as the card makes it).
       const decodes = 'VideoDecoder' in window && await VideoDecoder.isConfigSupported({ codec: 'avc1.640033', optimizeForLatency: true }).then((r) => r.supported, () => false);
+      plog('direct way offered · decodes H.264 High here: ' + decodes);
       if (decodes) {
         vdc = pc.createDataChannel('video', { ordered: true });
         vdc.binaryType = 'arraybuffer';
         vdc.onmessage = (e) => piece(e.data);
+        vdc.onclose = () => plog('the frames\' channel closed');
+        vdc.onerror = (e) => plog('the frames\' channel: ' + (e.error ? e.error.message : 'error'));
       }
       pc.ontrack = (e) => {
         // No waiting to smooth it out: each frame as soon as it is whole.
@@ -254,7 +267,7 @@
         try { e.receiver.playoutDelayHint = 0; } catch (_) {}
         videoEl.srcObject = e.streams[0] || new MediaStream([e.track]);
       };
-      pc.onconnectionstatechange = () => { if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) showDirect(false); };
+      pc.onconnectionstatechange = () => { if (pc) plog('direct way: ' + pc.connectionState); if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) showDirect(false); };
       await pc.setLocalDescription(await pc.createOffer());
       // All the ways this computer can be reached, before offering.
       await new Promise((done) => {
@@ -263,7 +276,7 @@
         setTimeout(done, 2000);
       });
       send('rtc ' + pc.localDescription.sdp);
-    } catch (e) { console.warn('direct way', e); }
+    } catch (e) { console.warn('direct way', e); plog('direct way failed: ' + e); }
   }
   // A piece of a frame from the channel: [2, whole?, seq: u32, piece: u16,
   // pieces: u16] and its bytes. Whole, it goes to the decoder as the
@@ -271,7 +284,8 @@
   function piece(buf) {
     const v = new DataView(buf);
     const seq = v.getUint32(2), k = v.getUint16(6), n = v.getUint16(8);
-    if (!dcVideo) { dcVideo = true; newDecoder(); showDirect(isDirect); }
+    if (!dcVideo) { dcVideo = true; plog('the frames come by their channel'); newDecoder(); showDirect(isDirect); }
+    if (pieces && pieces.seq !== seq) seen.cut++;
     if (!pieces || pieces.seq !== seq) pieces = { seq, n, got: 0, parts: new Array(n), size: 0 };
     if (!pieces.parts[k]) { pieces.parts[k] = new Uint8Array(buf, 10); pieces.got++; pieces.size += buf.byteLength - 10; }
     if (pieces.got < pieces.n) return;
@@ -299,12 +313,37 @@
     const stats = await pc.getStats();
     stats.forEach((r) => { if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime) net = Math.round(r.currentRoundTripTime * 1000); });
   }, 2000);
+  // Every 10 s while it is seen: how the picture came here, for home's log.
+  setInterval(async () => {
+    if (!ws || ws.readyState !== 1 || document.hidden) return;
+    const way = dcVideo ? 'the channel' : isDirect ? 'the video track' : 'the socket';
+    let line = '';
+    if (seen.came || seen.errors) {
+      line = 'decoded ' + seen.out + ' of ' + seen.came + (seen.cut ? ', ' + seen.cut + ' cut short' : '') + (seen.errors ? ', ' + seen.errors + ' errors' : '') + (decoder ? ', ' + decoder.decodeQueueSize + ' waiting' : '');
+    }
+    if (isDirect && !dcVideo && pc) {
+      try {
+        (await pc.getStats()).forEach((r) => {
+          if (r.type !== 'inbound-rtp' || r.kind !== 'video') return;
+          const jb = r.jitterBufferEmittedCount ? Math.round(r.jitterBufferDelay * 1000 / r.jitterBufferEmittedCount) : 0;
+          line += (line ? ' · ' : '') + 'so far ' + r.framesDecoded + ' decoded, ' + (r.framesDropped || 0) + ' dropped, ' + (r.freezeCount || 0) + ' freezes, ' + (r.packetsLost || 0) + ' packets lost, ' + jb + ' ms waiting to be shown';
+        });
+      } catch (_) {}
+    }
+    if (line) plog('10 s by ' + way + ': ' + line + (net ? ' · ' + net + ' ms there and back' : ''));
+    seen.came = seen.out = seen.cut = seen.errors = 0;
+  }, 10000);
 
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       statusEl.textContent = 'connected';
+      for (const l of plog.q || []) ws.send(l);
+      plog.q = [];
+      plog('page ' + VERSION + ' · ' + navigator.userAgent + ' · ' + screen.width + '×' + screen.height + ' at ' + devicePixelRatio
+        + (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone ? ' · as an app' : ' · in the browser')
+        + (TABLET ? ' · tablet' : PHONE ? ' · phone' : '') + ' · WebCodecs ' + ('VideoDecoder' in window));
       if (PHONE) {
         netShow(false);
         // On a phone nothing comes until the session is asked here.
@@ -315,7 +354,8 @@
       send('hello ' + ('VideoDecoder' in window ? 'video' : 'jpeg'));
       startDirect();
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
+      plog('the socket closed (' + e.code + (e.reason ? ' ' + e.reason : '') + (asleep ? ', asleep' : '') + ')');
       showDirect(false); if (pc) { pc.close(); pc = null; }
       // Let go on purpose while the tab is hidden: back when it is seen.
       if (asleep) return;
@@ -348,8 +388,10 @@
       } else if (verb === 'size') {
         const [, w, h] = rest.map(Number);
         if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      } else if (verb === 'rtcno') {
+        plog('no direct way from home');
       } else if (verb === 'rtcanswer') {
-        if (pc) pc.setRemoteDescription({ type: 'answer', sdp: arg }).catch((e) => console.warn('direct way', e));
+        if (pc) pc.setRemoteDescription({ type: 'answer', sdp: arg }).catch((e) => { console.warn('direct way', e); plog('direct way answer: ' + e); });
       } else if (verb === 'direct') {
         showDirect(true);
       } else if (verb === 'indirect') {
@@ -399,17 +441,23 @@
   // The video: H.264 frames as they come, decoded by the browser (the card's
   // decoder where there is one), each painted as soon as it is out.
   let decoder = null, configured = false, needKey = true;
+  // Counted for the log (every 10 s): frames that came, decoded, cut short
+  // (a piece missing when a newer one began), decoder errors.
+  const seen = { came: 0, out: 0, cut: 0, errors: 0, codec: '' };
   function newDecoder() {
     if (decoder) { try { decoder.close(); } catch (_) {} }
     configured = false; needKey = true;
     decoder = new VideoDecoder({
       output: (f) => {
+        seen.out++;
         // Shown: home measures the way (and this computer) with it (the socket's).
         if (!dcVideo) send('got ' + Math.round(f.timestamp / 1000));
         if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) { canvas.width = f.displayWidth; canvas.height = f.displayHeight; }
         ctx.drawImage(f, 0, 0); f.close(); frames++;
       },
       error: (e) => {
+        seen.errors++;
+        plog('decoder error: ' + e.name + ': ' + e.message + ' · ' + seen.codec + ' · ' + (dcVideo ? 'channel' : isDirect ? 'track' : 'socket'));
         if (dcVideo && ++vdcErrors >= 2) { trackInstead(); return; }
         toast('Video: ' + e.message); newDecoder(); hand('full');
       },
@@ -429,12 +477,22 @@
     const all = new Uint8Array(buf);
     const key = all[1] === 1, data = all.subarray(6), seq = new DataView(buf).getUint32(2);
     if (needKey && !key) return;
+    seen.came++;
     if (!configured) {
-      decoder.configure({ codec: codecOf(data) || 'avc1.640028', optimizeForLatency: true });
+      const codec = codecOf(data) || 'avc1.640028';
+      if (codec !== seen.codec) plog('decoder: ' + codec + (codecOf(data) ? '' : ' (no SPS in the first frame)'));
+      seen.codec = codec;
+      try {
+        decoder.configure({ codec, optimizeForLatency: true });
+      } catch (e) {
+        plog('decoder configure: ' + e.name + ': ' + e.message);
+        if (dcVideo) { trackInstead(); return; }
+        throw e;
+      }
       configured = true;
     }
     // Hopelessly behind: start again from a whole frame (home slows down by itself before this).
-    if (decoder.decodeQueueSize > 40) { newDecoder(); hand('full'); return; }
+    if (decoder.decodeQueueSize > 40) { plog('the decoder fell behind (' + decoder.decodeQueueSize + ' waiting)'); newDecoder(); hand('full'); return; }
     needKey = false;
     decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: seq * 1000, data }));
   }
@@ -569,6 +627,7 @@
     connect();
   };
   document.addEventListener('visibilitychange', () => {
+    plog(document.hidden ? 'hidden (another app, or the screen off)' : 'shown again');
     if (document.hidden) { releaseAll(); clearTimeout(sleepTimer); sleepTimer = setTimeout(sleep, 10000); } else wake();
   });
   // The browser freezing the page (a laptop going to sleep): at once.
@@ -689,6 +748,7 @@
     if (navigator.vibrate) navigator.vibrate([8, 40, 14]);
   }
   function phoneBack(why) {
+    plog('back at the desk: ' + why);
     phoneHere = false;
     $('ph-back-why').textContent = why;
     kbd.classList.remove('on');

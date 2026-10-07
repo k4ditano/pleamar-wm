@@ -889,6 +889,52 @@ fn cut_frames(out: std::process::ChildStdout, tx: mpsc::SyncSender<(bool, Vec<u8
     drop(out);
 }
 
+/// What went to a page as video lately, written every 10 s while it goes:
+/// enough to see afterwards how it went (and what went wrong) without a trace.
+#[derive(Default)]
+struct Tally {
+    frames: u32,
+    keys: u32,
+    bytes: usize,
+    /// Whole frames asked (the page, the way, or this end fallen behind).
+    wholes: u32,
+    /// This end fell behind (frames dropped before sending).
+    behind: u32,
+    /// The direct way was full (a frame not sent).
+    full: u32,
+    since: Option<Instant>,
+}
+
+impl Tally {
+    fn tell(&mut self, way: &str, flow: &Flow) {
+        let since = *self.since.get_or_insert_with(Instant::now);
+        let secs = since.elapsed().as_secs_f64();
+        if secs < 10.0 {
+            return;
+        }
+        if self.frames > 0 || self.wholes > 0 {
+            let mut more = String::new();
+            if self.behind > 0 {
+                more.push_str(&format!(" · fell behind {}×", self.behind));
+            }
+            if self.full > 0 {
+                more.push_str(&format!(" · way full {}×", self.full));
+            }
+            println!(
+                "remote · {:.0} s by {way}: {} frames ({:.0} a second, {} whole, {} asked), {:.1} Mb/s of {:.1}{more}",
+                secs,
+                self.frames,
+                self.frames as f64 / secs,
+                self.keys,
+                self.wholes,
+                self.bytes as f64 * 8.0 / 1e6 / secs,
+                flow.kbps as f64 / 1000.0,
+            );
+        }
+        *self = Tally { since: Some(Instant::now()), ..Tally::default() };
+    }
+}
+
 /// `PLEAMAR_REMOTE_TRACE=1`: each step of a key and a frame, with the time
 /// (ms, monotonic), to see where the time goes between a key and its picture.
 fn trace(what: &str) {
@@ -1159,6 +1205,12 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     let mut video_wanted = false;
     let mut video: Option<Video> = None;
     let mut restart = false;
+    // Why it starts (again), for the log.
+    let mut why = String::new();
+    // What went to the page lately, told every 10 s (see Tally).
+    let mut tally = Tally::default();
+    // What the page itself says (its errors, its decoder…), at most so many a minute.
+    let (mut page_lines, mut page_minute) = (0u32, Instant::now());
     // Without starting again (ours can): a whole frame next, a new bitrate.
     let mut whole = false;
     let mut retune = false;
@@ -1256,6 +1308,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                             flow.fps = if k < KBPS_MIN * 3 / 2 { 30 } else { 60 };
                             last_rate = Instant::now();
                             retune = true;
+                            println!("remote · the direct way takes less ({k} kb/s, {sending_kbps:.0} sent): {} kb/s, {} a second", flow.kbps, flow.fps);
                         }
                     } else {
                         if !filled || k >= flow.kbps * 7 / 10 {
@@ -1266,6 +1319,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                             flow.fps = 60;
                             last_rate = Instant::now();
                             retune = true;
+                            println!("remote · the direct way takes more ({k} kb/s): {} kb/s, {} a second", flow.kbps, flow.fps);
                         }
                     }
                 }
@@ -1333,6 +1387,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                                     parked = false;
                                     if video_wanted {
                                         restart = true;
+                                        why = "the desk's lock screen".into();
                                     } else {
                                         pending = Some(true);
                                         waiting = false;
@@ -1368,6 +1423,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                                 parked = false;
                                 if video_wanted {
                                     restart = true;
+                                    why = "the phone's monitor".into();
                                 } else {
                                     pending = Some(true);
                                     waiting = false;
@@ -1412,11 +1468,26 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         video_wanted = rest.trim() == "video";
                         if video_wanted {
                             restart = true;
+                            why = "the page says hello".into();
                         } else {
                             pending = Some(true);
                         }
                     }
                     ("got", [seq]) => flow.got(*seq as u32),
+                    // What happens in the page (its errors, its decoder, its way), in this log.
+                    ("log", _) => {
+                        if page_minute.elapsed() > Duration::from_secs(60) {
+                            page_minute = Instant::now();
+                            page_lines = 0;
+                        }
+                        page_lines += 1;
+                        if page_lines <= 60 {
+                            let clean: String = rest.chars().map(|c| if c.is_control() { ' ' } else { c }).take(400).collect();
+                            println!("remote · page · {clean}");
+                        } else if page_lines == 61 {
+                            println!("remote · page · (more this minute, not written)");
+                        }
+                    }
                     ("rtc", _) => {
                         // The page offers the direct way: the answer, by the socket.
                         match crate::remote_rtc::answer(rest, flow.kbps) {
@@ -1447,7 +1518,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         }
                         if video_wanted {
                             // The same one, already coming: nothing to start again.
-                            restart |= !same;
+                            if !same {
+                                restart = true;
+                                why = format!("monitor {monitor} asked");
+                            }
                         } else {
                             pending = Some(true);
                             waiting = false;
@@ -1517,12 +1591,16 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
         // As video: frames as they come; fallen behind, from a whole one again.
         if video_wanted {
             if video.as_ref().is_some_and(|v| v.behind.load(std::sync::atomic::Ordering::Relaxed)) {
+                if !whole {
+                    tally.behind += 1;
+                }
                 whole = true;
             }
             // Its monitor went (a phone turned: put up again in its new shape),
             // or it stopped: again, for the monitor there is now.
-            if video.as_mut().is_some_and(|v| v.child.try_wait().ok().flatten().is_some()) && video_started.elapsed() > Duration::from_millis(700) {
+            if let Some(end) = video.as_mut().and_then(|v| v.child.try_wait().ok().flatten()).filter(|_| video_started.elapsed() > Duration::from_millis(700)) {
                 restart = true;
+                why = format!("the encoder stopped ({end})");
             }
             // The way there filling up (a slower moment of the network, the
             // buffers of whoever is in between): stop sending until it has
@@ -1548,16 +1626,21 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             if !restart && video.is_some() {
                 if std::mem::take(&mut retune) && !video.as_mut().is_some_and(|v| v.rate(flow.kbps, flow.fps)) {
                     restart = true;
+                    why = format!("{} kb/s, {} a second", flow.kbps, flow.fps);
                 }
                 if std::mem::take(&mut whole) {
+                    tally.wholes += 1;
                     if video.as_mut().is_some_and(|v| v.whole()) {
                         flow.restarted();
                     } else {
                         restart = true;
+                        why = "a whole frame".into();
                     }
                 }
             }
             if restart {
+                println!("remote · the video {}: {}", if video.is_some() { "starts again" } else { "starts" }, if why.is_empty() { "asked" } else { &why });
+                why.clear();
                 restart = false;
                 retune = false;
                 whole = false;
@@ -1570,6 +1653,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         let _ = ws.send(Message::Text(format!("video {monitor}").into()));
                     }
                     Err(e) => {
+                        println!("remote · no video: {e}");
                         // No video here: squares of JPEG, as for an old browser.
                         let _ = ws.send(Message::Text(format!("novideo {e}").into()));
                         video_wanted = false;
@@ -1584,11 +1668,15 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             }
             let mut sent = false;
             while let Some(Ok((key, data))) = video.as_ref().map(|v| v.frames.try_recv()) {
+                tally.frames += 1;
+                tally.keys += key as u32;
+                tally.bytes += data.len();
                 if direct {
                     sent_bytes += data.len();
                     if let Some(p) = &peer {
                         if !p.send(key, data) {
                             // The way is full: from a whole frame again.
+                            tally.full += 1;
                             whole = true;
                         }
                     }
@@ -1605,6 +1693,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             if sent {
                 ws.flush().map_err(|e| e.to_string())?;
             }
+            tally.tell(if direct { "the direct way" } else { "the socket" }, &flow);
             continue;
         }
 
