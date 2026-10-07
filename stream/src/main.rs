@@ -38,10 +38,21 @@ fn main() {
     }
     let fps: u32 = args[2].parse().unwrap_or(60).clamp(1, 240);
     let kbps: u32 = args[3].parse().unwrap_or(8000).clamp(100, 200_000);
+    // Gone with whoever started it, however that one ends.
+    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
     if let Err(e) = run(&args[1], fps, kbps) {
         eprintln!("pleamar-wm-stream: {e}");
-        std::process::exit(1);
+        leave(1);
     }
+    leave(0);
+}
+
+/// Out at once, without the library's handlers at exit: the card's driver
+/// waited for itself in them, with the encoder still open in this thread or
+/// another, and the program stayed hanging for ever.
+fn leave(code: i32) -> ! {
+    let _ = std::io::stderr().flush();
+    unsafe { libc::_exit(code) }
 }
 
 // ---------------------------------------------------------------- Wayland
@@ -393,7 +404,7 @@ fn run(output: &str, mut fps: u32, kbps: u32) -> Result<(), String> {
         loop {
             line.clear();
             if stdin.read_line(&mut line).unwrap_or(0) == 0 {
-                std::process::exit(0);
+                leave(0);
             }
             let w: Vec<&str> = line.split_whitespace().collect();
             let order = match w.as_slice() {
