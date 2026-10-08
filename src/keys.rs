@@ -118,6 +118,12 @@ pub fn parse(text: &str, k: &mut Keys) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        // A comment after the binding (`bind Super+q close  # ⌘Q`). Not after
+        // a command, which the shell reads whole (`#` may be part of it there).
+        let line = match line.find(" #").or_else(|| line.find("\t#")) {
+            Some(at) if !line.split_whitespace().any(|w| w == "launch") => line[..at].trim_end(),
+            _ => line,
+        };
         let mut words = line.splitn(3, char::is_whitespace);
         let (what, first, rest) = (words.next().unwrap_or(""), words.next().unwrap_or("").trim(), words.next().unwrap_or("").trim());
         match what {
@@ -250,6 +256,15 @@ mod tests {
         assert_eq!(k.gesture("swipe3_down"), Some(&Action::Emit("close".into(), None)));
         parse("unbind Super+q\n", &mut k);
         assert!(k.bind("q", sup).is_none());
+    }
+
+    #[test]
+    fn comments_after() {
+        let mut k = Keys::default();
+        parse("bind Super+q           close            # ⌘Q\nbind Super+t launch sh -c 'echo #1'\n", &mut k);
+        let sup = Mods { logo: true, ..Default::default() };
+        assert_eq!(k.bind("q", sup).map(|b| &b.action), Some(&Action::Emit("close".into(), None)));
+        assert_eq!(k.bind("t", sup).map(|b| &b.action), Some(&Action::Launch("sh -c 'echo #1'".into())));
     }
 
     #[test]
