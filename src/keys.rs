@@ -23,7 +23,6 @@
 //! not to the scene, not to a program.
 
 use pleamar::scene::Mods;
-use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -97,19 +96,36 @@ impl Keys {
 /// The bindings that come with pleamar-wm.
 pub const DEFAULTS: &str = include_str!("../keys.conf");
 
-pub fn get() -> &'static Keys {
-    static KEYS: OnceLock<Keys> = OnceLock::new();
-    KEYS.get_or_init(|| {
-        let mut k = Keys::default();
-        match crate::config::user_dir().map(|d| format!("{d}/keys.conf")).filter(|p| std::path::Path::new(p).exists()) {
-            Some(file) => {
-                println!("keys · {file}");
-                parse(&std::fs::read_to_string(&file).unwrap_or_default(), &mut k);
-            }
-            None => parse(DEFAULTS, &mut k),
+/// The bindings in force. The user's file is read again when it changes
+/// (looked at no more than once a second): a binding added or changed works
+/// at once, without logging in again.
+pub fn get() -> std::sync::Arc<Keys> {
+    type Loaded = (Option<std::time::SystemTime>, std::time::Instant, std::sync::Arc<Keys>);
+    static KEYS: std::sync::Mutex<Option<Loaded>> = std::sync::Mutex::new(None);
+    let file = crate::config::user_dir().map(|d| format!("{d}/keys.conf")).filter(|p| std::path::Path::new(p).exists());
+    let stamp = || file.as_ref().and_then(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok());
+    let mut slot = KEYS.lock().unwrap();
+    if let Some((was, checked, keys)) = slot.as_mut() {
+        if checked.elapsed() < std::time::Duration::from_secs(1) {
+            return keys.clone();
         }
-        k
-    })
+        *checked = std::time::Instant::now();
+        if stamp() == *was {
+            return keys.clone();
+        }
+    }
+    let first = slot.is_none();
+    let mut k = Keys::default();
+    match &file {
+        Some(file) => {
+            println!("keys · {file}{}", if first { "" } else { ": read again" });
+            parse(&std::fs::read_to_string(file).unwrap_or_default(), &mut k);
+        }
+        None => parse(DEFAULTS, &mut k),
+    }
+    let keys = std::sync::Arc::new(k);
+    *slot = Some((stamp(), std::time::Instant::now(), keys.clone()));
+    keys
 }
 
 pub fn parse(text: &str, k: &mut Keys) {
