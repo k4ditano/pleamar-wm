@@ -805,12 +805,19 @@ impl State {
         // As big as the monitors' scale asks (the plane holds up to 64).
         let most = self.monitors.iter().map(|m| m.scale).fold(1.0, f64::max);
         let size: u32 = (std::env::var("XCURSOR_SIZE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(24.0) * most).round() as u32;
-        let names: [(Cursor, &[&str]); 5] = [
+        let names: [(Cursor, &[&str]); 12] = [
             (Cursor::Normal, &["default", "left_ptr", "arrow"]),
             (Cursor::Hand, &["pointer", "hand2", "pointing_hand", "hand1"]),
             (Cursor::Text, &["text", "xterm", "ibeam"]),
             (Cursor::Grab, &["grab", "openhand", "hand1"]),
             (Cursor::Grabbing, &["grabbing", "closedhand", "fleur"]),
+            (Cursor::EwResize, &["ew-resize", "col-resize", "sb_h_double_arrow", "h_double_arrow", "size_hor"]),
+            (Cursor::NsResize, &["ns-resize", "row-resize", "sb_v_double_arrow", "v_double_arrow", "size_ver"]),
+            (Cursor::NwseResize, &["nwse-resize", "size_fdiag", "bd_double_arrow", "bottom_right_corner"]),
+            (Cursor::NeswResize, &["nesw-resize", "size_bdiag", "fd_double_arrow", "bottom_left_corner"]),
+            (Cursor::Move, &["move", "all-scroll", "fleur", "size_all"]),
+            (Cursor::NotAllowed, &["not-allowed", "crossed_circle", "forbidden"]),
+            (Cursor::Crosshair, &["crosshair", "cross", "tcross"]),
         ];
         let loaded = theme.as_deref().map(xcursor::CursorTheme::load);
         for (kind, candidates) in names {

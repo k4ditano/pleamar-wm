@@ -498,6 +498,12 @@ struct State {
     next_slot: usize,
     /// The size the scene wants for each slot, to answer a new window with it.
     asked: Vec<Option<(i32, i32)>>,
+    /// The windows that took the frame the scene draws (xdg-decoration,
+    /// server side), by their surface: the others draw their own.
+    decorated: std::collections::HashSet<WlSurface>,
+    /// A window that asked, from its own title bar or edge, to be carried or
+    /// stretched: until the button is let go.
+    held: Option<usize>,
     focus: Option<usize>,
     /// The last new window given your keyboard, the one that had it before,
     /// and when: a dialog that says only afterwards whose it is (a portal's)
@@ -767,6 +773,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         order: Vec::new(),
         next_slot: 0,
         asked: vec![None; max],
+        decorated: std::collections::HashSet::new(),
+        held: None,
         focus: None,
         focus_given: None,
         on_screen: 0,
@@ -1002,6 +1010,12 @@ impl State {
                         if self.focus != Some(slot) {
                             self.set_focus(Some(slot));
                         }
+                    }
+                }
+                // A window carried from its own title bar is let go with the button.
+                if !down {
+                    if let Some(slot) = self.held.take() {
+                        self.tell(NestEvent::Held { slot, how: 0, edges: 0 });
                     }
                 }
                 let p = self.pointer.clone();
@@ -1282,6 +1296,15 @@ impl State {
         }
         w.floated = yes;
         self.tell(NestEvent::Floating(slot, yes));
+    }
+
+    /// A window asks to be carried (1) or stretched (2) by its edges, from
+    /// its own frame: the scene does it while the button is down.
+    pub(crate) fn hold(&mut self, slot: usize, how: u32, edges: u32) {
+        if let Some(before) = self.held.replace(slot).filter(|s| *s != slot) {
+            self.tell(NestEvent::Held { slot: before, how: 0, edges: 0 });
+        }
+        self.tell(NestEvent::Held { slot, how, edges });
     }
 
     /// A dialog is left out of the layout's order (the scene floats it);
@@ -2212,6 +2235,10 @@ impl State {
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
         self.tell(NestEvent::Opened { slot, title, app, screen });
+        // Whether it lets the scene draw its frame: X11 programs do (the scene
+        // is their window manager); a Wayland one, if it took xdg-decoration.
+        let framed = self.slots[slot].as_ref().is_some_and(|w| matches!(w.toplevel, Toplevel::X11(_)) || self.decorated.contains(&w.surface));
+        self.tell(NestEvent::Framed(slot, framed));
         if let Some((icon, name, exec)) = program {
             self.tell(NestEvent::Program { slot, icon, name, exec });
         }
@@ -3038,7 +3065,27 @@ impl XdgShellHandler for State {
         self.place(Toplevel::Xdg(surface), s);
     }
 
+    /// Pressed on its own title bar (a GTK 4 header bar, a browser's tabs):
+    /// it asks to be carried with the mouse. Where it goes is the scene's,
+    /// which is told (`win.$i.held`) until the button is let go.
+    fn move_request(&mut self, surface: ToplevelSurface, _: WlSeat, _: Serial) {
+        if let Some(slot) = self.window_of(surface.wl_surface()) {
+            self.hold(slot, 1, 0);
+        }
+    }
+
+    /// Pressed on its own edge: it asks to be stretched by it.
+    fn resize_request(&mut self, surface: ToplevelSurface, _: WlSeat, _: Serial, edges: xdg_toplevel::ResizeEdge) {
+        if let Some(slot) = self.window_of(surface.wl_surface()) {
+            self.hold(slot, 2, u32::from(edges));
+        }
+    }
+
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.decorated.remove(surface.wl_surface());
+        if self.held.is_some_and(|slot| self.window_of(surface.wl_surface()) == Some(slot)) {
+            self.held = None;
+        }
         self.forget(&Toplevel::Xdg(surface));
     }
 
@@ -3145,6 +3192,13 @@ impl XdgDecorationHandler for State {
         if toplevel.is_initial_configure_sent() {
             toplevel.send_pending_configure();
         }
+        // It lets the scene draw its frame (the scene is told when it has a slot).
+        let surface = toplevel.wl_surface().clone();
+        if self.decorated.insert(surface.clone()) {
+            if let Some(slot) = self.window_of(&surface) {
+                self.tell(NestEvent::Framed(slot, true));
+            }
+        }
     }
     fn request_mode(&mut self, toplevel: ToplevelSurface, _: DecorationMode) {
         self.new_decoration(toplevel);
@@ -3186,7 +3240,14 @@ impl SeatHandler for State {
             CursorImageStatus::Named(I::Text | I::VerticalText) => pleamar::scene::Cursor::Text,
             CursorImageStatus::Named(I::Pointer) => pleamar::scene::Cursor::Hand,
             CursorImageStatus::Named(I::Grab) => pleamar::scene::Cursor::Grab,
-            CursorImageStatus::Named(I::Grabbing | I::Move) => pleamar::scene::Cursor::Grabbing,
+            CursorImageStatus::Named(I::Grabbing) => pleamar::scene::Cursor::Grabbing,
+            CursorImageStatus::Named(I::Move | I::AllScroll) => pleamar::scene::Cursor::Move,
+            CursorImageStatus::Named(I::EwResize | I::ColResize | I::EResize | I::WResize) => pleamar::scene::Cursor::EwResize,
+            CursorImageStatus::Named(I::NsResize | I::RowResize | I::NResize | I::SResize) => pleamar::scene::Cursor::NsResize,
+            CursorImageStatus::Named(I::NwseResize | I::NwResize | I::SeResize) => pleamar::scene::Cursor::NwseResize,
+            CursorImageStatus::Named(I::NeswResize | I::NeResize | I::SwResize) => pleamar::scene::Cursor::NeswResize,
+            CursorImageStatus::Named(I::NotAllowed | I::NoDrop) => pleamar::scene::Cursor::NotAllowed,
+            CursorImageStatus::Named(I::Crosshair) => pleamar::scene::Cursor::Crosshair,
             _ => pleamar::scene::Cursor::Normal,
         };
         // Over a program's surface of its own, the session shows it; over a

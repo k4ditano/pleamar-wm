@@ -229,10 +229,29 @@ impl XwmHandler for State {
     }
 
     // Where a window goes and how big is the scene's: moving or resizing it
-    // from its own frame does nothing.
-    fn resize_request(&mut self, _: XwmId, _: X11Surface, _: u32, _: ResizeEdge) {}
+    // from its own frame is asked of the scene (`win.$i.held`), which may do it.
+    fn resize_request(&mut self, _: XwmId, window: X11Surface, _: u32, edges: ResizeEdge) {
+        if let Some(slot) = self.x11_slot(&window) {
+            // As xdg-shell counts them: 1 top, 2 bottom, 4 left, 8 right.
+            let bits = match edges {
+                ResizeEdge::Top => 1,
+                ResizeEdge::Bottom => 2,
+                ResizeEdge::Left => 4,
+                ResizeEdge::TopLeft => 5,
+                ResizeEdge::BottomLeft => 6,
+                ResizeEdge::Right => 8,
+                ResizeEdge::TopRight => 9,
+                ResizeEdge::BottomRight => 10,
+            };
+            self.hold(slot, 2, bits);
+        }
+    }
 
-    fn move_request(&mut self, _: XwmId, _: X11Surface, _: u32) {}
+    fn move_request(&mut self, _: XwmId, window: X11Surface, _: u32) {
+        if let Some(slot) = self.x11_slot(&window) {
+            self.hold(slot, 1, 0);
+        }
+    }
 
     fn allow_selection_access(&mut self, _: XwmId, _: SelectionTarget) -> bool {
         true
