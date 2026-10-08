@@ -90,6 +90,10 @@ scene Session {
     fact over = -1                       // the window under the one carried
     fact landing = -1                    // let go on the other monitor, and which
     fact landing.to = 0
+    // It arrived, or it closed on the way, or the compositor never sent it: the
+    // one left with the mouse goes. (A window closed while landing stayed as a
+    // little picture after the pointer for good.)
+    on still landing for 1500ms while landing >= 0 { landing = -1 }
     // The mouse on the whole desktop: which monitor, and where on it. Each
     // copy only knows its own; the one the mouse is over says it.
     fact mon = 0
@@ -7127,7 +7131,7 @@ scene Session {
         let w = w.$i
         let h = h.$i
         group {
-            show: dragging == i or (landing == i and win.$i.screen != landing.to)
+            show: dragging == i or (landing == i and win.$i.open and win.$i.screen != landing.to)
             opacity: 88%
             pivot: x + w / 2, y + h / 2
             scale: 1
@@ -7136,7 +7140,7 @@ scene Session {
                 shadow: 0, 26, 50, 60%
                 box { from: x, y; size: w, h; corner: 12 }
             }
-            let carried = dragging == i or (landing == i and win.$i.screen != landing.to)
+            let carried = dragging == i or (landing == i and win.$i.open and win.$i.screen != landing.to)
             group {
                 show: wet <= 0.001 and cold <= 0.001
                 clip box { from: x, y; size: w, h; corner: 12 }
@@ -7653,7 +7657,7 @@ scene Session {
     on still drop for 60ms while falling and drop > 0.97 and screen.index == 0 { launch "pleamar-wm --say marea 'emit ride_back'" }
     repeat i in 0..16 {
         let sc = win.$i.screen
-        let carried = dragging == i or (landing == i and win.$i.screen != landing.to)
+        let carried = dragging == i or (landing == i and win.$i.open and win.$i.screen != landing.to)
         // (On a workspace sliding away, she slides away with it.)
         let ride.slide = 0
         // The window's corner on the desktop: where it is laid out, or where
