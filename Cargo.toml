@@ -1,6 +1,6 @@
 [package]
 name = "pleamar-wm"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "BSD-3-Clause"
 description = "A window manager written as a pleamar scene: a Wayland compositor that fills a scene's `windows`"
