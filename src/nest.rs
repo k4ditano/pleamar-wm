@@ -935,6 +935,9 @@ impl State {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.time();
         match m {
+            // Linux clients already own their surfaces; this hint allows native
+            // capture providers to suspend pictures outside the scene's view.
+            ToNest::Visible(_) => {},
             ToNest::Size(w, h) => {
                 // Nested, the output is the scene; with monitors of our own, they are.
                 if layers::monitors().is_empty() {

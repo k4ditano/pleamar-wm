@@ -1,0 +1,41 @@
+// Native dock validation scene. Choose its output and source explicitly:
+// pleamar-wm --scene examples/windows-dock.plm --screen DISPLAY_NAME --preview-monitor DISPLAY_NAME --window-actions
+scene NativeDock {
+    surface { size: 900, 420; kind: window; title: "pleamar · native dock" }
+    windows win max 32
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text "Applications" { at: 20, 18; size: 26; color: #eeeeee }
+    text "Select an app. Pin keeps it here after its windows close." { at: 20, 54; size: 13; color: #9ed6bd }
+    image icon.0 = from win.dock.0.0.icon, 64, 64
+    image icon.1 = from win.dock.0.1.icon, 64, 64
+    image icon.2 = from win.dock.0.2.icon, 64, 64
+    image icon.3 = from win.dock.0.3.icon, 64, 64
+    image icon.4 = from win.dock.0.4.icon, 64, 64
+    image icon.5 = from win.dock.0.5.icon, 64, 64
+    image icon.6 = from win.dock.0.6.icon, 64, 64
+    image icon.7 = from win.dock.0.7.icon, 64, 64
+    image icon.8 = from win.dock.0.8.icon, 64, 64
+    image icon.9 = from win.dock.0.9.icon, 64, 64
+    image icon.10 = from win.dock.0.10.icon, 64, 64
+    image icon.11 = from win.dock.0.11.icon, 64, 64
+    repeat i in 0..12 {
+        let x = 20 + mod(i, 6) * 144
+        let y = 94 + floor(i / 6) * 152
+        group {
+            show: i < win.docks.0
+            box { from: x, y; size: 136, 134; color: #20292f; corner: 10 }
+            image icon.$i { at: x + 44, y + 8; size: 48, 48 }
+            text win.dock.0.$i.name { at: x + 8, y + 62; width: 120; lines: 1; size: 12; color: #eeeeee }
+            text "Pin" { at: x + 8, y + 102; size: 13; color: #9ed6bd; show: not win.dock.0.$i.pinned }
+            text "Unpin" { at: x + 8, y + 102; size: 13; color: #9ed6bd; show: win.dock.0.$i.pinned }
+        }
+        zone box open.$i { from: x, y; size: 136, 92; active: i < win.docks.0; label: "{win.dock.0.$i.name}" }
+        zone box keep.$i { from: x, y + 92; size: 136, 42; active: i < win.docks.0 and not win.dock.0.$i.pinned; label: "Pin application" }
+        zone box unkeep.$i { from: x, y + 92; size: 136, 42; active: i < win.docks.0 and win.dock.0.$i.pinned; label: "Unpin application" }
+        on press open.$i { dock i on 0 }
+        on drop open.$i { dock i on 0 with drop }
+        on press keep.$i { dock i on 0 pin }
+        on press unkeep.$i { dock i on 0 unpin }
+    }
+    text "No applications on this monitor" { at: 20, 110; size: 16; color: #9ed6bd; show: win.docks.0 < 0.5 }
+}

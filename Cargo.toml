@@ -5,6 +5,25 @@ edition = "2024"
 license = "BSD-3-Clause"
 description = "A window manager written as a pleamar scene: a Wayland compositor that fills a scene's `windows`"
 repository = "https://github.com/k4ditano/pleamar-wm"
+default-run = "pleamar-wm"
+
+[features]
+windows-host = []
+
+[[bin]]
+name = "pleamar-wm-host"
+path = "src/bin/pleamar-wm-host.rs"
+test = false
+required-features = ["windows-host"]
+
+[workspace]
+# `stream`: the remote's video, a program of its own (it links the system's
+# ffmpeg, which the session itself does not need; and a fault in an encoder
+# ends that program, not the remote). Built apart, `cargo build --release -p
+# pleamar-wm-stream`: without ffmpeg's development files it does not build,
+# and the remote uses wf-recorder instead.
+members = [".", "stream"]
+default-members = ["."]
 
 [workspace]
 # `stream`: the remote's video, a program of its own (it links the system's
@@ -17,6 +36,10 @@ default-members = ["."]
 
 [dependencies]
 pleamar = { path = "../pleamar" }
+# Native Windows scene discovery and command routing.
+serde_json = "1.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # `pleamar-wm remote`: the page's socket, its sign-in (a password's hash, six-digit codes).
@@ -37,3 +60,24 @@ zbus = "5"
 async-channel = "2"
 async-io = "2"
 futures-lite = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_System_JobObjects",
+    "Win32_System_ProcessStatus",
+    "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem",
+    "Win32_Security", "Win32_Security_Authorization", "Win32_System_RemoteDesktop",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage", "Win32_Storage_Packaging_Appx",
+    "Foundation", "Graphics_Capture", "Graphics_DirectX_Direct3D11",
+    "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+] }

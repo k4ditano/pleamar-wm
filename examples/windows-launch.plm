@@ -1,0 +1,17 @@
+// Open only after an explicit press or Alt+Return. Authored commands use PowerShell.
+// pleamar-wm --scene examples/windows-launch.plm --screen '\\.\DISPLAY2' --preview-monitor all --window-actions
+scene NativeLaunch {
+    surface { size: 520, 220; kind: window; title: "pleamar · native launch" }
+    windows win max 4
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text "Native scene launch" { at: 24, 24; size: 26; color: #eeeeee }
+    text "Opens a normal Windows application, using its own window." {
+        at: 24, 66; size: 13; color: #9ed6bd; width: 470
+    }
+    box { from: 24, 110; size: 200, 48; color: #283d35; corner: 10 }
+    text "Open Notepad" { at: 42, 126; size: 16; color: #eeeeee }
+    zone box open_editor { from: 24, 110; size: 200, 48; label: "Open Notepad" }
+    on press open_editor { launch "notepad.exe" }
+    on key Alt+Return { launch "notepad.exe" }
+    text "Alt+Return · no independent agent keyboard" { at: 24, 181; size: 12; color: #9ed6bd }
+}

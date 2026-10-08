@@ -1,0 +1,25 @@
+// Opt in explicitly: pleamar-wm --scene examples/windows-send.plm --preview-monitor all --window-actions
+// Restore a minimized/maximized source before sending it. Each button names a scene output.
+scene SendWindows {
+    surface { size: 960, 640; kind: window; screens: each max 4; title: "pleamar · send windows" }
+    windows win max 8
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text screen.name { at: 20, 16; size: 20; color: #eeeeee }
+    repeat i in 0..8 {
+        let x = 20 + mod(i, 2) * 460
+        let y = 60 + floor(i / 2) * 140
+        group {
+            show: win.$i.open and win.$i.screen == screen.index
+            text win.$i.title { at: x, y; size: 14; color: #eeeeee; width: 430; lines: 1 }
+            window win.$i { at: x, y + 24; size: 210, 104; ask: -1, -1 }
+            repeat s in 0..4 {
+                box send_to {
+                    from: x + 220 + mod(s, 2) * 110, y + 24 + floor(s / 2) * 48
+                    size: 102, 40; color: #36514b; label: "Send to monitor {s}"
+                }
+                text "Monitor {s}" { at: x + 228 + mod(s, 2) * 110, y + 38 + floor(s / 2) * 48; size: 13; color: #ffffff }
+                on press send_to { send win.$i to s }
+            }
+        }
+    }
+}

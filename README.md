@@ -132,6 +132,10 @@ the open windows without closing anything.
 
 # Install
 
+An experimental native Windows companion is being developed. See
+[Windows build instructions and capability status](WINDOWS.md); it does not
+yet provide the complete compositor session described above.
+
 With pleamar and Marea, in your home, from one line:
 
 ```sh

@@ -1,0 +1,41 @@
+// Native size requests change each application's outer window on its monitor.
+// pleamar-wm --scene examples/windows-resize.plm --screen '\\.\DISPLAY2' --preview-monitor '\\.\DISPLAY2' --window-actions
+scene NativeSizes {
+    surface { size: 960, 560; kind: window; title: "pleamar · native sizes" }
+    windows win max 2
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text "Native window sizes" { at: 20, 18; size: 26; color: #eeeeee }
+    text "Sizes include the native frame. Applications can limit or refuse a resize." {
+        at: 20, 54; size: 13; color: #9ed6bd
+    }
+    repeat i in 0..2 {
+        let x = 20 + i * 470
+        prop width.$i = 0
+        prop height.$i = 0
+        event compact.$i
+        event large.$i
+        event own.$i
+        on compact.$i { width.$i: 320 ~0ms; height.$i: 240 ~0ms }
+        on large.$i { width.$i: 640 ~0ms; height.$i: 400 ~0ms }
+        on own.$i { width.$i: 0 ~0ms; height.$i: 0 ~0ms }
+        group {
+            show: win.$i.open
+            box { from: x, 90; size: 450, 440; color: #20292f; corner: 10 }
+            text win.$i.title { at: x + 12, 104; size: 14; color: #eeeeee; width: 426; lines: 1 }
+            window win.$i { at: x + 12, 138; size: 426, 330; ask: width.$i, height.$i }
+            text "Compact" { at: x + 16, 494; size: 14; color: #9ed6bd }
+            text "Large" { at: x + 144, 494; size: 14; color: #9ed6bd }
+            text "App size" { at: x + 270, 494; size: 14; color: #9ed6bd }
+        }
+        zone box compact.$i { from: x + 6, 480; size: 120, 44; active: win.$i.open }
+        zone box large.$i { from: x + 134, 480; size: 110, 44; active: win.$i.open }
+        zone box own.$i { from: x + 260, 480; size: 120, 44; active: win.$i.open }
+        on press compact.$i { emit compact.$i }
+        on press large.$i { emit large.$i }
+        on press own.$i { emit own.$i }
+    }
+    text "No eligible windows on the selected monitor" {
+        at: screen.width / 2, screen.height / 2; anchor: center; size: 16;
+        color: #9ed6bd; show: win.count < 0.5
+    }
+}

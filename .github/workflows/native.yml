@@ -1,0 +1,289 @@
+name: Native Windows and Linux builds
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      pleamar_repository:
+        description: Repository containing the matching pleamar library
+        default: SamuelHinestrosa/pleamar
+        required: true
+      pleamar_ref:
+        description: Exact pleamar revision (Windows backend required)
+        default: fc6b1637ee74e557fd1fd52a948898a7fa83c1c3
+        required: true
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pleamar-wm
+      # Until the companion pleamar Windows PR is merged, test its exact head.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pleamar_repository || 'SamuelHinestrosa/pleamar' }}
+          ref: ${{ inputs.pleamar_ref || 'fc6b1637ee74e557fd1fd52a948898a7fa83c1c3' }}
+          path: pleamar
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev libpam0g-dev
+          libinput-dev libudev-dev libseat-dev libgbm-dev libdrm-dev
+          libpipewire-0.3-dev libssl-dev libclang-dev clang
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: false
+          cache-bin: false
+          workspaces: pleamar-wm -> target
+      - name: Build with default Luau support
+        working-directory: pleamar-wm
+        run: cargo build --locked
+      - name: Unit tests (interactive desktop tests remain opt-in)
+        working-directory: pleamar-wm
+        run: cargo test --locked
+      - name: Check the upstream tablet session scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/session.plm
+      - name: Check the preview scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-preview.plm
+      - name: Check the native dock scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-dock.plm
+      - name: Check the owned fixture desktop guard
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        run: cargo test --locked --example windows-dock-fixture
+      - name: Retire and reopen idle native capture devices without desktop interaction
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        run: >-
+          cargo test --locked --bin pleamar-wm
+          windows_backend::capture::tests::native_capture_device_idle_retirement
+          -- --ignored --exact --nocapture --test-threads=1
+      - name: Recover normal positions without changing show state or focus
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        shell: pwsh
+        env:
+          PLEAMAR_WM_CI_RECOVERY: '1'
+          PLEAMAR_WM_CI_OUTPUT: ${{ runner.temp }}/wm-recovery-acceptance
+        run: >-
+          cargo test --locked --bin pleamar-wm
+          windows_backend::session::recovery_tests::native_recovery_preserves_show_states
+          -- --ignored --exact --nocapture --test-threads=1
+      - name: Keep native recovery evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-recovery-acceptance
+          path: ${{ runner.temp }}/wm-recovery-acceptance
+          if-no-files-found: warn
+      - name: Native fullscreen, rollback and crash recovery on owned windows
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        env:
+          PLEAMAR_WM_CI_FULLSCREEN: '1'
+          PLEAMAR_WM_TEST_OUTPUT: ${{ runner.temp }}/wm-fullscreen-acceptance
+        run: >-
+          cargo test --locked --bin pleamar-wm
+          windows_backend::session::fullscreen_tests::native_fullscreen_and_recovery
+          -- --ignored --exact --nocapture --test-threads=1
+      - name: Keep native fullscreen evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-fullscreen-acceptance
+          path: ${{ runner.temp }}/wm-fullscreen-acceptance
+          if-no-files-found: warn
+      - name: Native window navigation and polite close on owned windows
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        env:
+          PLEAMAR_WM_CI_NAVIGATION: '1'
+          PLEAMAR_WM_CI_OUTPUT: ${{ runner.temp }}/wm-navigation-acceptance
+        run: >-
+          cargo test --locked --bin pleamar-wm
+          windows_backend::session::navigation_tests::native_navigation_and_close
+          -- --ignored --exact --nocapture --test-threads=1
+      - name: Keep native navigation evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-navigation-acceptance
+          path: ${{ runner.temp }}/wm-navigation-acceptance
+          if-no-files-found: warn
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: '3.13'
+      - name: Build the distribution binary for native scene acceptance
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        run: cargo build --release --locked --bin pleamar-wm --example windows-dock-fixture
+      - name: Native cross-process fullscreen and forced-exit recovery
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        env:
+          PLEAMAR_WM_CI_DOCK: '1'
+        shell: pwsh
+        run: |
+          $screens = @(& target/release/pleamar-wm.exe monitors | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $screens.Count -eq 0) { throw 'No CI monitor.' }
+          python tests/windows-fullscreen.py --binary target/release/pleamar-wm.exe --fixture target/release/examples/windows-dock-fixture.exe --monitor $screens[0].name --ci-owned-desktop --output "$env:RUNNER_TEMP/wm-fullscreen-process-acceptance"
+          if ($LASTEXITCODE -ne 0) { throw 'Cross-process fullscreen failed.' }
+      - name: Keep cross-process fullscreen evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-fullscreen-process-acceptance
+          path: ${{ runner.temp }}/wm-fullscreen-process-acceptance
+          if-no-files-found: warn
+      - name: Verified shader compiler for the native scene fixture
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'wm-scene-dxc'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $archive = Join-Path $stage 'dxc.zip'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne 'AD31B1FC8443175D204F77A611FDB3EF2EC42759BDC2F1167368DE24A4A7E7F1') { throw 'DXC checksum mismatch' }
+          $unpacked = Join-Path $stage 'unpacked'
+          Expand-Archive -LiteralPath $archive -DestinationPath $unpacked
+          foreach ($name in @('dxcompiler.dll', 'dxil.dll')) {
+            Copy-Item -LiteralPath (Join-Path $unpacked "bin/x64/$name") -Destination (Join-Path 'target/release' $name)
+          }
+          $licenses = Join-Path 'target/release' 'licenses/dxc'
+          New-Item -ItemType Directory -Path $licenses | Out-Null
+          foreach ($name in @('LICENCE-MIT.txt', 'LICENSE-LLVM.txt', 'LICENSE-MS.txt')) {
+            Copy-Item -LiteralPath (Join-Path $unpacked $name) -Destination $licenses
+          }
+      - name: Build owned native control fixture
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $messages = cargo test --manifest-path ../pleamar/Cargo.toml --target-dir target --locked --lib --no-run --message-format=json | ForEach-Object { $_ | ConvertFrom-Json }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the owned native input fixture' }
+          $tests = @($messages | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'pleamar' -and $_.profile.test -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one engine test executable' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "PLEAMAR_ENGINE_TEST_BINARY=$($tests[0].executable)"
+      - name: Native dock pinning and OS file drop on owned windows
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          PLEAMAR_WM_CI_DOCK_DROP: '1'
+        run: |
+          $screens = & target/release/pleamar-wm.exe monitors | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Monitor discovery failed.' }
+          $screen = @($screens | Where-Object primary | Select-Object -First 1)
+          if ($screen.Count -ne 1) { throw 'The disposable CI desktop has no output.' }
+          python tests/windows-dock.py --binary target/release/pleamar-wm.exe --fixture target/release/examples/windows-dock-fixture.exe --monitor $screen[0].name --output (Join-Path $env:RUNNER_TEMP 'wm native dock') --ci-ole-source $env:PLEAMAR_ENGINE_TEST_BINARY
+          if ($LASTEXITCODE -ne 0) { throw 'Native dock and OLE acceptance failed.' }
+      - name: Keep native dock and file-drop evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-native-dock
+          path: ${{ runner.temp }}/wm native dock
+          if-no-files-found: warn
+      - name: Native minimize and restore shortcuts on owned windows
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          PLEAMAR_WM_CI_SHORTCUTS: '1'
+        run: |
+          python tests/windows-session-shortcuts.py --binary target/release/pleamar-wm.exe --tests $env:PLEAMAR_ENGINE_TEST_BINARY --output "${{ runner.temp }}/wm shortcuts ñ"
+          if ($LASTEXITCODE -ne 0) { throw 'Native minimize/restore shortcuts failed' }
+      - name: Keep native shortcut evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-native-shortcuts
+          path: ${{ runner.temp }}/wm shortcuts ñ
+          if-no-files-found: warn
+      - name: Native agent CLI input on owned Win32 controls
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          PLEAMAR_WM_CI_AGENT_INPUT: '1'
+        run: |
+          python tests/windows-agent-input.py --binary target/release/pleamar-wm.exe --tests $env:PLEAMAR_ENGINE_TEST_BINARY --output "${{ runner.temp }}/wm agent input ñ"
+          if ($LASTEXITCODE -ne 0) { throw 'Native agent CLI input failed' }
+      - name: Keep native agent CLI evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-native-agent-input
+          path: ${{ runner.temp }}/wm agent input ñ
+          if-no-files-found: warn
+      - name: Rendered scene launch, Luau, reload and owned child cleanup
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        timeout-minutes: 6
+        env:
+          PLEAMAR_WM_CI_SCENE_LAUNCH: '1'
+        run: python tests/windows-scene-launch.py --binary target/release/pleamar-wm.exe --output "${{ runner.temp }}/wm native scene ñ"
+      - name: Keep native scene launch evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-native-scene-launch
+          path: ${{ runner.temp }}/wm native scene ñ
+          if-no-files-found: warn
+      - name: Check the overview scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-overview.plm
+      - name: Check the native sizes scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-resize.plm
+      - name: Check the per-monitor preview scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-monitors.plm
+      - name: Check the native launch scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-launch.plm
+      - name: Check the native monitor send scene
+        working-directory: pleamar-wm
+        run: cargo run --locked -- --check examples/windows-send.plm
+      - name: Build the Windows background host
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        run: cargo build --locked --features windows-host --bin pleamar-wm-host
+      - name: Native Windows capability smoke
+        if: runner.os == 'Windows'
+        working-directory: pleamar-wm
+        shell: pwsh
+        run: |
+          $caps = & ./target/debug/pleamar-wm.exe capabilities | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $caps.platform -ne 'windows' -or !$caps.explicit_layouts) {
+            throw 'Native capability query failed'
+          }
+          if (!$caps.visible_window_capture -or $caps.preview_redirected_input -or ($caps.preview_window_actions -join ',') -ne 'focus,close,minimize,restore,configure,send,fullscreen') {
+            throw 'Incorrect native preview action capabilities'
+          }
+          if ($caps.session_shortcuts -notcontains 'fullscreen') { throw 'Missing native fullscreen shortcut capability' }
+          if (!$caps.scene_launch -or $caps.agent_background_launch) { throw 'Incorrect native launch capabilities' }
+          if (!$caps.agent_window_send) { throw 'Missing native agent send capability' }
+          & ./target/debug/pleamar-wm.exe remote
+          if ($LASTEXITCODE -eq 0) { throw 'An unavailable remote desktop reported success' }
+          exit 0

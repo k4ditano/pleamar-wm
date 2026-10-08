@@ -1,0 +1,28 @@
+// Native view-only pictures. On Windows, choose the source monitor explicitly:
+// pleamar-wm --scene examples/windows-preview.plm --preview-monitor '\\.\DISPLAY2'
+// Add --preview-process PID to limit capture to one current process.
+scene WindowPreviews {
+    surface { size: 960, 640; kind: window; title: "pleamar · window previews" }
+    windows win max 6
+    let gap = 16
+    let columns = min(max(win.count, 1), 3)
+    let rows = max(ceil(win.count / columns), 1)
+    let width = (screen.width - gap * (columns + 1)) / columns
+    let height = (screen.height - 96 - gap * (rows + 1)) / rows
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text "Live window previews" { at: 16, 20; size: 24; color: #eeeeee }
+    text "View only · interact with the original application" { at: 16, 54; size: 13; color: #9ed6bd }
+    repeat i in 0..6 {
+        let x = gap + mod(max(win.$i.place, 0), columns) * (width + gap)
+        let y = 88 + gap + floor(max(win.$i.place, 0) / columns) * (height + gap)
+        group {
+            show: win.$i.open
+            text win.$i.title { at: x, y; size: 13; color: #eeeeee; width: width; lines: 1 }
+            window win.$i { at: x, y + 24; size: width, max(height - 24, 1); ask: -1, -1 }
+        }
+    }
+    text "No eligible windows on the selected monitor" {
+        at: screen.width / 2, screen.height / 2; anchor: center; size: 16;
+        color: #9ed6bd; show: win.count < 0.5
+    }
+}

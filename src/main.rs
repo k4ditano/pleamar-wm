@@ -3,23 +3,41 @@
 //! scene's. Everything else —the command line, the scenes, the reloads— is
 //! pleamar's own.
 
+#[cfg(target_os = "linux")]
 mod agent_cli;
+#[cfg(target_os = "linux")]
 mod remote;
+#[cfg(target_os = "linux")]
 mod remote_rtc;
+mod window_rules;
+#[cfg(target_os = "linux")]
 mod config;
+#[cfg(target_os = "linux")]
 mod cursor;
+#[cfg(target_os = "linux")]
 mod desktop;
+#[cfg(target_os = "linux")]
 mod nest;
+#[cfg(target_os = "linux")]
 mod phone;
+#[cfg(target_os = "linux")]
 mod portal;
+#[cfg(target_os = "linux")]
 mod headless;
+#[cfg(target_os = "linux")]
 mod layers;
+#[cfg(target_os = "linux")]
 mod keys;
+#[cfg(target_os = "linux")]
 mod probe;
+#[cfg(target_os = "linux")]
 mod route;
+#[cfg(target_os = "linux")]
 mod screen;
+#[cfg(target_os = "linux")]
 mod session;
 
+#[cfg(target_os = "linux")]
 fn main() {
     pleamar::provide_windows(|max, to_render| {
         let tx = nest::start(max, to_render)?;
@@ -137,6 +155,7 @@ fn main() {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn hyprctl(what: &str) -> i32 {
     let Some(Ok(text)) = nest::desktop_file().map(std::fs::read_to_string) else {
         eprintln!("pleamar-wm's session is not running");
@@ -174,6 +193,7 @@ fn hyprctl(what: &str) -> i32 {
 
 /// What pleamar-wm adds to `pleamar --report`: which window manager runs, on
 /// which monitors, and what the session's configuration says of them.
+#[cfg(target_os = "linux")]
 fn report_section() -> String {
     let mut out = format!("## pleamar-wm\n\n- **Version:** {}\n", env!("CARGO_PKG_VERSION"));
     let own = config::user_dir().is_some_and(|d| std::path::Path::new(&format!("{d}/wm/session.plm")).exists());
@@ -199,6 +219,7 @@ fn report_section() -> String {
 
 /// The user's folder, to start from: what the session reads, commented, and
 /// the folders for their own window manager and shells.
+#[cfg(target_os = "linux")]
 fn init() -> i32 {
     let Some(dir) = config::user_dir() else {
         eprintln!("init · no HOME");
@@ -233,8 +254,10 @@ fn init() -> i32 {
 
 /// The window manager that comes with pleamar-wm, inside it: an installed
 /// pleamar-wm has no source folder next to it.
+#[cfg(target_os = "linux")]
 const DEFAULT_SCENE: &str = include_str!("../examples/session.plm");
 /// And the shaders it reads, relative to it.
+#[cfg(target_os = "linux")]
 const DEFAULT_SHADERS: &[(&str, &str)] = &[
     ("shaders/rain.wgsl", include_str!("../examples/shaders/rain.wgsl")),
     ("shaders/snow.wgsl", include_str!("../examples/shaders/snow.wgsl")),
@@ -242,6 +265,7 @@ const DEFAULT_SHADERS: &[(&str, &str)] = &[
 
 /// The scene and its shaders into `dir`. `refresh`: the runtime copy, kept the
 /// same as the one inside; otherwise someone's folder, where nothing is overwritten.
+#[cfg(target_os = "linux")]
 fn write_scene(dir: &str, refresh: bool) -> i32 {
     let mut failed = 0;
     for (name, text) in std::iter::once(("session.plm", DEFAULT_SCENE)).chain(DEFAULT_SHADERS.iter().copied()) {
@@ -270,6 +294,7 @@ fn write_scene(dir: &str, refresh: bool) -> i32 {
 
 /// The scene when none is said: the user's own (~/.config/pleamar/wm/session.plm),
 /// or the one that comes with it, written where it can be read.
+#[cfg(target_os = "linux")]
 fn default_scene() -> String {
     if let Some(own) = config::user_dir().map(|d| format!("{d}/wm/session.plm")).filter(|p| std::path::Path::new(p).exists()) {
         return own;
@@ -282,7 +307,24 @@ fn default_scene() -> String {
 }
 
 /// Where the session's agent socket is, for the display it serves.
+#[cfg(target_os = "linux")]
 pub fn agent_socket_path(display: &str) -> String {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
     format!("{dir}/pleamar-{display}/cua-inject.sock")
+}
+
+#[cfg(any(target_os = "windows", test))]
+mod layout;
+#[cfg(target_os = "windows")]
+mod windows_backend;
+
+#[cfg(target_os = "windows")]
+fn main() {
+    std::process::exit(windows_backend::run(std::env::args().skip(1).collect()));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn main() {
+    eprintln!("pleamar-wm supports Linux and the experimental Windows desktop backend");
+    std::process::exit(1);
 }

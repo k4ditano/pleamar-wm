@@ -1,0 +1,42 @@
+// Native Windows overview. Choose both its output and source monitor:
+// pleamar-wm --scene examples/windows-overview.plm --screen '\\.\DISPLAY2' --preview-monitor '\\.\DISPLAY2' --window-actions
+// Use --preview-process PID to restrict it to one current process.
+scene NativeOverview {
+    surface { size: 960, 640; kind: window; title: "pleamar · native windows" }
+    windows win max 6
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text "Windows" { at: 20, 18; size: 26; color: #eeeeee }
+    text "Select a window to use it. Minimized previews keep their last picture." {
+        at: 20, 54; size: 13; color: #9ed6bd
+    }
+    let width = (screen.width - 64) / 3
+    let height = (screen.height - 128) / 2
+    repeat i in 0..6 {
+        let x = 16 + mod(i, 3) * (width + 16)
+        let y = 92 + floor(i / 3) * (height + 16)
+        group {
+            show: win.$i.open
+            box { from: x, y; size: width, height; color: #20292f; corner: 10 }
+            text win.$i.title { at: x + 10, y + 10; size: 13; color: #eeeeee; width: width - 20; lines: 1 }
+            window win.$i { at: x + 10, y + 38; size: width - 20, height - 88; ask: -1, -1 }
+            text "Select" { at: x + 10, y + height - 30; size: 13; color: #9ed6bd }
+            text "Minimize" { at: x + 82, y + height - 30; size: 13; color: #eeeeee; show: not win.$i.minimized }
+            text "Restore" { at: x + 82, y + height - 30; size: 13; color: #9ed6bd; show: win.$i.minimized }
+            text "Close" { at: x + width - 52, y + height - 30; size: 13; color: #e9a79e }
+        }
+        zone box select.$i { from: x, y; size: width, height - 40; active: win.$i.open }
+        zone box select_label.$i { from: x, y + height - 40; size: 72, 40; active: win.$i.open }
+        zone box put_away.$i { from: x + 76, y + height - 40; size: 82, 40; active: win.$i.open and not win.$i.minimized }
+        zone box bring_back.$i { from: x + 76, y + height - 40; size: 82, 40; active: win.$i.open and win.$i.minimized }
+        zone box dismiss.$i { from: x + width - 62, y + height - 40; size: 62, 40; active: win.$i.open }
+        on press select.$i { focus win.$i }
+        on press select_label.$i { focus win.$i }
+        on press put_away.$i { minimize win.$i }
+        on press bring_back.$i { restore win.$i }
+        on press dismiss.$i { close win.$i }
+    }
+    text "No eligible windows on the selected monitor" {
+        at: screen.width / 2, screen.height / 2; anchor: center; size: 16;
+        color: #9ed6bd; show: win.count < 0.5
+    }
+}

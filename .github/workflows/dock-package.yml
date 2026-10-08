@@ -1,0 +1,55 @@
+name: Native packaged dock acceptance
+on:
+  push:
+    paths:
+      - '.github/workflows/dock-package.yml'
+      - 'tests/windows-dock-package.ps1'
+      - 'src/windows_dock_package_tests.rs'
+      - 'src/windows_dock.rs'
+      - 'src/windows_dock_activation.rs'
+      - 'examples/windows-dock-fixture.rs'
+  workflow_dispatch:
+    inputs:
+      pleamar_ref:
+        description: Exact companion engine revision
+        default: 9ef0593126443976e8247e5ffc10ef1828157891
+        required: true
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pleamar-wm
+      - uses: actions/checkout@v4
+        with:
+          repository: SamuelHinestrosa/pleamar
+          ref: ${{ inputs.pleamar_ref || '9ef0593126443976e8247e5ffc10ef1828157891' }}
+          path: pleamar
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          cache-workspace-crates: false
+          cache-bin: false
+          workspaces: pleamar-wm -> target
+      - name: Build owned package fixture and native dock
+        working-directory: pleamar-wm
+        run: cargo build --release --locked --bin pleamar-wm --example windows-dock-fixture
+      - name: Real packaged application and file activation
+        working-directory: pleamar-wm
+        shell: powershell
+        env:
+          PLEAMAR_WM_CI_DOCK_PACKAGE: '1'
+        run: ./tests/windows-dock-package.ps1 -Output (Join-Path $env:RUNNER_TEMP 'owned dock package')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-dock-package
+          path: |
+            ${{ runner.temp }}/owned dock package/*report.json
+            ${{ runner.temp }}/owned dock package/launch-*.json
+          if-no-files-found: warn

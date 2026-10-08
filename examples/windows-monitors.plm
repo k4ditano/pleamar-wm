@@ -1,0 +1,26 @@
+// Native copies share a catalog, but each displays its own monitor's windows.
+// pleamar-wm --scene examples/windows-monitors.plm --preview-monitor all
+// No window actions or OS input forwarding is enabled by this example.
+scene MonitorPreviews {
+    surface { size: full, full; screens: each max 4; keyboard: none; reserve: 0; rate: 30 }
+    windows win max 8
+    let gap = 20
+    let count = pick(screen.index, win.on.0, win.on.1, win.on.2, win.on.3)
+    let columns = min(max(count, 1), 3)
+    let rows = max(ceil(count / columns), 1)
+    let width = (screen.width - gap * (columns + 1)) / columns
+    let height = (screen.height - 80 - gap * (rows + 1)) / rows
+    box { from: 0, 0; size: screen.width, screen.height; color: #12171b }
+    text screen.name {
+        at: gap, 20; size: 22; color: #eeeeee
+    }
+    repeat i in 0..8 {
+        let x = gap + mod(max(win.$i.place, 0), columns) * (width + gap)
+        let y = 64 + gap + floor(max(win.$i.place, 0) / columns) * (height + gap)
+        group {
+            show: win.$i.open and win.$i.screen == screen.index
+            text win.$i.title { at: x, y; size: 14; color: #eeeeee; width: width; lines: 1 }
+            window win.$i { at: x, y + 24; size: width, max(height - 24, 1); ask: -1, -1 }
+        }
+    }
+}

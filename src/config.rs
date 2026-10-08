@@ -100,68 +100,12 @@ pub struct Config {
     pub agent: bool,
 }
 
-/// A rule for the windows that match it: by their program (`app=`, the
-/// app_id or the X11 class) and/or their title (`title=`), with no case, and
-/// `*` for anything (`app=org.gnome.*`). Several may match: each says what it says.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WindowRule {
-    pub app: Option<String>,
-    pub title: Option<String>,
-    /// It floats over the layout, at its own size, as a dialog does.
-    pub float: bool,
-    pub size: Option<(u32, u32)>,
-    /// A monitor by its number (0 the leftmost) or its name.
-    pub monitor: Option<String>,
-    pub workspace: Option<usize>,
-    /// Never seen in what is shared of a whole monitor, nor in its screenshots:
-    /// pixelated there (a password manager, a private chat).
-    pub private: bool,
-}
-
-/// What the rules say for a window: float, size, monitor, workspace, private.
-#[derive(Default, Debug, PartialEq)]
-pub struct ForWindow {
-    pub float: bool,
-    pub size: Option<(u32, u32)>,
-    pub monitor: Option<String>,
-    pub workspace: Option<usize>,
-    pub private: bool,
-}
-
-/// `*` for anything, no case: `org.gnome.*`, `*Picture*`, `firefox`.
-fn matches(pattern: &str, text: &str) -> bool {
-    let (p, t) = (pattern.to_lowercase(), text.to_lowercase());
-    let parts: Vec<&str> = p.split('*').collect();
-    if parts.len() == 1 {
-        return p == t;
-    }
-    let mut at = 0;
-    for (k, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        match t[at..].find(part) {
-            Some(i) if k > 0 || i == 0 => at += i + part.len(),
-            _ => return false,
-        }
-    }
-    parts.last().is_some_and(|l| l.is_empty()) || at == t.len()
-}
+pub use crate::window_rules::{WindowRule, ForWindow};
+use crate::window_rules::words;
 
 impl Config {
     pub fn for_window(&self, app: &str, title: &str) -> ForWindow {
-        let mut out = ForWindow::default();
-        for r in &self.windows {
-            if r.app.as_deref().is_some_and(|p| !matches(p, app)) || r.title.as_deref().is_some_and(|p| !matches(p, title)) {
-                continue;
-            }
-            out.float |= r.float;
-            out.private |= r.private;
-            out.size = r.size.or(out.size);
-            out.monitor = r.monitor.clone().or(out.monitor);
-            out.workspace = r.workspace.or(out.workspace);
-        }
-        out
+        crate::window_rules::for_window(&self.windows, app, title)
     }
 }
 
@@ -248,36 +192,6 @@ fn read() -> Config {
     c
 }
 
-/// Words, with "quoted ones" kept whole (an empty variant is `""`).
-fn words(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut chars = line.chars().peekable();
-    while let Some(&ch) = chars.peek() {
-        if ch.is_whitespace() {
-            chars.next();
-        } else if ch == '"' {
-            chars.next();
-            out.push(chars.by_ref().take_while(|c| *c != '"').collect());
-        } else {
-            // `title="Some title"`: quotes inside a word keep its spaces, and go.
-            let mut w = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_whitespace() {
-                    break;
-                }
-                chars.next();
-                if c == '"' {
-                    w.extend(chars.by_ref().take_while(|c| *c != '"'));
-                } else {
-                    w.push(c);
-                }
-            }
-            out.push(w);
-        }
-    }
-    out
-}
-
 fn on(v: Option<&String>) -> Option<bool> {
     match v.map(String::as_str) {
         Some("on" | "yes" | "true" | "1") => Some(true),
@@ -334,43 +248,10 @@ pub fn parse(text: &str, c: &mut Config) {
                 }
             }
             "dock" => c.dock.extend(rest.iter().cloned()),
-            "window" => {
-                let mut r = WindowRule::default();
-                let mut k = 0;
-                let mut ok = true;
-                while k < rest.len() {
-                    let w = rest[k].as_str();
-                    if let Some(v) = w.strip_prefix("app=") {
-                        r.app = Some(v.to_owned());
-                    } else if let Some(v) = w.strip_prefix("title=") {
-                        r.title = Some(v.to_owned());
-                    } else if w == "float" {
-                        r.float = true;
-                    } else if w == "private" {
-                        r.private = true;
-                    } else if w == "size" {
-                        r.size = rest.get(k + 1).and_then(|s| s.split_once('x')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
-                        ok &= r.size.is_some();
-                        k += 1;
-                    } else if w == "monitor" {
-                        r.monitor = rest.get(k + 1).cloned();
-                        ok &= r.monitor.is_some();
-                        k += 1;
-                    } else if w == "workspace" {
-                        r.workspace = rest.get(k + 1).and_then(|s| s.parse().ok()).filter(|n: &usize| *n >= 1);
-                        ok &= r.workspace.is_some();
-                        k += 1;
-                    } else {
-                        ok = false;
-                    }
-                    k += 1;
-                }
-                if ok && (r.app.is_some() || r.title.is_some()) {
-                    c.windows.push(r);
-                } else {
-                    eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private]`", n + 1);
-                }
-            }
+            "window" => match crate::window_rules::parse(rest) {
+                Some(rule) => c.windows.push(rule),
+                None => eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private]`", n + 1),
+            },
             "agent" => c.agent = on(rest.first()).unwrap_or_else(|| {
                 eprintln!("config · line {}: `agent on` or `agent off`", n + 1);
                 false
@@ -601,7 +482,7 @@ mod tests {
         assert_eq!(c.for_window("org.gnome.Calculator", "").workspace, Some(2));
         assert_eq!(c.for_window("firefox", "picture in picture").monitor.as_deref(), Some("HDMI-A-1"));
         assert_eq!(c.for_window("kitty", "zsh"), ForWindow::default());
-        assert!(matches("*picture*", "Picture-in-Picture") && !matches("fire", "firefox") && matches("fire*", "firefox"));
+        assert!(crate::window_rules::matches("*picture*", "Picture-in-Picture") && !crate::window_rules::matches("fire", "firefox") && crate::window_rules::matches("fire*", "firefox"));
         parse("window app=org.keepassxc.* private", &mut c);
         assert!(c.for_window("org.keepassxc.KeePassXC", "Passwords").private);
         assert!(!c.for_window("kitty", "zsh").private);
