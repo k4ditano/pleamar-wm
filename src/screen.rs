@@ -32,8 +32,8 @@ pub trait Output: Send {
 /// together upright, in a buffer of the size the monitor has once turned,
 /// and turned into the real one at the end. One more pass, and only on that
 /// monitor; nothing before it knows the monitor is turned. `turn` in quarter
-/// turns, the way wlroots' and Hyprland's `transform` goes: 1 puts what is
-/// upright's top left corner in the real buffer's top right.
+/// turns, the way wlroots' and Hyprland's `transform` goes (anticlockwise): 1
+/// puts what is upright's top left corner in the real buffer's bottom left.
 pub struct Turned {
     inner: Box<dyn Output>,
     turn: u8,
@@ -74,9 +74,9 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     let u = o.uv.x;
     let v = o.uv.y;
     var q = vec2<f32>(u, v);
-    if (t.turn == 1u) { q = vec2<f32>(v, 1.0 - u); }
+    if (t.turn == 1u) { q = vec2<f32>(1.0 - v, u); }
     if (t.turn == 2u) { q = vec2<f32>(1.0 - u, 1.0 - v); }
-    if (t.turn == 3u) { q = vec2<f32>(1.0 - v, u); }
+    if (t.turn == 3u) { q = vec2<f32>(v, 1.0 - u); }
     return textureSampleLevel(upright, nearest, q, 0.0);
 }
 ";
