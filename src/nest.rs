@@ -814,6 +814,10 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
     state.start_xwayland();
     state.export_environment();
     println!("windows · programs connect at WAYLAND_DISPLAY={socket}");
+    // And so do the ones the scene's logic starts (a screenshot, an app from
+    // its launcher): this process may not have it in its own environment.
+    pleamar::set_child_env("WAYLAND_DISPLAY", Some(&socket));
+    pleamar::set_child_env("DISPLAY", None);
     let _ = state.to_render.send(ToRender::Nest(NestEvent::Socket(socket)));
     // What the dock has pinned (`dock …` in session.conf).
     let pins = crate::config::get().dock.iter().map(|w| crate::desktop::pin(w)).collect();

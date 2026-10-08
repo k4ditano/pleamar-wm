@@ -42,6 +42,7 @@ impl State {
                     Ok(wm) => {
                         state.xwm = Some(wm);
                         state.x_display = Some(format!(":{display_number}"));
+                        pleamar::set_child_env("DISPLAY", Some(&format!(":{display_number}")));
                         println!("windows · X11 programs open here too (XWayland, DISPLAY=:{display_number})");
                         state.export_environment();
                     }
@@ -313,6 +314,7 @@ impl XwmHandler for State {
         println!("windows · XWayland is gone");
         self.xwm = None;
         self.x_display = None;
+        pleamar::set_child_env("DISPLAY", None);
     }
 }
 
