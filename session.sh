@@ -31,6 +31,14 @@ if [ -z "$PLEAMAR_WALLPAPER" ]; then
     w=$(grep -o '"wallpaper" *: *"[^"]*"' "$HOME/.local/share/pleamar/marea/settings.json" 2> /dev/null | sed 's/.*: *"\(.*\)"/\1/')
     [ -n "$w" ] && PLEAMAR_WALLPAPER="$w" && export PLEAMAR_WALLPAPER
 fi
+# The environment the user keeps for their Wayland sessions, in UWSM's files
+# (what Hyprland reads through UWSM): the Qt theme (QT_QPA_PLATFORMTHEME=qt6ct),
+# the cursor, the browser. Without it a KDE program (Dolphin) made its palette
+# from two themes and drew every other row of a list black, its words unread.
+for f in "${XDG_CONFIG_HOME:-$HOME/.config}/uwsm/env" "${XDG_CONFIG_HOME:-$HOME/.config}/uwsm/env-pleamar"; do
+    # shellcheck disable=SC1090
+    [ -f "$f" ] && . "$f"
+done
 # Where each frame's time goes, every 300 frames, and in each slow one: cheap,
 # and it is what answers «it feels slow» from the log alone.
 : "${PLEAMAR_TIMING:=1}"
