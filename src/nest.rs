@@ -120,6 +120,7 @@ use smithay::wayland::compositor::{
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
 use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::shell::kde::decoration::{KdeDecorationHandler, KdeDecorationState};
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::{with_buffer_contents, ShmHandler, ShmState};
@@ -448,6 +449,7 @@ struct State {
     xdg: XdgShellState,
     /// Kept alive: without them their globals go away.
     _decorations: XdgDecorationState,
+    kde_decorations: KdeDecorationState,
     _cursor_shapes: CursorShapeManagerState,
     shm: ShmState,
     seats: SeatState<State>,
@@ -716,6 +718,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         compositor: CompositorState::new::<State>(&dh),
         xdg: XdgShellState::new::<State>(&dh),
         _decorations: XdgDecorationState::new::<State>(&dh),
+        kde_decorations: KdeDecorationState::new::<State>(&dh, smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode::Server),
         _cursor_shapes: CursorShapeManagerState::new::<State>(&dh),
         shm: ShmState::new::<State>(&dh, vec![]),
         data_device: DataDeviceState::new::<State>(&dh),
@@ -3205,10 +3208,35 @@ impl XdgDecorationHandler for State {
         }
     }
     fn request_mode(&mut self, toplevel: ToplevelSurface, _: DecorationMode) {
-        self.new_decoration(toplevel);
+        XdgDecorationHandler::new_decoration(self, toplevel);
     }
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        self.new_decoration(toplevel);
+        XdgDecorationHandler::new_decoration(self, toplevel);
+    }
+}
+
+// GTK 3 programs (Firefox and the browsers made from it among them) do not
+// know xdg-decoration: they ask through KDE's older protocol, and draw their
+// own frame unless the compositor says it draws one.
+impl KdeDecorationHandler for State {
+    fn kde_decoration_state(&self) -> &KdeDecorationState {
+        &self.kde_decorations
+    }
+    fn new_decoration(&mut self, _: &WlSurface, decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration) {
+        decoration.mode(smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::Mode::Server);
+    }
+    // The program says which it takes: the scene is told whether to frame it.
+    fn request_mode(&mut self, surface: &WlSurface, decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration, mode: smithay::reexports::wayland_server::WEnum<smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::Mode>) {
+        use smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::Mode;
+        let smithay::reexports::wayland_server::WEnum::Value(mode) = mode else { return };
+        decoration.mode(mode);
+        let framed = mode == Mode::Server;
+        let changed = if framed { self.decorated.insert(surface.clone()) } else { self.decorated.remove(surface) };
+        if changed {
+            if let Some(slot) = self.window_of(surface) {
+                self.tell(NestEvent::Framed(slot, framed));
+            }
+        }
     }
 }
 
@@ -3876,6 +3904,7 @@ delegate_compositor!(State);
 delegate_shm!(State);
 delegate_xdg_shell!(State);
 delegate_xdg_decoration!(State);
+smithay::delegate_kde_decoration!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
 delegate_output!(State);
