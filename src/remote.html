@@ -43,6 +43,32 @@
   #keys { position: absolute; opacity: 0; width: 1px; height: 1px; left: -10px; top: -10px; }
   #toast { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 3; }
   #toast.show { opacity: 1; }
+  /* Going over to the monitor beyond an edge: the edge fills with light while
+     the push is held, and sweeps across when it goes over. */
+  #edge { position: fixed; pointer-events: none; z-index: 1; opacity: 0; transition: opacity .2s ease; --hold: 700ms; }
+  #edge.on { opacity: 1; }
+  #edge .glow { position: absolute; inset: 0; opacity: .2; transition: transform .45s cubic-bezier(.2,.8,.2,1); }
+  #edge.on .glow { opacity: 1; transition: opacity var(--hold) ease-in, transform .45s cubic-bezier(.2,.8,.2,1); }
+  #edge[data-side=left] .glow { background: linear-gradient(to right, color-mix(in srgb, var(--sea) 45%, transparent), transparent); }
+  #edge[data-side=right] .glow { background: linear-gradient(to left, color-mix(in srgb, var(--sea) 45%, transparent), transparent); }
+  #edge[data-side=top] .glow { background: linear-gradient(to bottom, color-mix(in srgb, var(--sea) 45%, transparent), transparent); }
+  #edge[data-side=bottom] .glow { background: linear-gradient(to top, color-mix(in srgb, var(--sea) 45%, transparent), transparent); }
+  #edge .line { position: absolute; background: var(--sea); box-shadow: 0 0 14px 3px color-mix(in srgb, var(--sea) 70%, transparent); border-radius: 2px; }
+  #edge[data-side=left] .line, #edge[data-side=right] .line { top: 0; bottom: 0; width: 3px; transform: scaleY(0); }
+  #edge[data-side=left] .line { left: 0; } #edge[data-side=right] .line { right: 0; }
+  #edge[data-side=top] .line, #edge[data-side=bottom] .line { left: 0; right: 0; height: 3px; transform: scaleX(0); }
+  #edge[data-side=top] .line { top: 0; } #edge[data-side=bottom] .line { bottom: 0; }
+  #edge.on .line { transform: none; transition: transform var(--hold) cubic-bezier(.4,0,.6,1); }
+  #edge .chip { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.85); background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid color-mix(in srgb, var(--sea) 50%, var(--line)); border-radius: 999px; padding: 6px 12px; font-size: 13px; white-space: nowrap; color: var(--ink); opacity: 0; transition: opacity .25s ease .1s, transform .3s cubic-bezier(.2,.8,.2,1) .1s; }
+  #edge.on .chip { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #edge[data-side=left] .chip { left: 64px; } #edge[data-side=right] .chip { left: calc(100% - 64px); }
+  #edge[data-side=top] .chip { top: 40px; } #edge[data-side=bottom] .chip { top: calc(100% - 40px); }
+  #edge.go { transition: opacity .45s ease .1s; opacity: 0; }
+  #edge.go .line { transition: none; }
+  #edge.go[data-side=left] .glow { transform: translateX(60%) scaleX(2.5); }
+  #edge.go[data-side=right] .glow { transform: translateX(-60%) scaleX(2.5); }
+  #edge.go[data-side=top] .glow { transform: translateY(60%) scaleY(2.5); }
+  #edge.go[data-side=bottom] .glow { transform: translateY(-60%) scaleY(2.5); }
   /* ── on a phone (docs/phone.md): the session comes to it ── */
   body.phone #bar, body.phone #handle { display: none !important; }
   body.phone #stage { touch-action: none; overflow: hidden; background: #071014; transition: transform .32s cubic-bezier(.2,.8,.2,1); transform-origin: 0 0; }
@@ -129,6 +155,7 @@
   <div id="stage"><canvas id="screen" tabindex="0"></canvas><video id="direct" autoplay muted playsinline disablepictureinpicture></video></div>
   <textarea id="keys" aria-hidden="true"></textarea>
   <div id="toast"></div>
+  <div id="edge"><div class="glow"></div><div class="line"></div><div class="chip"></div></div>
   <div id="update"><span id="update-what">A new version is ready</span><button id="update-go">Update</button></div>
   <div id="ph">
     <div class="ph-sheet" id="ph-start">
@@ -585,15 +612,18 @@
   }
 
   // The pointer: where it is over the picture, as a fraction of it.
-  const at = (e) => {
-    let r = canvas.getBoundingClientRect();
+  const picture = () => {
     if (isDirect && !dcVideo && videoEl.videoWidth) {
       // The picture inside the video's box (fitted, with bands around).
       const box = videoEl.getBoundingClientRect();
       const k = Math.min(box.width / videoEl.videoWidth, box.height / videoEl.videoHeight);
       const w = videoEl.videoWidth * k, h = videoEl.videoHeight * k;
-      r = { left: box.left + (box.width - w) / 2, top: box.top + (box.height - h) / 2, width: w, height: h };
+      return { left: box.left + (box.width - w) / 2, top: box.top + (box.height - h) / 2, width: w, height: h };
     }
+    return canvas.getBoundingClientRect();
+  };
+  const at = (e) => {
+    const r = picture();
     return [((e.clientX - r.left) / r.width).toFixed(5), ((e.clientY - r.top) / r.height).toFixed(5)];
   };
   let lastMove = 0, moveTimer = null, moveAt = null;
@@ -603,9 +633,35 @@
   // picture, or the last pixel of this screen, are past its edge.) Only a push
   // that is held: the pointer passing through a band on its way out of the
   // window, or to the bar's corner, left the monitor shown before.
-  const HOLD = 400;
+  const HOLD = 700;
   let crossedAt = 0, crossing = null;
-  const dropCrossing = () => { if (crossing) { clearTimeout(crossing.timer); crossing = null; } };
+  const edgeEl = document.getElementById('edge');
+  edgeEl.style.setProperty('--hold', HOLD + 'ms');
+  // The light on the edge being pushed, over the picture's own edge.
+  function edgeOn(pastX, pastY, k) {
+    const r = picture(), deep = 120;
+    const side = pastX < 0 ? 'left' : pastX > 0 ? 'right' : pastY < 0 ? 'top' : 'bottom';
+    const across = side === 'left' || side === 'right';
+    Object.assign(edgeEl.style, {
+      left: (side === 'right' ? r.left + r.width - deep : r.left) + 'px',
+      top: (side === 'bottom' ? r.top + r.height - deep : r.top) + 'px',
+      width: (across ? deep : r.width) + 'px', height: (across ? r.height : deep) + 'px',
+    });
+    edgeEl.dataset.side = side;
+    edgeEl.querySelector('.chip').textContent =
+      (({ left: '← ', top: '↑ ' })[side] ?? '') + (k + 1) + ' · ' + monitors[k].name + (({ right: ' →', bottom: ' ↓' })[side] ?? '');
+    edgeEl.classList.remove('go', 'on');
+    void edgeEl.offsetWidth;
+    edgeEl.classList.add('on');
+  }
+  let edgeTimer = null;
+  function edgeOff(went) {
+    clearTimeout(edgeTimer);
+    if (!went) { edgeEl.classList.remove('on', 'go'); return; }
+    edgeEl.classList.add('go');
+    edgeTimer = setTimeout(() => edgeEl.classList.remove('on', 'go'), 600);
+  }
+  const dropCrossing = () => { if (crossing) { clearTimeout(crossing.timer); crossing = null; edgeOff(false); } };
   function cross(e, [fx, fy]) {
     const m = monitors[current], now = performance.now();
     if (PHONE || !m || monitors.length < 2 || now - crossedAt < 600) return dropCrossing();
@@ -628,9 +684,11 @@
     const k = monitors.findIndex((o) => px >= o.x && px < o.x + o.w && py >= o.y && py < o.y + o.h);
     dropCrossing();
     if (k < 0 || k === current) return;
+    edgeOn(pastX, pastY, k);
     crossing = { pastX, pastY, timer: setTimeout(() => {
       crossing = null;
-      if (document.hidden || !stage.matches(':hover')) return;
+      if (document.hidden || !stage.matches(':hover')) return edgeOff(false);
+      edgeOff(true);
       crossedAt = performance.now();
       plog('the pointer went over to monitor ' + k);
       current = k; drawMonitors(); hand('mon ' + k);
