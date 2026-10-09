@@ -545,6 +545,8 @@ struct State {
     // idleness, virtual keyboards and input methods, pointer lock (games),
     // dialogs, the window list, and when each frame was shown.
     activation: XdgActivationState,
+    /// The windows asking for attention (see `request_activation`), until they get the keyboard.
+    urgent: std::collections::HashSet<usize>,
     primary: PrimarySelectionState,
     _wlr_data_control: WlrDataControlState,
     _ext_data_control: ExtDataControlState,
@@ -725,6 +727,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         clipboard: Clipboard::Nothing,
         popups: PopupManager::default(),
         activation: XdgActivationState::new::<State>(&dh),
+        urgent: std::collections::HashSet::new(),
         _wlr_data_control: WlrDataControlState::new::<State, _>(&dh, Some(&primary), |_| true),
         _ext_data_control: ExtDataControlState::new::<State, _>(&dh, Some(&primary), |_| true),
         primary,
@@ -1537,6 +1540,12 @@ impl State {
         let target = if self.host_focus { self.focus.and_then(|s| self.slots[s].as_ref()).map(|w| w.surface.clone()) } else { None };
         let k = self.keyboard.clone();
         k.set_focus(self, target, SERIAL_COUNTER.next_serial());
+        // Given the keyboard, it no longer asks for attention.
+        if let Some(s) = self.focus {
+            if self.urgent.remove(&s) {
+                self.tell(NestEvent::Urgent(s, false));
+            }
+        }
         if before != self.focus {
             // Where the keys go, said when it changes: «I could not type» is found here.
             let app = self.focus.and_then(|s| self.slots[s].as_ref()).map_or("nobody".to_owned(), |w| w.app.clone());
@@ -2298,6 +2307,9 @@ impl State {
         self.toplevel_handles.retain(|(s, _)| *s != slot);
         if self.pointer_on == Some(slot) {
             self.pointer_on = None;
+        }
+        if self.urgent.remove(&slot) {
+            self.tell(NestEvent::Urgent(slot, false));
         }
         self.tell(NestEvent::Closed(slot));
         self.tell(NestEvent::Order(self.order.clone()));
@@ -3807,10 +3819,25 @@ impl XdgActivationHandler for State {
                 return;
             }
         }
-        if data.timestamp.elapsed() < Duration::from_secs(10) {
+        // Only what follows something of yours brings a window forward and
+        // takes the keyboard: asked by the program that has your keyboard (a
+        // link clicked in it opens the browser), or while the scene has it
+        // (Spotlight, Marea's finder). Anything else —a message arrived in a
+        // program you are not in— asks for attention instead. (A serial is
+        // no proof: GTK sends that of the pointer merely passing over it.)
+        let focused_client = self.focus.and_then(|s| self.slots[s].as_ref()).and_then(|w| w.surface.client()).map(|c| c.id());
+        let yours = !self.host_focus || (data.client_id.is_some() && data.client_id == focused_client);
+        if data.timestamp.elapsed() < Duration::from_secs(10) && yours {
             if let Some(slot) = self.window_of(&surface) {
                 self.tell(NestEvent::Reveal(slot));
                 self.set_focus(Some(slot));
+            }
+        } else if let Some(slot) = self.window_of(&surface).filter(|s| Some(*s) != self.focus) {
+            // Asking with nothing of yours behind it —a message arrived while
+            // you were elsewhere—: it does not come forward, it asks for
+            // attention (a dock makes its icon hop), until it gets the keyboard.
+            if self.urgent.insert(slot) {
+                self.tell(NestEvent::Urgent(slot, true));
             }
         }
         self.activation.remove_token(&token);
