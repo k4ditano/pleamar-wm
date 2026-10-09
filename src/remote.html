@@ -600,22 +600,43 @@
   const finger = (e) => PHONE && e.pointerType !== 'mouse';
   // Pushed past an edge with another monitor beyond it, as at the desk: that
   // one is shown, and the pointer goes on over it. (The bands around the
-  // picture, or the last pixel of this screen, are past its edge.)
-  let crossedAt = 0;
+  // picture, or the last pixel of this screen, are past its edge.) Only a push
+  // that is held: the pointer passing through a band on its way out of the
+  // window, or to the bar's corner, left the monitor shown before.
+  const HOLD = 400;
+  let crossedAt = 0, crossing = null;
+  const dropCrossing = () => { if (crossing) { clearTimeout(crossing.timer); crossing = null; } };
   function cross(e, [fx, fy]) {
     const m = monitors[current], now = performance.now();
-    if (PHONE || !m || monitors.length < 2 || now - crossedAt < 600) return;
+    if (PHONE || !m || monitors.length < 2 || now - crossedAt < 600) return dropCrossing();
     const edge = 0.998;
-    const tx = fx >= edge && e.movementX > 0 ? m.x + m.w + 1 : fx <= 1 - edge && e.movementX < 0 ? m.x - 1 : null;
-    const ty = fy >= edge && e.movementY > 0 ? m.y + m.h + 1 : fy <= 1 - edge && e.movementY < 0 ? m.y - 1 : null;
-    if (tx === null && ty === null) return;
+    const pastX = fx >= edge ? 1 : fx <= 1 - edge ? -1 : 0, pastY = fy >= edge ? 1 : fy <= 1 - edge ? -1 : 0;
+    // Back inside, or resting in the bar's corner: no push.
+    const corner = e.clientX < 70 && e.clientY > window.innerHeight - 70;
+    if ((!pastX && !pastY) || corner) return dropCrossing();
+    if (crossing && crossing.pastX === pastX && crossing.pastY === pastY) {
+      // Going along the edge (down the band to the bar's corner) is no push.
+      const along = pastX ? Math.abs(e.movementY) - Math.abs(e.movementX) : Math.abs(e.movementX) - Math.abs(e.movementY);
+      if (along > 2) dropCrossing();
+      return;
+    }
+    const out = (pastX && Math.sign(e.movementX) === pastX) || (pastY && Math.sign(e.movementY) === pastY);
+    if (!out) return;
+    const tx = pastX > 0 ? m.x + m.w + 1 : pastX < 0 ? m.x - 1 : null;
+    const ty = pastY > 0 ? m.y + m.h + 1 : pastY < 0 ? m.y - 1 : null;
     const px = tx ?? m.x + Math.min(Math.max(fx, 0), 1) * m.w, py = ty ?? m.y + Math.min(Math.max(fy, 0), 1) * m.h;
     const k = monitors.findIndex((o) => px >= o.x && px < o.x + o.w && py >= o.y && py < o.y + o.h);
+    dropCrossing();
     if (k < 0 || k === current) return;
-    crossedAt = now;
-    plog('the pointer went over to monitor ' + k);
-    current = k; drawMonitors(); hand('mon ' + k);
+    crossing = { pastX, pastY, timer: setTimeout(() => {
+      crossing = null;
+      if (document.hidden || !stage.matches(':hover')) return;
+      crossedAt = performance.now();
+      plog('the pointer went over to monitor ' + k);
+      current = k; drawMonitors(); hand('mon ' + k);
+    }, HOLD) };
   }
+  stage.addEventListener('pointerleave', dropCrossing);
   stage.addEventListener('pointermove', (e) => {
     if (finger(e)) return;
     moveAt = at(e);
