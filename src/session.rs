@@ -490,9 +490,9 @@ fn choose_mode(modes: &[Mode], wish: Option<&config::ModeWish>) -> Option<Mode> 
 /// `screen::Turned` gives what is put together.
 fn turned_point(turn: u8, (x, y): (f64, f64), (w, h): (f64, f64)) -> (f64, f64) {
     match turn % 4 {
-        1 => (h - y, x),
+        1 => (y, w - x),
         2 => (w - x, h - y),
-        3 => (y, w - x),
+        3 => (h - y, x),
         _ => (x, y),
     }
 }
@@ -1401,4 +1401,35 @@ fn keep_ahead() {
             std::thread::sleep(Duration::from_secs(2));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::turned_point;
+
+    /// `transform` goes the way wlroots' and Hyprland's does, anticlockwise: with
+    /// 1, what is at the top left of the upright monitor is at the bottom left of
+    /// the real one, and with 3 at its top right. (A real buffer is `h` wide and
+    /// `w` tall when the upright monitor is `w` wide and `h` tall.)
+    #[test]
+    fn turns_go_anticlockwise() {
+        let (w, h) = (1920.0, 1080.0);
+        assert_eq!(turned_point(0, (0.0, 0.0), (w, h)), (0.0, 0.0));
+        assert_eq!(turned_point(1, (0.0, 0.0), (w, h)), (0.0, w), "1: top left to bottom left");
+        assert_eq!(turned_point(1, (w, 0.0), (w, h)), (0.0, 0.0), "1: top right to top left");
+        assert_eq!(turned_point(2, (0.0, 0.0), (w, h)), (w, h), "2: top left to bottom right");
+        assert_eq!(turned_point(3, (0.0, 0.0), (w, h)), (h, 0.0), "3: top left to top right");
+        assert_eq!(turned_point(3, (w, 0.0), (w, h)), (h, w), "3: top right to bottom right");
+    }
+
+    /// A quarter one way and a quarter the other bring a point home.
+    #[test]
+    fn opposite_turns_cancel() {
+        let (w, h) = (1920.0, 1080.0);
+        let p = (300.0, 200.0);
+        let there = turned_point(1, p, (w, h));
+        assert_eq!(turned_point(3, there, (h, w)), p);
+        let there = turned_point(3, p, (w, h));
+        assert_eq!(turned_point(1, there, (h, w)), p);
+    }
 }
