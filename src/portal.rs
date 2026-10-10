@@ -662,33 +662,8 @@ fn pointer_onto(source: Source, pixels: &mut [u8], (w, h): (u32, u32)) {
             (r[2] > 0 && r[3] > 0).then(|| (x * w as f64 / r[2] as f64, y * h as f64 / r[3] as f64))
         }),
     };
-    let Some((tx, ty)) = tip else { return };
-    if tx < 0.0 || ty < 0.0 || tx >= w as f64 || ty >= h as f64 {
-        return;
-    }
-    let (image, (hx, hy)) = &*picture;
-    let (ox, oy) = (tx as i32 - hx, ty as i32 - hy);
-    for y in 0..64i32 {
-        let py = oy + y;
-        if py < 0 || py >= h as i32 {
-            continue;
-        }
-        for x in 0..64i32 {
-            let px = ox + x;
-            if px < 0 || px >= w as i32 {
-                continue;
-            }
-            let s = ((y * 64 + x) * 4) as usize;
-            let a = image[s + 3] as u32;
-            if a == 0 {
-                continue;
-            }
-            let d = ((py as u32 * w + px as u32) * 4) as usize;
-            for k in 0..3 {
-                pixels[d + k] = (image[s + k] as u32 + pixels[d + k] as u32 * (255 - a) / 255).min(255) as u8;
-            }
-        }
-    }
+    let Some(tip) = tip else { return };
+    layers::stamp_pointer(&picture, tip, pixels, (w, h));
 }
 
 struct Cast {

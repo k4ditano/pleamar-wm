@@ -352,6 +352,8 @@ struct Picture {
     piece: [i32; 4],
     buffer: Option<WlBuffer>,
     damage: bool,
+    /// The pointer drawn into it: its program asked for it (`overlay_cursor`).
+    pointer: bool,
 }
 
 /// A program's buffer on loan: given back with `release`, and, with
@@ -1760,8 +1762,14 @@ impl State {
         }
         let Some(p) = self.pictures.remove(&id) else { return };
         let (w, h) = (p.piece[2] as usize, p.piece[3] as usize);
+        if p.pointer {
+            layers::unwait_pointer(id);
+        }
         let written = match (&p.buffer, pixels) {
-            (Some(buffer), Some(px)) if px.len() >= w * h * 4 => with_buffer_contents_mut(buffer, |ptr, len, d| {
+            (Some(buffer), Some(mut px)) if px.len() >= w * h * 4 => with_buffer_contents_mut(buffer, |ptr, len, d| {
+                if p.pointer {
+                    layers::pointer_onto_piece(p.monitor, p.piece, &mut px);
+                }
                 let (stride, offset) = (d.stride.max(0) as usize, d.offset.max(0) as usize);
                 if offset + stride * h > len || stride < w * 4 {
                     return false;
@@ -3580,9 +3588,13 @@ impl GlobalDispatch<ZwlrScreencopyManagerV1, ()> for State {
 /// (XRGB, its size), taken the next time that monitor is put together.
 impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
     fn request(state: &mut Self, _: &Client, _: &ZwlrScreencopyManagerV1, request: copy_manager::Request, _: &(), _: &DisplayHandle, init: &mut DataInit<'_, Self>) {
-        let (frame, output, piece) = match request {
-            copy_manager::Request::CaptureOutput { frame, output, .. } => (frame, output, None),
-            copy_manager::Request::CaptureOutputRegion { frame, output, x, y, width, height, .. } => (frame, output, Some([x, y, width, height])),
+        // With the pointer in it, if asked: a recorder asks (wf-recorder), a
+        // screenshot does not unless told to (grim -c). It is on the card's
+        // own plane, not in what the monitor puts together, so it is drawn
+        // onto the picture when it is handed over.
+        let (frame, output, piece, pointer) = match request {
+            copy_manager::Request::CaptureOutput { frame, overlay_cursor, output } => (frame, output, None, overlay_cursor != 0),
+            copy_manager::Request::CaptureOutputRegion { frame, overlay_cursor, output, x, y, width, height } => (frame, output, Some([x, y, width, height]), overlay_cursor != 0),
             _ => return,
         };
         state.next_number += 1;
@@ -3607,7 +3619,7 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
         if frame.version() >= 3 {
             frame.buffer_done();
         }
-        state.pictures.insert(id, Picture { frame, monitor, piece, buffer: None, damage: false });
+        state.pictures.insert(id, Picture { frame, monitor, piece, buffer: None, damage: false, pointer });
     }
 }
 
@@ -3632,6 +3644,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, u64> for State {
             eprintln!("capture · {:.1} asked (damage {damage})", crate::screen::wall_ms());
         }
         layers::capture(p.monitor, *id, p.piece, damage, owner);
+        // Waiting for a change with the pointer in it: its moving is one.
+        if damage && p.pointer {
+            layers::wait_pointer(*id);
+        }
     }
 
     /// Its program went away with a picture still asked for (a glass waiting

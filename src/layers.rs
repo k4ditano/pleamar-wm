@@ -97,12 +97,95 @@ pub fn set_pointer_picture(picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>
 }
 
 pub fn set_pointer_at(at: (f64, f64)) {
-    let mut p = POINTER_SEEN.lock().unwrap();
-    let seen = p.get_or_insert_with(PointerSeen::default);
-    if seen.at != at {
+    {
+        let mut p = POINTER_SEEN.lock().unwrap();
+        let seen = p.get_or_insert_with(PointerSeen::default);
+        if seen.at == at {
+            return;
+        }
         seen.at = at;
         seen.moves += 1;
     }
+    pointer_moved();
+}
+
+/// The pictures that wait for the screen to change and want the pointer in
+/// them (a recorder that asks only for what changes). The pointer is on the
+/// card's own plane: its moving puts no monitor together, so for these it
+/// has to count as a change.
+static POINTER_WAITS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+/// That picture, asked for with `capture(…, on_change: true, …)`, wants the pointer in it.
+pub fn wait_pointer(id: u64) {
+    POINTER_WAITS.lock().unwrap().push(id);
+}
+
+/// It was taken, or let go.
+pub fn unwait_pointer(id: u64) {
+    POINTER_WAITS.lock().unwrap().retain(|w| *w != id);
+}
+
+/// The pictures that waited for a change with the pointer in them are due now.
+fn pointer_moved() {
+    let ids = std::mem::take(&mut *POINTER_WAITS.lock().unwrap());
+    if ids.is_empty() {
+        return;
+    }
+    for (_, sc) in MONITORS.lock().unwrap().iter() {
+        let (lock, cv) = &**sc;
+        let mut st = lock.lock().unwrap();
+        let mut due = false;
+        for c in st.captures.iter_mut().filter(|c| c.2 && ids.contains(&c.0)) {
+            c.2 = false;
+            due = true;
+        }
+        if due {
+            st.dirty = true;
+            cv.notify_all();
+        }
+    }
+}
+
+/// The pointer's picture drawn onto a picture (BGRx; the pointer's is
+/// premultiplied), its tip at `tip`, in that picture's pixels.
+pub fn stamp_pointer(pointer: &(Vec<u8>, (i32, i32)), (tx, ty): (f64, f64), pixels: &mut [u8], (w, h): (u32, u32)) {
+    if tx < 0.0 || ty < 0.0 || tx >= w as f64 || ty >= h as f64 {
+        return;
+    }
+    let (image, (hx, hy)) = pointer;
+    let (ox, oy) = (tx as i32 - hx, ty as i32 - hy);
+    for y in 0..64i32 {
+        let py = oy + y;
+        if py < 0 || py >= h as i32 {
+            continue;
+        }
+        for x in 0..64i32 {
+            let px = ox + x;
+            if px < 0 || px >= w as i32 {
+                continue;
+            }
+            let s = ((y * 64 + x) * 4) as usize;
+            let a = image[s + 3] as u32;
+            if a == 0 {
+                continue;
+            }
+            let d = ((py as u32 * w + px as u32) * 4) as usize;
+            for k in 0..3 {
+                pixels[d + k] = (image[s + k] as u32 + pixels[d + k] as u32 * (255 - a) / 255).min(255) as u8;
+            }
+        }
+    }
+}
+
+/// The pointer drawn onto the picture of a piece of a monitor (x, y, w, h, in
+/// its pixels), if it is there: what a program that records the screen asks
+/// for (wlr-screencopy's `overlay_cursor`).
+pub fn pointer_onto_piece(monitor: usize, piece: [i32; 4], pixels: &mut [u8]) {
+    let Some(p) = pointer_seen() else { return };
+    let Some(picture) = p.picture else { return };
+    let Some(m) = monitors().into_iter().nth(monitor) else { return };
+    let tip = ((p.at.0 - m.x as f64) * m.scale - piece[0] as f64, (p.at.1 - m.y as f64) * m.scale - piece[1] as f64);
+    stamp_pointer(&picture, tip, pixels, (piece[2].max(0) as u32, piece[3].max(0) as u32));
 }
 
 /// None where there is no pointer of the card's (headless).
@@ -554,6 +637,7 @@ pub fn capture(monitor: usize, id: u64, piece: [i32; 4], on_change: bool, owner:
 
 /// A picture no longer wanted: its program let it go before it was taken.
 pub fn uncapture(id: u64) {
+    unwait_pointer(id);
     for (_, sc) in MONITORS.lock().unwrap().iter() {
         sc.0.lock().unwrap().captures.retain(|c| c.0 != id);
     }
