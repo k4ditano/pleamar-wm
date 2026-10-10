@@ -1505,6 +1505,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lewton"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "777b48df9aaab155475a83a7df3070395ea1ac6902f5cd062b8f2b028075c030"
+dependencies = [
+ "byteorder",
+ "ogg",
+ "tinyvec",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1929,6 +1940,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogg"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6951b4e8bf21c8193da321bcce9c9dd2e13c858fe078bf9054a288b419ae5d6e"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2102,7 +2122,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pleamar"
-version = "0.2.35"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "ash",
@@ -2110,6 +2130,7 @@ dependencies = [
  "chrono",
  "cosmic-text",
  "image",
+ "lewton",
  "libc",
  "mlua",
  "naga",
@@ -2129,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "pleamar-wm"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "async-channel",
  "async-io",
@@ -2151,7 +2172,7 @@ dependencies = [
 
 [[package]]
 name = "pleamar-wm-stream"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ffmpeg-sys-next",
  "libc",

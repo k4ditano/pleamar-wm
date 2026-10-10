@@ -1,6 +1,6 @@
 [package]
 name = "pleamar-wm-stream"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 license = "BSD-3-Clause"
 description = "A monitor as low-latency H.264 for pleamar-wm remote: wlr-screencopy in, ffmpeg's encoder out"
