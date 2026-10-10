@@ -8,6 +8,7 @@
 ![Badge Language]
 ![Badge Commit]
 [![Badge Issues]][Issues]
+[![Badge Discord]][Discord]
 [![Badge X]][X]
 [![Badge Ko-fi]][Ko-fi]
 
@@ -27,6 +28,7 @@ the open windows without closing anything.
 **[<kbd> <br> Keys <br> </kbd>][Keys]**
 **[<kbd> <br> pleamar <br> </kbd>][pleamar]**
 **[<kbd> <br> Marea <br> </kbd>][Marea]**
+**[<kbd> <br> Discord <br> </kbd>][Discord]**
 
 ---
 
@@ -522,7 +524,8 @@ pleamar-wm is under the [BSD 3-Clause License][License], like Hyprland.
 
 Contributions are welcome, made with AI or without it: see the [AI policy](AI_POLICY.md).
 
-Made by **[@k4ditano][X]** â€” follow along on X for what comes next.
+Made by **[@k4ditano][X]** â€” follow along on X for what comes next, and come
+and say hi, ask or show what you made on **[Discord]**.
 If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** â˜•
 
 <!----------------------------------------------------------------------------->
@@ -534,6 +537,7 @@ If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** â˜
 [Marea]: https://github.com/k4ditano/marea-plm
 [License]: LICENSE
 [X]: https://x.com/k4ditano
+[Discord]: https://discord.gg/N7kbYC49b2
 [Ko-fi]: https://ko-fi.com/k4ditano
 [Issues]: https://github.com/k4ditano/pleamar-wm/issues
 
@@ -553,5 +557,6 @@ If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** â˜
 [Badge Language]: https://img.shields.io/badge/made%20with-Rust%20%2B%20pleamar-2c7684?style=flat-square
 [Badge Commit]: https://img.shields.io/github/last-commit/k4ditano/pleamar-wm?style=flat-square&color=9ed6bd
 [Badge Issues]: https://img.shields.io/github/issues/k4ditano/pleamar-wm?style=flat-square&color=2c7684
+[Badge Discord]: https://img.shields.io/badge/chat-Discord-5865f2?style=flat-square&logo=discord&logoColor=white
 [Badge X]: https://img.shields.io/badge/follow-@k4ditano-000000?style=flat-square&logo=x
 [Badge Ko-fi]: https://img.shields.io/badge/support-Ko--fi-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white
