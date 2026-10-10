@@ -36,6 +36,22 @@ the open windows without closing anything.
 
 </div>
 
+# What's new
+
+- **Your session in your pocket** (0.3): this desktop on a phone or a tablet, in
+  any browser, with its own video straight from the card.
+- **Your agent gets hands of its own** (0.3): a pointer and a keyboard apart
+  from yours, its windows beside yours, and a «Stop» always in sight.
+- **GTK 3 programs leave their frame to the scene** (0.3.3): Firefox and Zen
+  among them, through KDE's server decoration protocol.
+- **`keys.conf` is read again when it changes** (0.3.3): a new binding works
+  without logging in again.
+- **Qt programs get their theme** (0.3.6): the session reads your UWSM
+  environment, as Hyprland does. And a program that asks to come forward
+  without you behind it asks for attention instead.
+
+Every release, with what changed: [Releases].
+
 # Features
 
 - **Computer use, built in**: an AI agent gets a pointer and a keyboard of its
@@ -114,6 +130,20 @@ the open windows without closing anything.
 
 # Gallery
 
+<br>
+
+<img src="assets/agent.webp" width="860" alt="An AI agent using the desktop with a cursor and a keyboard of its own">
+
+<sub>An agent with a pointer and a keyboard of its own: it opens its windows beside yours, every move is seen, and you can stop it at any time.</sub>
+
+<br>
+<br>
+
+<img src="assets/remote.webp" width="860" alt="The session on a phone or a tablet, from a browser">
+
+<sub>Your session on a phone or a tablet: any browser, nothing to install.</sub>
+
+<br>
 <br>
 
 ![Preview Tiled]
@@ -540,6 +570,7 @@ If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** �
 [Discord]: https://discord.gg/N7kbYC49b2
 [Ko-fi]: https://ko-fi.com/k4ditano
 [Issues]: https://github.com/k4ditano/pleamar-wm/issues
+[Releases]: https://github.com/k4ditano/pleamar-wm/releases
 
 <!----------------------------------{ Thanks }--------------------------------->
 
