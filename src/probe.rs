@@ -14,11 +14,19 @@ pub fn run() -> Result<(), String> {
     let node: OwnedFd = std::fs::OpenOptions::new().read(true).write(true).open("/dev/dri/renderD128").map_err(|e| format!("no render node: {e}"))?.into();
     let device = gbm::Device::new(node).map_err(|e| format!("no gbm: {e}"))?;
     let (w, h) = (1920u32, 1080u32);
-    let bo = device
-        .create_buffer_object_with_modifiers2::<()>(w, h, gbm::Format::Xrgb8888, modifiers.iter().map(|m| gbm::Modifier::from(*m)), gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING)
-        .map_err(|e| format!("gbm made no buffer for the screen: {e}"))?;
-    let modifier: u64 = bo.modifier().into();
-    println!("probe · a buffer for the screen: modifier {modifier:#x}, stride {}", bo.stride_for_plane(0));
+    // A card that cannot be told a layout: the buffer as its driver lays it out.
+    let unlaid = pleamar::dmabuf::without_layouts(gpu.device(), &modifiers);
+    let uses = gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING;
+    let made = if unlaid {
+        println!("probe · no layouts to name: the buffer as the driver lays it out");
+        device.create_buffer_object::<()>(w, h, gbm::Format::Xrgb8888, uses)
+    } else {
+        device.create_buffer_object_with_modifiers2::<()>(w, h, gbm::Format::Xrgb8888, modifiers.iter().map(|m| gbm::Modifier::from(*m)), uses)
+    };
+    let bo = made.map_err(|e| format!("gbm made no buffer for the screen: {e}"))?;
+    let said: u64 = bo.modifier().into();
+    let modifier: u64 = if unlaid { pleamar::dmabuf::NO_LAYOUT } else { said };
+    println!("probe · a buffer for the screen: modifier {said:#x}, stride {}", bo.stride_for_plane(0));
     let fd = bo.fd_for_plane(0).map_err(|e| e.to_string())?;
     let texture = pleamar::gpu::Gpu::import_dmabuf(gpu.device(), fd, (w, h), modifier, bo.stride_for_plane(0), bo.offset(0), wgpu::TextureUses::COLOR_TARGET, wgpu::TextureUsages::RENDER_ATTACHMENT, wgpu::TextureUses::UNINITIALIZED)?;
     println!("probe · read into wgpu as a place to paint in");

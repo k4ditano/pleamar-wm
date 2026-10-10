@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     pleamar = {
-      url = "github:k4ditano/pleamar";
+      url = "github:k4ditano/pleamar/no-layouts";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     marea = {

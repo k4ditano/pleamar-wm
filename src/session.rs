@@ -116,15 +116,19 @@ impl DrmOutput {
     fn make_buffers(&mut self, device: &wgpu::Device, modifiers: &[u64]) -> Result<(), String> {
         let (w, h) = self.size;
         let wanted: Vec<u64> = if modifiers.is_empty() { vec![0] } else { modifiers.to_vec() };
+        // A card that cannot be told a layout (AMD before Vega): the buffers
+        // as its driver lays them out, and read back without naming it.
+        let unlaid = pleamar::dmabuf::without_layouts(device, modifiers);
+        let uses = gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING;
         for _ in 0..3 {
-            let bo = self
-                .gbm
-                .lock()
-                .unwrap()
-                .create_buffer_object_with_modifiers2::<()>(w, h, gbm::Format::Xrgb8888, wanted.iter().map(|m| gbm::Modifier::from(*m)), gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING)
-                .map_err(|e| format!("the card did not make a buffer of {w}×{h}: {e}"))?;
+            let made = if unlaid {
+                self.gbm.lock().unwrap().create_buffer_object::<()>(w, h, gbm::Format::Xrgb8888, uses)
+            } else {
+                self.gbm.lock().unwrap().create_buffer_object_with_modifiers2::<()>(w, h, gbm::Format::Xrgb8888, wanted.iter().map(|m| gbm::Modifier::from(*m)), uses)
+            };
+            let bo = made.map_err(|e| format!("the card did not make a buffer of {w}×{h}: {e}"))?;
             let fd = bo.fd_for_plane(0).map_err(|e| format!("no handle for the buffer: {e}"))?;
-            let modifier: u64 = bo.modifier().into();
+            let modifier: u64 = if unlaid { pleamar::dmabuf::NO_LAYOUT } else { bo.modifier().into() };
             let texture = pleamar::gpu::Gpu::import_dmabuf(
                 device,
                 fd,
@@ -140,7 +144,11 @@ impl DrmOutput {
             let fb = self.drm.add_planar_framebuffer(&bo, flags).map_err(|e| format!("the monitor does not take the buffer: {e}"))?;
             self.buffers.push(Buffer { _bo: bo, fb, texture });
         }
-        println!("session · {}: {w}×{h} at {} Hz, three buffers of the card (modifier {:#x})", self.name, self.mode.vrefresh(), wanted[0]);
+        if unlaid {
+            println!("session · {}: {w}×{h} at {} Hz, three buffers of the card (laid out by its driver: it names no layouts)", self.name, self.mode.vrefresh());
+        } else {
+            println!("session · {}: {w}×{h} at {} Hz, three buffers of the card (modifier {:#x})", self.name, self.mode.vrefresh(), wanted[0]);
+        }
         Ok(())
     }
 }
