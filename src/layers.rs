@@ -90,16 +90,33 @@ static HOLD: Mutex<Option<Hold>> = Mutex::new(None);
 #[derive(Clone, Default)]
 pub struct PointerSeen {
     pub picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>,
+    /// The picture each monitor shows, at its own size (by its place in
+    /// `monitors()`); where there is none, `picture`.
+    pub each: Vec<Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>>,
     pub at: (f64, f64),
     pub moves: u64,
 }
 
+impl PointerSeen {
+    /// Its picture as that monitor shows it.
+    pub fn picture_on(&self, monitor: usize) -> Option<std::sync::Arc<(Vec<u8>, (i32, i32))>> {
+        self.each.get(monitor).cloned().flatten().or_else(|| self.picture.clone())
+    }
+}
+
 static POINTER_SEEN: Mutex<Option<PointerSeen>> = Mutex::new(None);
 
+/// One picture for every monitor.
 pub fn set_pointer_picture(picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>) {
+    set_pointer_pictures(picture, Vec::new());
+}
+
+/// A picture for whoever does not say which monitor, and each monitor's own.
+pub fn set_pointer_pictures(picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>, each: Vec<Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>>) {
     let mut p = POINTER_SEEN.lock().unwrap();
     let seen = p.get_or_insert_with(PointerSeen::default);
     seen.picture = picture;
+    seen.each = each;
     seen.moves += 1;
 }
 
@@ -189,7 +206,7 @@ pub fn stamp_pointer(pointer: &(Vec<u8>, (i32, i32)), (tx, ty): (f64, f64), pixe
 /// for (wlr-screencopy's `overlay_cursor`).
 pub fn pointer_onto_piece(monitor: usize, piece: [i32; 4], pixels: &mut [u8]) {
     let Some(p) = pointer_seen() else { return };
-    let Some(picture) = p.picture else { return };
+    let Some(picture) = p.picture_on(monitor) else { return };
     let Some(m) = monitors().into_iter().nth(monitor) else { return };
     let tip = ((p.at.0 - m.x as f64) * m.scale - piece[0] as f64, (p.at.1 - m.y as f64) * m.scale - piece[1] as f64);
     stamp_pointer(&picture, tip, pixels, (piece[2].max(0) as u32, piece[3].max(0) as u32));

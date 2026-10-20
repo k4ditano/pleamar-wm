@@ -243,9 +243,16 @@ struct State {
     shown: Option<Cursor>,
     playing: Option<Playing>,
     queued: Option<Cursor>,
-    /// The frame on screen, and the timer that turns it.
+    /// The frame on screen, how far into it the time is (ms), and the timer
+    /// that turns it.
     frame: usize,
+    frame_carry: f64,
     frame_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The picture on the plane, and when each of the theme's was last used
+    /// (a count), so the least used of those beyond the usual shapes go.
+    on_plane: Option<String>,
+    cursor_used: std::collections::HashMap<String, u64>,
+    cursor_clock: u64,
     /// A program under the pointer asked for none: off every monitor.
     hidden: bool,
     /// Or one it draws itself: on the card, with its tip, and as a picture.
@@ -394,7 +401,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     layers::set_card(drm.clone());
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
-    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_missing: Default::default(), cursor_theme: None, cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_timer: None, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
+    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_missing: Default::default(), cursor_theme: None, cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
     // The cursor the scene and the programs ask for, whenever it changes.
     let (cursor_tx, cursor_rx) = smithay::reexports::calloop::channel::channel::<(bool, Cursor)>();
@@ -1067,8 +1074,42 @@ impl State {
         }
         if !any {
             self.cursor_missing.insert(name.to_owned());
+            return false;
         }
-        any
+        self.touch_cursor(name);
+        self.trim_cursors();
+        true
+    }
+
+    /// That picture of the theme was used now.
+    fn touch_cursor(&mut self, name: &str) {
+        self.cursor_clock += 1;
+        self.cursor_used.insert(name.to_owned(), self.cursor_clock);
+    }
+
+    /// Beyond the usual shapes, only the pictures used last stay on the card
+    /// (`CURSOR_CACHE` of them): a theme with many shapes and transitions does
+    /// not grow without end as more of them are played. Never the one on the
+    /// plane, nor the shape asked for, nor what plays or waits to.
+    fn trim_cursors(&mut self) {
+        let busy: Vec<String> = [self.shown.map(|c| c.name().to_owned()), self.queued.map(|c| c.name().to_owned()), self.playing.as_ref().map(|p| p.asset.clone()), self.on_plane.clone()].into_iter().flatten().collect();
+        let mut extra: Vec<(u64, String)> = Vec::new();
+        for c in &self.cursors {
+            if CURSOR_KINDS.iter().any(|k| k.name() == c.0) || busy.contains(&c.0) || extra.iter().any(|e| e.1 == c.0) {
+                continue;
+            }
+            extra.push((self.cursor_used.get(&c.0).copied().unwrap_or(0), c.0.clone()));
+        }
+        if extra.len() <= CURSOR_CACHE {
+            return;
+        }
+        extra.sort();
+        let gone: Vec<String> = extra[..extra.len() - CURSOR_CACHE].iter().map(|e| e.1.clone()).collect();
+        self.cursors.retain(|c| !gone.contains(&c.0));
+        self.cursor_pictures.retain(|c| !gone.contains(&c.0));
+        for g in &gone {
+            self.cursor_used.remove(g);
+        }
     }
 
     /// Frames onto the card at a size, upright and turned for the monitors
@@ -1192,6 +1233,11 @@ impl State {
             }
         }
         self.frame = 0;
+        self.frame_carry = 0.0;
+        self.touch_cursor(want.name());
+        if let Some(asset) = self.playing.as_ref().filter(|p| p.transition).map(|p| p.asset.clone()) {
+            self.touch_cursor(&asset);
+        }
         if let Some(t) = self.frame_timer.take() {
             self.handle.remove(t);
         }
@@ -1214,37 +1260,61 @@ impl State {
             let image = CursorImage { size: Buffer::size(&f.bo), format: Buffer::format(&f.bo), pitch: Buffer::pitch(&f.bo), handle: Buffer::handle(&f.bo) };
             self.mover.shape(crtc, image, f.hot);
         }
-        let picture = self.cursor_pictures.iter().filter(|c| c.0 == p.asset && !self.hidden).max_by_key(|c| c.1).and_then(|c| c.2.get(self.frame_index(c.2.len())).cloned());
-        layers::set_pointer_picture(picture);
+        // For a picture of each monitor, the frame of the size it shows; and,
+        // for whoever does not say which, the biggest, as sharp as any.
+        let frame_of = |c: &(String, u32, Vec<std::sync::Arc<(Vec<u8>, (i32, i32))>>)| c.2.get(self.frame_index(c.2.len())).cloned();
+        let ours = || self.cursor_pictures.iter().filter(|c| c.0 == p.asset && !self.hidden);
+        let biggest = ours().max_by_key(|c| c.1).and_then(frame_of);
+        let each = self.monitors.iter().map(|m| ours().min_by_key(|c| c.1.abs_diff(cursor_size(m))).and_then(frame_of)).collect();
+        layers::set_pointer_pictures(biggest, each);
+        self.on_plane = Some(p.asset.clone());
+    }
+
+    /// How long the frame on screen shows, in ms.
+    fn frame_delay(&self) -> f64 {
+        self.monitors.get(self.pointer_monitor()).and_then(|m| self.cursor_frame(m)).map_or(1, |f| f.delay.max(1)) as f64
     }
 
     /// The next frame when this one's time is up: round and round for a
-    /// shape of several, once through for a transition.
+    /// shape of several, once through for a transition. Never sooner than
+    /// the monitor under the pointer shows a new picture (each is a call to
+    /// the driver that may wait for it): frames shorter than that are passed
+    /// over, so the animation keeps its time. None while the cursor is hidden.
     fn next_frame_later(&mut self) {
+        if self.hidden {
+            return;
+        }
         let Some(p) = &self.playing else { return };
         let len = self.cursors.iter().find(|c| c.0 == p.asset).map_or(0, |c| c.3.len());
         if len < 2 && !p.transition {
             return;
         }
-        let first = self.monitors.get(self.pointer_monitor()).and_then(|m| self.cursor_frame(m)).map_or(0, |f| f.delay);
-        let delay = Duration::from_millis(first.max(4) as u64);
+        let refresh = self.monitors.get(self.pointer_monitor()).map(|m| m.mhz).filter(|mhz| *mhz > 0).map_or(8.0, |mhz| 1_000_000.0 / mhz as f64);
+        let wait = (self.frame_delay() - self.frame_carry).max(refresh);
         self.frame_timer = self
             .handle
-            .insert_source(smithay::reexports::calloop::timer::Timer::from_duration(delay), move |_, _, state: &mut State| {
+            .insert_source(smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_secs_f64(wait / 1000.0)), move |_, _, state: &mut State| {
                 state.frame_timer = None;
-                state.frame += 1;
-                if state.playing.as_ref().is_some_and(|p| p.transition) && state.frame >= len {
-                    // Played through: the shape it led to, or the one asked for since.
-                    match (state.queued.take(), state.shown) {
-                        (Some(q), Some(s)) if q != s => state.change_to(q),
-                        (_, Some(s)) => {
-                            state.shown = None;
-                            state.playing = None;
-                            state.change_to(s);
-                        }
-                        _ => {}
-                    }
+                if state.hidden {
                     return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+                }
+                state.frame_carry += wait;
+                while state.frame_carry >= state.frame_delay() {
+                    state.frame_carry -= state.frame_delay();
+                    state.frame += 1;
+                    if state.playing.as_ref().is_some_and(|p| p.transition) && state.frame >= len {
+                        // Played through: the shape it led to, or the one asked for since.
+                        match (state.queued.take(), state.shown) {
+                            (Some(q), Some(s)) if q != s => state.change_to(q),
+                            (_, Some(s)) => {
+                                state.shown = None;
+                                state.playing = None;
+                                state.change_to(s);
+                            }
+                            _ => {}
+                        }
+                        return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+                    }
                 }
                 state.show_frame();
                 // Its tip may be elsewhere in this frame.
@@ -1628,6 +1698,10 @@ struct Playing {
     reverse: bool,
     transition: bool,
 }
+
+/// How many of the theme's pictures beyond the usual shapes stay on the card
+/// (shapes and transitions; the last used).
+const CURSOR_CACHE: usize = 24;
 
 /// The shapes read when the session starts.
 const CURSOR_KINDS: [Cursor; 12] = [
