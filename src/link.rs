@@ -672,7 +672,11 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     if !started {
                         keys(id, "enter")?;
                     }
-                    let timeout = number(rest, "--timeout", 600);
+                    // Waited for here, ten minutes; brought later by a messenger of its own,
+                    // six hours: a task of an agent can take an hour, and the answer of one that
+                    // outlasted the messenger was never brought (it said «did not finish» and left).
+                    let waits_here = rest.iter().any(|a| a == "--wait") || !h.info.get("agent").is_some_and(|a| !a.is_empty());
+                    let timeout = number(rest, "--timeout", if waits_here { 600 } else { 6 * 3600 });
                     // A shell has nowhere to be told the answer later (it would
                     // run it): it waits for it.
                     let caller_agent = h.info.get("agent").is_some_and(|a| !a.is_empty());
