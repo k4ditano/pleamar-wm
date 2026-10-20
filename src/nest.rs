@@ -1280,7 +1280,8 @@ impl State {
                     return;
                 }
                 if let Some(m) = layers::monitors().iter().find(|m| m.name == monitor) {
-                    self.x11_shown_at(slot, (m.x + rect[0], m.y + rect[1]));
+                    // `rect` in pixels, the monitor's corner in units.
+                    self.x11_shown_at(slot, (m.x + (rect[0] as f64 / m.scale).round() as i32, m.y + (rect[1] as f64 / m.scale).round() as i32));
                 }
                 if let Some(Some(w)) = self.slots.get_mut(slot) {
                     w.shown = Some((monitor, rect));
@@ -2806,16 +2807,24 @@ impl State {
         if let Some((k, r)) = place {
             let scale = self.scale_of(k);
             let px = |v: f64| (v * scale).round() as i32;
-            // As much as the scene scales the window (at a glance, while it glides).
+            // As much as the scene scales the window (at a glance, while it glides),
+            // from units to pixels: `r` is in pixels already.
             let sx = if g[2] > 0 { r[2] as f64 / g[2] as f64 } else { 1.0 };
             let sy = if g[3] > 0 { r[3] as f64 / g[3] as f64 } else { 1.0 };
             // Its menus: Wayland ones (xdg popups) and X11 ones (override-redirect),
-            // each from the window's corner.
-            let mut all: Vec<(WlSurface, Point<i32, Logical>)> = PopupManager::popups_for_surface(root).map(|(p, offset)| (p.wl_surface().clone(), offset - p.geometry().loc)).collect();
-            all.extend(self.unmanaged_of(slot).into_iter().map(|(s, at)| (s, Point::from(at))));
-            for (surface, at) in all {
+            // each from the window's corner, with the box it draws in (an xdg
+            // popup's geometry leaves out its shadow).
+            let mut all: Vec<(WlSurface, Point<i32, Logical>, Option<[i32; 4]>)> = PopupManager::popups_for_surface(root)
+                .map(|(p, offset)| {
+                    let b = p.geometry();
+                    (p.wl_surface().clone(), offset - b.loc, Some([b.loc.x, b.loc.y, b.size.w, b.size.h]).filter(|b| b[2] > 0 && b[3] > 0))
+                })
+                .collect();
+            all.extend(self.unmanaged_of(slot).into_iter().map(|(s, at)| (s, Point::from(at), None)));
+            let blur_menus = crate::config::get().blur.menus;
+            for (surface, at, drawn) in all {
                 let Some((w, h)) = content_of(&surface, |c| c.size).filter(|s| s.0 > 0 && s.1 > 0) else { continue };
-                let (x, y) = (r[0] as f64 + at.x as f64 * sx, r[1] as f64 + at.y as f64 * sy);
+                let (x, y) = ((r[0] as f64 + at.x as f64 * sx).round() as i32, (r[1] as f64 + at.y as f64 * sy).round() as i32);
                 let i = match self.menus.iter().position(|m| m.surface == surface) {
                     Some(i) => i,
                     None => {
@@ -2833,9 +2842,14 @@ impl State {
                 let mut pieces = Vec::new();
                 panel_pieces(&surface, (0, 0), &self.menus[i].sent, scale, &mut pieces);
                 self.menus[i].sent = pieces.iter().map(|p| p.key).collect();
-                let blur: Vec<[i32; 4]> = with_states(&surface, |s| s.data_map.get::<Blur>().map(|b| b.0.lock().unwrap().clone())).unwrap_or_default().iter().map(|b| [px(b[0] as f64), px(b[1] as f64), px(b[2] as f64), px(b[3] as f64)]).collect();
+                // Where it asks for a blur; with `blur menus on`, all of it where it asks for none.
+                let mut blur: Vec<[i32; 4]> = with_states(&surface, |s| s.data_map.get::<Blur>().map(|b| b.0.lock().unwrap().clone())).unwrap_or_default();
+                if blur.is_empty() && blur_menus {
+                    blur.push(drawn.unwrap_or([0, 0, w as i32, h as i32]));
+                }
+                let blur = blur.iter().map(|b| [px(b[0] as f64), px(b[1] as f64), px(b[2] as f64), px(b[3] as f64)]).collect();
                 let id = self.menus[i].id;
-                layers::show(k, ClientLayer { id, level: 3, rect: [px(x), px(y), px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, owner: owner_of(&surface), zoom: 1.0 });
+                layers::show(k, ClientLayer { id, level: 3, rect: [x, y, px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, owner: owner_of(&surface), zoom: 1.0 });
                 now.push(id);
             }
         }
@@ -3005,7 +3019,10 @@ fn unconstrained(state: &State, popup: &PopupSurface, positioner: PositionerStat
         let shown = state.window_of(&root).and_then(|s| state.slots[s].as_ref()).and_then(|w| w.shown.clone());
         if let Some((k, r)) = shown.and_then(|(name, r)| monitors.iter().position(|m| m.name == name).map(|k| (k, r))) {
             let (mw, mh) = state.monitor_size(k);
-            let target = smithay::utils::Rectangle::new((-r[0] - parent.x, -r[1] - parent.y).into(), (mw, mh).into());
+            // Where the window is seen, from pixels to units.
+            let scale = state.scale_of(k);
+            let (rx, ry) = ((r[0] as f64 / scale).round() as i32, (r[1] as f64 / scale).round() as i32);
+            let target = smithay::utils::Rectangle::new((-rx - parent.x, -ry - parent.y).into(), (mw, mh).into());
             return positioner.get_unconstrained_geometry(target);
         }
     }
