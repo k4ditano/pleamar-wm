@@ -3824,19 +3824,9 @@ impl SeatHandler for State {
                 }
             }
         }
-        use smithay::input::pointer::CursorIcon as I;
+        // Any standard one by its name: the session finds it in the theme.
         let kind = match image {
-            CursorImageStatus::Named(I::Text | I::VerticalText) => pleamar::scene::Cursor::Text,
-            CursorImageStatus::Named(I::Pointer) => pleamar::scene::Cursor::Hand,
-            CursorImageStatus::Named(I::Grab) => pleamar::scene::Cursor::Grab,
-            CursorImageStatus::Named(I::Grabbing) => pleamar::scene::Cursor::Grabbing,
-            CursorImageStatus::Named(I::Move | I::AllScroll) => pleamar::scene::Cursor::Move,
-            CursorImageStatus::Named(I::EwResize | I::ColResize | I::EResize | I::WResize) => pleamar::scene::Cursor::EwResize,
-            CursorImageStatus::Named(I::NsResize | I::RowResize | I::NResize | I::SResize) => pleamar::scene::Cursor::NsResize,
-            CursorImageStatus::Named(I::NwseResize | I::NwResize | I::SeResize) => pleamar::scene::Cursor::NwseResize,
-            CursorImageStatus::Named(I::NeswResize | I::NeResize | I::SwResize) => pleamar::scene::Cursor::NeswResize,
-            CursorImageStatus::Named(I::NotAllowed | I::NoDrop) => pleamar::scene::Cursor::NotAllowed,
-            CursorImageStatus::Named(I::Crosshair) => pleamar::scene::Cursor::Crosshair,
+            CursorImageStatus::Named(icon) => pleamar::scene::Cursor::from_name(icon.name()).unwrap_or_default(),
             _ => pleamar::scene::Cursor::Normal,
         };
         // Over a program's surface of its own, the session shows it; over a
