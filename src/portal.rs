@@ -669,18 +669,20 @@ impl Feed {
 /// it (BGRx; the pointer's picture is premultiplied).
 fn pointer_onto(source: Source, pixels: &mut [u8], (w, h): (u32, u32)) {
     let Some(p) = layers::pointer_seen() else { return };
-    let Some(picture) = p.picture else { return };
     let monitors = layers::monitors();
-    // Where its tip is, in the picture's pixels.
-    let tip = match source {
-        Source::Monitor(n) => monitors.get(n).map(|m| ((p.at.0 - m.x as f64) * m.scale, (p.at.1 - m.y as f64) * m.scale)),
+    // Where its tip is, in the picture's pixels, and which monitor it is
+    // seen on: its picture is the one of the size that monitor shows.
+    let at = match source {
+        Source::Monitor(n) => monitors.get(n).map(|m| (n, ((p.at.0 - m.x as f64) * m.scale, (p.at.1 - m.y as f64) * m.scale))),
         Source::Window(slot) => layers::shown(slot).and_then(|(name, r)| {
-            let m = monitors.iter().find(|m| m.name == name)?;
+            let n = monitors.iter().position(|m| m.name == name)?;
+            let m = &monitors[n];
             let (x, y) = ((p.at.0 - m.x as f64) * m.scale - r[0] as f64, (p.at.1 - m.y as f64) * m.scale - r[1] as f64);
-            (r[2] > 0 && r[3] > 0).then(|| (x * w as f64 / r[2] as f64, y * h as f64 / r[3] as f64))
+            (r[2] > 0 && r[3] > 0).then(|| (n, (x * w as f64 / r[2] as f64, y * h as f64 / r[3] as f64)))
         }),
     };
-    let Some(tip) = tip else { return };
+    let Some((n, tip)) = at else { return };
+    let Some(picture) = p.picture_on(n) else { return };
     layers::stamp_pointer(&picture, tip, pixels, (w, h));
 }
 

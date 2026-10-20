@@ -228,11 +228,31 @@ struct State {
     to_render: Sender<ToRender>,
     keymap: xkb::State,
     pointer: (f64, f64),
-    /// The cursor's shapes on the card, each with its hot spot, and which is shown.
-    /// Each shape, for each way a monitor stands (quarter turns) and each size
-    /// the monitors' scales ask for: its image on the card and its tip, both turned.
-    cursors: Vec<(Cursor, u8, u32, gbm::BufferObject<()>, (i32, i32))>,
+    /// Each picture of the theme read so far (a shape, or a transition between
+    /// two), for each way a monitor stands (quarter turns) and each size the
+    /// monitors' scales ask for: its frames on the card, each with its tip,
+    /// both turned, and how long it shows. Those the theme lacks, so they are
+    /// not looked for again; and what reading more needs.
+    cursors: Vec<(String, u8, u32, Vec<CursorFrame>)>,
+    cursor_missing: std::collections::HashSet<String>,
+    cursor_theme: Option<xcursor::CursorTheme>,
+    cursor_sizes: Vec<u32>,
+    cursor_gbm: Option<Arc<Mutex<gbm::Device<DrmDeviceFd>>>>,
+    /// The shape asked for, what is on screen on the way to it, and what was
+    /// asked for while a transition played.
     shown: Option<Cursor>,
+    playing: Option<Playing>,
+    queued: Option<Cursor>,
+    /// The frame on screen, how far into it the time is (ms), and the timer
+    /// that turns it.
+    frame: usize,
+    frame_carry: f64,
+    frame_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The picture on the plane, and when each of the theme's was last used
+    /// (a count), so the least used of those beyond the usual shapes go.
+    on_plane: Option<String>,
+    cursor_used: std::collections::HashMap<String, u64>,
+    cursor_clock: u64,
     /// A program under the pointer asked for none: off every monitor.
     hidden: bool,
     /// Or one it draws itself: on the card, with its tip, and as a picture.
@@ -254,7 +274,7 @@ struct State {
     route: Route,
     /// Each shape's picture as it is on the card, unturned, with its tip: for
     /// whoever puts the pointer into a picture (sharing the screen).
-    cursor_pictures: Vec<(Cursor, u32, std::sync::Arc<(Vec<u8>, (i32, i32))>)>,
+    cursor_pictures: Vec<(String, u32, Vec<std::sync::Arc<(Vec<u8>, (i32, i32))>>)>,
     /// The loop's handle: to start the timer of a key binding that repeats.
     handle: smithay::reexports::calloop::LoopHandle<'static, State>,
     /// What is needed to put monitors up when they are plugged in: the card's
@@ -381,7 +401,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     layers::set_card(drm.clone());
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
-    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), shown: None, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
+    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_missing: Default::default(), cursor_theme: None, cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
     // The cursor the scene and the programs ask for, whenever it changes.
     let (cursor_tx, cursor_rx) = smithay::reexports::calloop::channel::channel::<(bool, Cursor)>();
@@ -902,12 +922,26 @@ impl State {
         self.pointer = (px, py);
         layers::move_drag((px, py));
         layers::set_pointer_at((px, py));
-        // The monitor is put together in its pixels: from units to them, and
-        // on one standing on its side, turned the way it stands.
+        self.place_cursor(on);
+        let m = &self.monitors[on];
+        let (mx, my) = ((px - m.x as f64) * m.scale, (py - m.y as f64) * m.scale);
+        let screen = m.screen.clone();
+        if self.route.pointer(&screen, (mx, my)) {
+            self.show_cursor();
+        }
+    }
+
+    /// The cursor plane where the pointer is, on monitor `on`, its tip (that of
+    /// the frame shown, or of a program's own cursor) on it; off the others,
+    /// and off all of them while a program asks for none. The monitor is put
+    /// together in its pixels: from units to them, and on one standing on its
+    /// side, turned the way it stands.
+    fn place_cursor(&mut self, on: usize) {
+        let (px, py) = self.pointer;
         for (k, m) in self.monitors.iter().enumerate() {
             let hot = match &self.custom {
                 Some(c) => c.1,
-                None => self.shown.and_then(|c| self.cursor_of(c, m)).map_or((0, 0), |x| x.4),
+                None => self.cursor_frame(m).map_or((0, 0), |f| f.hot),
             };
             let (cx, cy) = if k == on && !self.hidden {
                 let (x, y) = turned_point(m.turn, ((px - m.x as f64) * m.scale, (py - m.y as f64) * m.scale), (m.size.0 as f64, m.size.1 as f64));
@@ -919,12 +953,15 @@ impl State {
                 self.mover.to(crtc, (cx, cy));
             }
         }
-        let m = &self.monitors[on];
-        let (mx, my) = ((px - m.x as f64) * m.scale, (py - m.y as f64) * m.scale);
-        let screen = m.screen.clone();
-        if self.route.pointer(&screen, (mx, my)) {
-            self.show_cursor();
-        }
+    }
+
+    /// The monitor the pointer is on.
+    fn pointer_monitor(&self) -> usize {
+        let (px, py) = self.pointer;
+        self.monitors
+            .iter()
+            .position(|m| px >= m.x as f64 && py >= m.y as f64 && px < (m.x + m.units().0) as f64 && py < (m.y + m.units().1) as f64)
+            .unwrap_or(0)
     }
 
     /// Every monitor's picture, for the route to look at.
@@ -934,8 +971,10 @@ impl State {
 
     /// The cursor's shapes, on the card's cursor plane: moving the mouse does
     /// not repaint anything. From the system's cursor theme (XCURSOR_THEME, or
-    /// what ~/.icons/default inherits), at XCURSOR_SIZE (24); an arrow of its
-    /// own if there is none.
+    /// what ~/.icons/default inherits), at XCURSOR_SIZE (24) times each
+    /// monitor's scale; an arrow of its own if there is none. The usual shapes
+    /// are read now, any other (and the theme's transitions between two) the
+    /// first time it is asked for.
     fn make_cursors(&mut self, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>) {
         let theme = std::env::var("XCURSOR_THEME").ok().filter(|t| !t.is_empty()).or_else(|| {
             let home = std::env::var("HOME").ok()?;
@@ -949,78 +988,145 @@ impl State {
         }
         sizes.sort();
         sizes.dedup();
-        let names: [(Cursor, &[&str]); 12] = [
-            (Cursor::Normal, &["default", "left_ptr", "arrow"]),
-            (Cursor::Hand, &["pointer", "hand2", "pointing_hand", "hand1"]),
-            (Cursor::Text, &["text", "xterm", "ibeam"]),
-            (Cursor::Grab, &["grab", "openhand", "hand1"]),
-            (Cursor::Grabbing, &["grabbing", "closedhand", "fleur"]),
-            (Cursor::EwResize, &["ew-resize", "col-resize", "sb_h_double_arrow", "h_double_arrow", "size_hor"]),
-            (Cursor::NsResize, &["ns-resize", "row-resize", "sb_v_double_arrow", "v_double_arrow", "size_ver"]),
-            (Cursor::NwseResize, &["nwse-resize", "size_fdiag", "bd_double_arrow", "bottom_right_corner"]),
-            (Cursor::NeswResize, &["nesw-resize", "size_bdiag", "fd_double_arrow", "bottom_left_corner"]),
-            (Cursor::Move, &["move", "all-scroll", "fleur", "size_all"]),
-            (Cursor::NotAllowed, &["not-allowed", "crossed_circle", "forbidden"]),
-            (Cursor::Crosshair, &["crosshair", "cross", "tcross"]),
-        ];
-        let loaded = theme.as_deref().map(xcursor::CursorTheme::load);
-        for (kind, candidates) in names {
-            for &size in &sizes {
-                let image = loaded.as_ref().and_then(|t| {
-                    candidates.iter().find_map(|n| {
-                        let path = t.load_icon(n)?;
-                        let data = std::fs::read(path).ok()?;
-                        let images = xcursor::parser::parse_xcursor(&data)?;
-                        // The size closest to the one asked for, that fits the plane.
-                        images.into_iter().filter(|i| i.width <= 64 && i.height <= 64).min_by_key(|i| (i.size as i64 - size as i64).abs())
-                    })
-                });
-                let Ok(mut bo) = gbm.lock().unwrap().create_buffer_object::<()>(64, 64, gbm::Format::Argb8888, gbm::BufferObjectFlags::CURSOR | gbm::BufferObjectFlags::WRITE) else {
-                    eprintln!("session · no cursor on the card: the pointer will not be seen");
-                    return;
-                };
-                let mut px = vec![0u8; 64 * 64 * 4];
-                let hot = match &image {
-                    Some(i) => {
-                        for y in 0..i.height as usize {
-                            let row = &i.pixels_rgba[y * i.width as usize * 4..(y + 1) * i.width as usize * 4];
-                            px[y * 64 * 4..y * 64 * 4 + row.len()].copy_from_slice(row);
-                        }
-                        (i.xhot as i32, i.yhot as i32)
-                    }
-                    None => {
-                        if kind != Cursor::Normal {
-                            continue;
-                        }
-                        // The usual arrow: white, with a dark edge.
-                        let arrow: [&str; 19] = [
-                            "X", "XX", "X.X", "X..X", "X...X", "X....X", "X.....X", "X......X", "X.......X", "X........X", "X.........X", "X..........X", "X......XXXXX", "X...X..X", "X..XX..X",
-                            "X.X  X..X", "XX   X..X", "X     X..X", "      XXX",
-                        ];
-                        for (y, row) in arrow.iter().enumerate() {
-                            for (x, c) in row.chars().enumerate() {
-                                let v: [u8; 4] = match c {
-                                    'X' => [20, 20, 20, 255],
-                                    '.' => [255, 255, 255, 255],
-                                    _ => continue,
-                                };
-                                let i = (y * 64 + x) * 4;
-                                px[i..i + 4].copy_from_slice(&v);
-                            }
-                        }
-                        (0, 0)
-                    }
-                };
-                if bo.write(&px).is_err() {
-                    continue;
+        self.cursor_sizes = sizes;
+        self.cursor_theme = theme.as_deref().map(xcursor::CursorTheme::load);
+        self.cursor_gbm = Some(gbm.clone());
+        for c in CURSOR_KINDS {
+            self.load_cursor(c.name());
+        }
+        // The usual arrow: white, with a dark edge.
+        if !self.cursors.iter().any(|c| c.0 == "default") {
+            let mut px = vec![0u8; 64 * 64 * 4];
+            let arrow: [&str; 19] = [
+                "X", "XX", "X.X", "X..X", "X...X", "X....X", "X.....X", "X......X", "X.......X", "X........X", "X.........X", "X..........X", "X......XXXXX", "X...X..X", "X..XX..X",
+                "X.X  X..X", "XX   X..X", "X     X..X", "      XXX",
+            ];
+            for (y, row) in arrow.iter().enumerate() {
+                for (x, c) in row.chars().enumerate() {
+                    let v: [u8; 4] = match c {
+                        'X' => [20, 20, 20, 255],
+                        '.' => [255, 255, 255, 255],
+                        _ => continue,
+                    };
+                    let i = (y * 64 + x) * 4;
+                    px[i..i + 4].copy_from_slice(&v);
                 }
-                self.cursor_pictures.push((kind, size, std::sync::Arc::new((px.clone(), hot))));
-                self.cursors.push((kind, 0, size, bo, hot));
-                // And turned, for the monitors that stand on their side.
-                let mut turns: Vec<u8> = self.monitors.iter().map(|m| m.turn).filter(|t| *t != 0).collect();
-                turns.sort();
-                turns.dedup();
-                for turn in turns {
+            }
+            self.cursor_missing.remove("default");
+            let sizes = self.cursor_sizes.clone();
+            for size in sizes {
+                self.put_cursor("default", size, vec![(px.clone(), (0, 0), 0)]);
+            }
+        }
+        println!("session · cursor: {} at {:?} px ({} pictures)", theme.as_deref().unwrap_or("its own arrow"), self.cursor_sizes, self.cursors.len());
+        self.show_cursor();
+    }
+
+    /// A picture of the theme on the card, by its name (`pointer`,
+    /// `default-to-pointer`), read once, at each size the monitors ask for:
+    /// whether it is there. A shape is also looked for by the older names
+    /// themes give it.
+    fn load_cursor(&mut self, name: &str) -> bool {
+        if self.cursors.iter().any(|c| c.0 == name) {
+            return true;
+        }
+        if self.cursor_missing.contains(name) {
+            return false;
+        }
+        let mut candidates = vec![name.to_owned()];
+        if let Some(k) = CURSOR_KINDS.iter().find(|k| k.name() == name) {
+            candidates.extend(cursor_alternatives(*k).iter().map(|n| n.to_string()));
+        }
+        if let Ok(icon) = name.parse::<smithay::input::pointer::CursorIcon>() {
+            candidates.extend(icon.alt_names().iter().map(|n| n.to_string()));
+        }
+        let images = self.cursor_theme.as_ref().and_then(|t| {
+            candidates.iter().find_map(|n| {
+                let path = t.load_icon(n)?;
+                let data = std::fs::read(path).ok()?;
+                let images: Vec<_> = xcursor::parser::parse_xcursor(&data)?.into_iter().filter(|i| i.width <= 64 && i.height <= 64).collect();
+                (!images.is_empty()).then_some(images)
+            })
+        });
+        let Some(images) = images else {
+            self.cursor_missing.insert(name.to_owned());
+            return false;
+        };
+        // An animated one is several images of each size: for each size asked
+        // for, the frames of the closest one there is, in order.
+        let mut any = false;
+        let sizes = self.cursor_sizes.clone();
+        for size in sizes {
+            let Some(best) = images.iter().map(|i| i.size).min_by_key(|s| (*s as i64 - size as i64).abs()) else { continue };
+            let frames = images
+                .iter()
+                .filter(|i| i.size == best)
+                .map(|i| {
+                    let mut px = vec![0u8; 64 * 64 * 4];
+                    for y in 0..i.height as usize {
+                        let row = &i.pixels_rgba[y * i.width as usize * 4..(y + 1) * i.width as usize * 4];
+                        px[y * 64 * 4..y * 64 * 4 + row.len()].copy_from_slice(row);
+                    }
+                    (px, (i.xhot as i32, i.yhot as i32), i.delay)
+                })
+                .collect();
+            any |= self.put_cursor(name, size, frames);
+        }
+        if !any {
+            self.cursor_missing.insert(name.to_owned());
+            return false;
+        }
+        self.touch_cursor(name);
+        self.trim_cursors();
+        true
+    }
+
+    /// That picture of the theme was used now.
+    fn touch_cursor(&mut self, name: &str) {
+        self.cursor_clock += 1;
+        self.cursor_used.insert(name.to_owned(), self.cursor_clock);
+    }
+
+    /// Beyond the usual shapes, only the pictures used last stay on the card
+    /// (`CURSOR_CACHE` of them): a theme with many shapes and transitions does
+    /// not grow without end as more of them are played. Never the one on the
+    /// plane, nor the shape asked for, nor what plays or waits to.
+    fn trim_cursors(&mut self) {
+        let busy: Vec<String> = [self.shown.map(|c| c.name().to_owned()), self.queued.map(|c| c.name().to_owned()), self.playing.as_ref().map(|p| p.asset.clone()), self.on_plane.clone()].into_iter().flatten().collect();
+        let mut extra: Vec<(u64, String)> = Vec::new();
+        for c in &self.cursors {
+            if CURSOR_KINDS.iter().any(|k| k.name() == c.0) || busy.contains(&c.0) || extra.iter().any(|e| e.1 == c.0) {
+                continue;
+            }
+            extra.push((self.cursor_used.get(&c.0).copied().unwrap_or(0), c.0.clone()));
+        }
+        if extra.len() <= CURSOR_CACHE {
+            return;
+        }
+        extra.sort();
+        let gone: Vec<String> = extra[..extra.len() - CURSOR_CACHE].iter().map(|e| e.1.clone()).collect();
+        self.cursors.retain(|c| !gone.contains(&c.0));
+        self.cursor_pictures.retain(|c| !gone.contains(&c.0));
+        for g in &gone {
+            self.cursor_used.remove(g);
+        }
+    }
+
+    /// Frames onto the card at a size, upright and turned for the monitors
+    /// that stand on their side: whether they got there.
+    fn put_cursor(&mut self, name: &str, size: u32, frames: Vec<(Vec<u8>, (i32, i32), u32)>) -> bool {
+        let Some(gbm) = self.cursor_gbm.clone() else { return false };
+        let mut turns: Vec<u8> = self.monitors.iter().map(|m| m.turn).collect();
+        turns.push(0);
+        turns.sort();
+        turns.dedup();
+        let mut any = false;
+        for turn in turns {
+            let mut done = Vec::new();
+            for (px, hot, delay) in &frames {
+                let (out, hot) = if turn == 0 {
+                    (px.clone(), *hot)
+                } else {
                     let mut out = vec![0u8; 64 * 64 * 4];
                     for y in 0..64usize {
                         for x in 0..64usize {
@@ -1030,29 +1136,60 @@ impl State {
                         }
                     }
                     let (hx, hy) = turned_point(turn, (hot.0 as f64, hot.1 as f64), (63.0, 63.0));
-                    let Ok(mut bo) = gbm.lock().unwrap().create_buffer_object::<()>(64, 64, gbm::Format::Argb8888, gbm::BufferObjectFlags::CURSOR | gbm::BufferObjectFlags::WRITE) else { continue };
-                    if bo.write(&out).is_ok() {
-                        self.cursors.push((kind, turn, size, bo, (hx as i32, hy as i32)));
-                    }
+                    (out, (hx as i32, hy as i32))
+                };
+                let Ok(mut bo) = gbm.lock().unwrap().create_buffer_object::<()>(64, 64, gbm::Format::Argb8888, gbm::BufferObjectFlags::CURSOR | gbm::BufferObjectFlags::WRITE) else {
+                    eprintln!("session · no cursor on the card: the pointer will not be seen");
+                    return any;
+                };
+                if bo.write(&out).is_ok() {
+                    done.push(CursorFrame { bo, hot, delay: *delay });
                 }
             }
+            if !done.is_empty() {
+                self.cursors.push((name.to_owned(), turn, size, done));
+                any = true;
+            }
         }
-        println!("session · cursor: {} at {:?} px ({} shapes)", theme.as_deref().unwrap_or("its own arrow"), sizes, self.cursors.len());
-        self.show_cursor();
+        if any {
+            self.cursor_pictures.push((name.to_owned(), size, frames.into_iter().map(|(px, hot, _)| std::sync::Arc::new((px, hot))).collect()));
+        }
+        any
     }
 
-    /// That shape as that monitor shows it: turned as it stands (or not, if
-    /// there is none turned), of the size closest to what its scale asks.
-    fn cursor_of(&self, kind: Cursor, m: &Monitor) -> Option<&(Cursor, u8, u32, gbm::BufferObject<()>, (i32, i32))> {
+    /// The frames of a picture of the theme as that monitor shows it: turned as
+    /// it stands (or not, if there is none turned), of the size closest to what
+    /// its scale asks.
+    fn cursor_frames(&self, asset: &str, m: &Monitor) -> Option<&[CursorFrame]> {
         let size = cursor_size(m);
-        let turn = if self.cursors.iter().any(|c| c.0 == kind && c.1 == m.turn) { m.turn } else { 0 };
-        self.cursors.iter().filter(|c| c.0 == kind && c.1 == turn).min_by_key(|c| c.2.abs_diff(size))
+        let turn = if self.cursors.iter().any(|c| c.0 == asset && c.1 == m.turn) { m.turn } else { 0 };
+        self.cursors.iter().filter(|c| c.0 == asset && c.1 == turn).min_by_key(|c| c.2.abs_diff(size)).map(|c| c.3.as_slice())
+    }
+
+    /// Where in its frames the picture on screen is: a transition played
+    /// backwards counts down, a shape goes round.
+    fn frame_index(&self, len: usize) -> usize {
+        match &self.playing {
+            Some(p) if p.transition => {
+                let i = self.frame.min(len.saturating_sub(1));
+                if p.reverse { len - 1 - i } else { i }
+            }
+            _ => self.frame % len.max(1),
+        }
+    }
+
+    /// The frame on screen, as that monitor shows it.
+    fn cursor_frame(&self, m: &Monitor) -> Option<&CursorFrame> {
+        let p = self.playing.as_ref()?;
+        let frames = self.cursor_frames(&p.asset, m)?;
+        frames.get(self.frame_index(frames.len()))
     }
 
     /// The cursor of whoever has the pointer, if it is not the one shown.
     fn show_cursor(&mut self) {
         use smithay::reexports::drm::buffer::Buffer;
-        // A program's own, on every monitor (as it is: not turned).
+        // A program's own, on every monitor (as it is: not turned). The
+        // theme's stops turning meanwhile.
         if let Some((bo, hot, picture)) = &self.custom {
             let (image, hot) = (|| CursorImage { size: Buffer::size(bo), format: Buffer::format(bo), pitch: Buffer::pitch(bo), handle: Buffer::handle(bo) }, *hot);
             let crtcs: Vec<_> = self.monitors.iter().filter_map(|m| m.crtc).collect();
@@ -1060,32 +1197,133 @@ impl State {
             for crtc in crtcs {
                 self.mover.shape(crtc, image(), hot);
             }
+            if let Some(t) = self.frame_timer.take() {
+                self.handle.remove(t);
+            }
+            self.playing = None;
+            self.queued = None;
             self.mover.sent.clear();
             self.move_pointer(0.0, 0.0);
             return;
         }
         let want = if matches!(self.route.hit, Hit::Client(..)) { self.program_cursor } else { self.scene_cursor };
         // A shape the theme lacks is shown as the arrow.
-        let want = if self.cursors.iter().any(|c| c.0 == want) { want } else { Cursor::Normal };
-        if !self.cursors.iter().any(|c| c.0 == want) {
+        let want = if self.load_cursor(want.name()) { want } else { Cursor::Normal };
+        if !self.load_cursor(want.name()) || self.shown == Some(want) {
+            self.queued = None;
             return;
         }
-        if self.shown == Some(want) {
+        // A transition is let finish; the last shape asked for meanwhile comes after.
+        if self.playing.as_ref().is_some_and(|p| p.transition) {
+            self.queued = Some(want);
             return;
         }
-        for m in &self.monitors {
-            let Some(crtc) = m.crtc else { continue };
-            let Some((_, _, _, bo, hot)) = self.cursor_of(want, m) else { continue };
-            let image = CursorImage { size: Buffer::size(bo), format: Buffer::format(bo), pitch: Buffer::pitch(bo), handle: Buffer::handle(bo) };
-            self.mover.shape(crtc, image, *hot);
+        self.change_to(want);
+    }
+
+    /// From the shape shown to another: through the theme's transition
+    /// between the two if it has one, then the shape itself.
+    fn change_to(&mut self, want: Cursor) {
+        let from = self.shown.replace(want);
+        self.queued = None;
+        self.playing = Some(Playing { asset: want.name().to_owned(), reverse: false, transition: false });
+        if let Some(from) = from.filter(|f| *f != want) {
+            if let Some((asset, reverse)) = transition_between(from.name(), want.name(), |n| self.load_cursor(n)) {
+                self.playing = Some(Playing { asset, reverse, transition: true });
+            }
         }
-        self.shown = Some(want);
-        // For a picture of the screen, the biggest: as sharp as any monitor's.
-        layers::set_pointer_picture(self.cursor_pictures.iter().filter(|c| c.0 == want && !self.hidden).max_by_key(|c| c.1).map(|c| c.2.clone()));
+        self.frame = 0;
+        self.frame_carry = 0.0;
+        self.touch_cursor(want.name());
+        if let Some(asset) = self.playing.as_ref().filter(|p| p.transition).map(|p| p.asset.clone()) {
+            self.touch_cursor(&asset);
+        }
+        if let Some(t) = self.frame_timer.take() {
+            self.handle.remove(t);
+        }
+        self.show_frame();
+        self.next_frame_later();
         // Its tip where the pointer is (told again: a new shape may have
         // put the plane back anywhere).
         self.mover.sent.clear();
         self.move_pointer(0.0, 0.0);
+    }
+
+    /// The frame on screen, on every monitor's plane; and for a picture of the
+    /// screen, the biggest, as sharp as any monitor's.
+    fn show_frame(&mut self) {
+        let Some(p) = &self.playing else { return };
+        use smithay::reexports::drm::buffer::Buffer;
+        for m in &self.monitors {
+            let Some(crtc) = m.crtc else { continue };
+            let Some(f) = self.cursor_frame(m) else { continue };
+            let image = CursorImage { size: Buffer::size(&f.bo), format: Buffer::format(&f.bo), pitch: Buffer::pitch(&f.bo), handle: Buffer::handle(&f.bo) };
+            self.mover.shape(crtc, image, f.hot);
+        }
+        // For a picture of each monitor, the frame of the size it shows; and,
+        // for whoever does not say which, the biggest, as sharp as any.
+        let frame_of = |c: &(String, u32, Vec<std::sync::Arc<(Vec<u8>, (i32, i32))>>)| c.2.get(self.frame_index(c.2.len())).cloned();
+        let ours = || self.cursor_pictures.iter().filter(|c| c.0 == p.asset && !self.hidden);
+        let biggest = ours().max_by_key(|c| c.1).and_then(frame_of);
+        let each = self.monitors.iter().map(|m| ours().min_by_key(|c| c.1.abs_diff(cursor_size(m))).and_then(frame_of)).collect();
+        layers::set_pointer_pictures(biggest, each);
+        self.on_plane = Some(p.asset.clone());
+    }
+
+    /// How long the frame on screen shows, in ms.
+    fn frame_delay(&self) -> f64 {
+        self.monitors.get(self.pointer_monitor()).and_then(|m| self.cursor_frame(m)).map_or(1, |f| f.delay.max(1)) as f64
+    }
+
+    /// The next frame when this one's time is up: round and round for a
+    /// shape of several, once through for a transition. Never sooner than
+    /// the monitor under the pointer shows a new picture (each is a call to
+    /// the driver that may wait for it): frames shorter than that are passed
+    /// over, so the animation keeps its time. None while the cursor is hidden.
+    fn next_frame_later(&mut self) {
+        if self.hidden {
+            return;
+        }
+        let Some(p) = &self.playing else { return };
+        let len = self.cursors.iter().find(|c| c.0 == p.asset).map_or(0, |c| c.3.len());
+        if len < 2 && !p.transition {
+            return;
+        }
+        let refresh = self.monitors.get(self.pointer_monitor()).map(|m| m.mhz).filter(|mhz| *mhz > 0).map_or(8.0, |mhz| 1_000_000.0 / mhz as f64);
+        let wait = (self.frame_delay() - self.frame_carry).max(refresh);
+        self.frame_timer = self
+            .handle
+            .insert_source(smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_secs_f64(wait / 1000.0)), move |_, _, state: &mut State| {
+                state.frame_timer = None;
+                if state.hidden {
+                    return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+                }
+                state.frame_carry += wait;
+                while state.frame_carry >= state.frame_delay() {
+                    state.frame_carry -= state.frame_delay();
+                    state.frame += 1;
+                    if state.playing.as_ref().is_some_and(|p| p.transition) && state.frame >= len {
+                        // Played through: the shape it led to, or the one asked for since.
+                        match (state.queued.take(), state.shown) {
+                            (Some(q), Some(s)) if q != s => state.change_to(q),
+                            (_, Some(s)) => {
+                                state.shown = None;
+                                state.playing = None;
+                                state.change_to(s);
+                            }
+                            _ => {}
+                        }
+                        return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+                    }
+                }
+                state.show_frame();
+                // Its tip may be elsewhere in this frame.
+                state.mover.sent.clear();
+                state.place_cursor(state.pointer_monitor());
+                state.next_frame_later();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            })
+            .ok();
     }
 
     /// Page flips done: the frame on its way is on screen, and the monitor can
@@ -1444,6 +1682,74 @@ fn set_up_device(device: &mut smithay::reexports::input::Device) {
     println!("session · {}: {}", device.name(), if touchpad { "a touchpad" } else { "a pointer" });
 }
 
+/// One frame of a picture of the cursor theme on the card: its buffer, its tip,
+/// and how long it shows (milliseconds; a shape of one frame stays).
+struct CursorFrame {
+    bo: gbm::BufferObject<()>,
+    hot: (i32, i32),
+    delay: u32,
+}
+
+/// What the cursor plane shows: a picture of the theme by its name, and
+/// whether it is a transition, played once (backwards, if it is the one for
+/// the other way round).
+struct Playing {
+    asset: String,
+    reverse: bool,
+    transition: bool,
+}
+
+/// How many of the theme's pictures beyond the usual shapes stay on the card
+/// (shapes and transitions; the last used).
+const CURSOR_CACHE: usize = 24;
+
+/// The shapes read when the session starts.
+const CURSOR_KINDS: [Cursor; 12] = [
+    Cursor::Normal,
+    Cursor::Hand,
+    Cursor::Text,
+    Cursor::Grab,
+    Cursor::Grabbing,
+    Cursor::EwResize,
+    Cursor::NsResize,
+    Cursor::NwseResize,
+    Cursor::NeswResize,
+    Cursor::Move,
+    Cursor::NotAllowed,
+    Cursor::Crosshair,
+];
+
+/// The older names themes give those shapes, after their standard one.
+fn cursor_alternatives(kind: Cursor) -> &'static [&'static str] {
+    match kind {
+        Cursor::Normal => &["left_ptr", "arrow"],
+        Cursor::Hand => &["hand2", "pointing_hand", "hand1"],
+        Cursor::Text => &["xterm", "ibeam"],
+        Cursor::Grab => &["openhand", "hand1"],
+        Cursor::Grabbing => &["closedhand", "fleur"],
+        Cursor::EwResize => &["col-resize", "sb_h_double_arrow", "h_double_arrow", "size_hor"],
+        Cursor::NsResize => &["row-resize", "sb_v_double_arrow", "v_double_arrow", "size_ver"],
+        Cursor::NwseResize => &["size_fdiag", "bd_double_arrow", "bottom_right_corner"],
+        Cursor::NeswResize => &["size_bdiag", "fd_double_arrow", "bottom_left_corner"],
+        Cursor::Move => &["all-scroll", "fleur", "size_all"],
+        Cursor::NotAllowed => &["crossed_circle", "forbidden"],
+        Cursor::Crosshair => &["cross", "tcross"],
+        Cursor::Named(_) => &[],
+    }
+}
+
+/// The theme's transition from one shape to another, if it has one: `a-to-b`
+/// played forwards, or else `b-to-a` played backwards. `has` loads one by
+/// name and says whether it is there.
+fn transition_between(a: &str, b: &str, mut has: impl FnMut(&str) -> bool) -> Option<(String, bool)> {
+    let forwards = format!("{a}-to-{b}");
+    if has(&forwards) {
+        return Some((forwards, false));
+    }
+    let backwards = format!("{b}-to-{a}");
+    has(&backwards).then_some((backwards, true))
+}
+
 /// A cursor's picture as the card knows it: the buffer itself stays with the
 /// session (`cursors`), which keeps it alive; this goes to the cursor thread.
 #[derive(Clone, Copy)]
@@ -1585,7 +1891,19 @@ fn keep_ahead() {
 
 #[cfg(test)]
 mod tests {
-    use super::{sdr_value, turned_point};
+    use super::{sdr_value, transition_between, turned_point};
+
+    /// A shape change plays the theme's transition that way if it has one,
+    /// else the one the other way round backwards, else none.
+    #[test]
+    fn transitions_play_either_way() {
+        let theme = ["default-to-pointer", "pointer-to-text"];
+        let has = |n: &str| theme.contains(&n);
+        assert_eq!(transition_between("default", "pointer", has), Some(("default-to-pointer".into(), false)));
+        assert_eq!(transition_between("pointer", "default", has), Some(("default-to-pointer".into(), true)));
+        assert_eq!(transition_between("text", "pointer", has), Some(("pointer-to-text".into(), true)));
+        assert_eq!(transition_between("default", "text", has), None);
+    }
 
     /// `transform` goes the way wlroots' and Hyprland's does, anticlockwise: with
     /// 1, what is at the top left of the upright monitor is at the bottom left of
