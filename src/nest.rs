@@ -2399,7 +2399,7 @@ impl State {
         let id = self.panels[k].id;
         // A lock screen: all of its monitor, over everything, with the keyboard.
         if matches!(self.panels[k].shell, Shell::Lock(_)) {
-            layers::show(self.panels[k].monitor, ClientLayer { id, level: 4, rect: [0, 0, px(w), px(h)], pieces, region: None, keyboard: 1, blur: Vec::new(), owner: owner_of(&root), zoom: 1.0 });
+            layers::show(self.panels[k].monitor, ClientLayer { id, level: 4, rect: [0, 0, px(w), px(h)], pieces, region: None, keyboard: 1, blur: Vec::new(), blur_cut: 0.0, owner: owner_of(&root), zoom: 1.0 });
             return;
         }
         // On the phone, a panel wider than it is shown smaller (Marea: her
@@ -2442,7 +2442,7 @@ impl State {
         if std::env::var_os("PLEAMAR_DEBUG_WINDOWS").is_some() {
             eprintln!("windows · surface {id}: level {level}, keyboard {keyboard}, {}×{} at {x},{y}", w, h);
         }
-        layers::show(self.panels[k].monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces, region, keyboard, blur, owner: owner_of(&root), zoom });
+        layers::show(self.panels[k].monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces, region, keyboard, blur, blur_cut: 0.0, owner: owner_of(&root), zoom });
     }
 
     /// What the programs' bars keep at each edge of each monitor (their
@@ -2821,7 +2821,7 @@ impl State {
                 })
                 .collect();
             all.extend(self.unmanaged_of(slot).into_iter().map(|(s, at)| (s, Point::from(at), None)));
-            let blur_menus = crate::config::get().blur.menus;
+            let (blur_menus, cut) = { let b = &crate::config::get().blur; (b.menus, b.menus_ignorealpha) };
             for (surface, at, drawn) in all {
                 let Some((w, h)) = content_of(&surface, |c| c.size).filter(|s| s.0 > 0 && s.1 > 0) else { continue };
                 let (x, y) = ((r[0] as f64 + at.x as f64 * sx).round() as i32, (r[1] as f64 + at.y as f64 * sy).round() as i32);
@@ -2842,14 +2842,17 @@ impl State {
                 let mut pieces = Vec::new();
                 panel_pieces(&surface, (0, 0), &self.menus[i].sent, scale, &mut pieces);
                 self.menus[i].sent = pieces.iter().map(|p| p.key).collect();
-                // Where it asks for a blur; with `blur menus on`, all of it where it asks for none.
+                // Where it asks for a blur; with `blur menus on`, all of it where it
+                // asks for none, but where it is clear.
                 let mut blur: Vec<[i32; 4]> = with_states(&surface, |s| s.data_map.get::<Blur>().map(|b| b.0.lock().unwrap().clone())).unwrap_or_default();
+                let mut blur_cut = 0.0;
                 if blur.is_empty() && blur_menus {
                     blur.push(drawn.unwrap_or([0, 0, w as i32, h as i32]));
+                    blur_cut = cut;
                 }
                 let blur = blur.iter().map(|b| [px(b[0] as f64), px(b[1] as f64), px(b[2] as f64), px(b[3] as f64)]).collect();
                 let id = self.menus[i].id;
-                layers::show(k, ClientLayer { id, level: 3, rect: [x, y, px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, owner: owner_of(&surface), zoom: 1.0 });
+                layers::show(k, ClientLayer { id, level: 3, rect: [x, y, px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, blur_cut, owner: owner_of(&surface), zoom: 1.0 });
                 now.push(id);
             }
         }
@@ -2912,7 +2915,7 @@ impl State {
             panel_pieces(&icon, (0, 0), sent, s, &mut pieces);
             *sent = pieces.iter().map(|p| p.key).collect();
             let rect = layers::drag_rect(*k, (w as f64 * s) as i32, (h as f64 * s) as i32);
-            layers::show(*k, ClientLayer { id: *id, level: 3, rect, pieces, region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), owner, zoom: 1.0 });
+            layers::show(*k, ClientLayer { id: *id, level: 3, rect, pieces, region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner, zoom: 1.0 });
         }
     }
 

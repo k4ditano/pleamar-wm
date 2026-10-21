@@ -26,8 +26,9 @@
 # passes 1-6 (how wide), offset 0.5-8 (how far each pass reaches), noise
 # 0-0.5 (a grain, so it does not band), saturation 0-3 and brightness 0-3
 # (1, as it is behind); menus on also blurs behind every window's menus,
-# not only the ones that ask for it.
-#blur passes 3 offset 1 noise 0 saturation 1 brightness 1 menus off
+# not only the ones that ask for it, but not where they are less opaque than
+# menus-ignorealpha 0-1 (their rounded corners and shadows; 0, everywhere).
+#blur passes 3 offset 1 noise 0 saturation 1 brightness 1 menus off menus-ignorealpha 0.2
 
 # How a monitor starts: one of leader, columns, rows, grid, leader-right,
 # scrolling (as niri), marea (the one used most is widest), fractal (split and
