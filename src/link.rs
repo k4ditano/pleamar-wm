@@ -192,12 +192,14 @@ fn keys(id: i32, names: &str) -> Result<(), String> {
     }
 }
 
-/// Done with what it was doing: its agent says so through its hooks, or
-/// shows it is ready (✳), or —no title to go by— nothing has come out of it
-/// for a while.
+/// Done with what it was doing: its agent says so through its hooks —and
+/// its title does not say it works: a hook can tell «done» late, as Claude
+/// Code's «waiting for you» a minute after its last answer, landing just as
+/// a new task starts—, or shows it is ready (✳), or —no title to go by—
+/// nothing has come out of it for a while.
 fn at_rest(i: &Info) -> bool {
     if let Some(h) = i.get("hook").filter(|h| !h.is_empty()) {
-        return h == "done";
+        return h == "done" && i.get("state").map(String::as_str) != Some("working");
     }
     match i.get("state").map(String::as_str) {
         Some("idle") => true,
@@ -555,6 +557,16 @@ fn wait_for(id: i32, timeout: Duration, asks: bool) -> Waited {
     Waited::Late
 }
 
+/// What makes a question the same one again: its options (the words above
+/// them change as its screen is drawn again), or its words if it has none.
+fn ask_key(q: &crate::term::Question) -> String {
+    if q.options.is_empty() {
+        q.text.clone()
+    } else {
+        q.options.iter().map(|o| o.1.as_str()).collect::<Vec<_>>().join("\n")
+    }
+}
+
 /// A question, said so an agent can answer it.
 fn said(slot: usize, q: &crate::term::Question) -> String {
     let mut out = format!("window {slot} asks: {}\n", q.text);
@@ -587,12 +599,44 @@ fn since(id: i32, before: usize) -> String {
     let lines: Vec<&str> = all.lines().collect();
     // A full-screen agent has no history: what is not on its screen is gone, and
     // `before` counted lines of a screen that has been drawn again since.
+    let agent = i.get("agent").map(String::as_str).unwrap_or("");
     let from = match handed_at(&lines) {
         Some(k) => k + 1,
+        // An agent we know whose screen does not show the task: what it shows
+        // is not what it said to it (its welcome, its logo).
+        None if i.get("fullscreen").map(String::as_str) == Some("1") && matches!(agent, "claude" | "codex" | "opencode") => return String::new(),
         None if i.get("fullscreen").map(String::as_str) == Some("1") => 0,
         None => before.saturating_sub(3).min(lines.len()),
     };
+    // One that marks what it says, with nothing marked after the task, has
+    // said nothing yet: what follows is the task itself.
+    if matches!(agent, "claude" | "codex") && !lines[from..].iter().any(|l| matches!(l.trim_start().chars().next(), Some('●' | '⏺' | '•'))) {
+        return String::new();
+    }
     answer(&lines[from..])
+}
+
+/// What came after the task, or —nothing yet— a look again for a while
+/// (an answer can be a moment behind its end, and an agent that seemed
+/// done may go on): never its task, its welcome or what was there before.
+fn brought(id: i32, before: usize, deadline: Instant) -> Option<String> {
+    for _ in 0..4 {
+        let text = since(id, before);
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+        std::thread::sleep(Duration::from_secs(5));
+        if !matches!(wait_for(id, deadline.saturating_duration_since(Instant::now()), true), Waited::Done) {
+            break;
+        }
+    }
+    let text = since(id, before);
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Said when nothing came after a task.
+fn nothing(slot: usize) -> String {
+    format!("Nothing came after the task in window {slot}: not on its screen, nor in what its agent keeps. It may not have taken it: `pleamar-wm link read {slot}` shows its screen; hand it again if so.")
 }
 
 /// The last line where the line that says what a task is ends: its
@@ -799,7 +843,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                             let (at, n) = handed(id);
                             HANDED.with(|c| c.set(Some(n)));
                             HANDED_AT.with(|c| c.set(at));
-                            Ok(since(id, read(id, 2000).lines().count().saturating_sub(120)))
+                            Ok(brought(id, read(id, 2000).lines().count().saturating_sub(120), Instant::now() + Duration::from_secs(60)).unwrap_or_else(|| nothing(w.slot)))
                         }
                         Waited::Asks(q) => Ok(said(w.slot, &q)),
                         Waited::Gone => Err(format!("window {}'s terminal is gone", w.slot)),
@@ -854,7 +898,26 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     // A line that says what this is, as a paste of its own (a long
                     // paste is taken as data, not as something asked), the task
                     // after it, and Enter.
-                    paste(id, &format!("[a task from {who} in window {} «{me}», through a wire] It is in the pasted text: do it, and end with your answer.", h.slot))?;
+                    // Taken in, once its screen shows it: an agent still starting may drop
+                    // what is typed (opencode), and then it is typed again.
+                    let head = format!("[a task from {who} in window {} «{me}», through a wire] It is in the pasted text: do it, and end with your answer.", h.slot);
+                    let shown = read(id, 60);
+                    let mut took = false;
+                    for _ in 0..3 {
+                        paste(id, &head)?;
+                        let start = Instant::now();
+                        while !took && start.elapsed() < Duration::from_secs(3) {
+                            std::thread::sleep(Duration::from_millis(250));
+                            took = read(id, 60) != shown;
+                        }
+                        if took {
+                            break;
+                        }
+                    }
+                    if !took {
+                        flow(k, 0);
+                        return Err(format!("window {} did not take what was typed (its screen did not change): is its agent ready? `pleamar-wm link read {}`", w.slot, w.slot));
+                    }
                     std::thread::sleep(Duration::from_millis(120));
                     paste(id, &task)?;
                     std::thread::sleep(Duration::from_millis(150));
@@ -880,7 +943,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                         return match wait_for(id, Duration::from_secs(timeout), true) {
                             Waited::Done => {
                                 back(k, mine_is_a);
-                                Ok(since(id, before))
+                                Ok(brought(id, before, Instant::now() + Duration::from_secs(timeout)).unwrap_or_else(|| nothing(w.slot)))
                             }
                             Waited::Asks(q) => {
                                 flow(k, 0);
@@ -919,12 +982,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     // It stopped to ask its person: the one who handed it the
                     // task is told (once for each question), and may answer.
                     Waited::Asks(q) => {
-                        if q.text != told || told.is_empty() {
-                            told = q.text.clone();
+                        if ask_key(&q) != told || told.is_empty() {
+                            told = ask_key(&q);
                             tell(mine, &format!("[window {slot} stopped to ask something while on the task you handed it] It is in the pasted text."), &said(slot as usize, &q))?;
                         }
                         // Until it is answered (by anyone), or the time is up.
-                        while Instant::now() < deadline && asked(id, &info(id)).is_some_and(|n| n.text == told) {
+                        while Instant::now() < deadline && asked(id, &info(id)).is_some_and(|n| ask_key(&n) == told) {
                             std::thread::sleep(Duration::from_millis(700));
                         }
                     }
@@ -938,7 +1001,15 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             if taken_since(id, at) || later {
                 return Ok(String::new());
             }
-            let answer = since(id, before);
+            let answer = if done { brought(id, before, deadline) } else { Some(since(id, before)).filter(|t| !t.trim().is_empty()) };
+            let (done, answer) = match answer {
+                Some(a) => (done, a),
+                None if done => {
+                    tell(mine, &format!("[window {slot} shows nothing after the task you handed it] It is in the pasted text."), &nothing(slot as usize))?;
+                    return Ok(String::new());
+                }
+                None => (false, "(nothing yet)".to_owned()),
+            };
             let head = if done { format!("[the answer from window {slot}, to the task you handed it] It is in the pasted text.") } else { format!("[window {slot} did not finish your task in {timeout} s] What it said so far is in the pasted text.") };
             tell(mine, &head, &answer)?;
             Ok(String::new())
@@ -978,6 +1049,8 @@ fn hook(agent: &str) {
         (_, "PermissionRequest") => "asking",
         (_, "Notification") => match v.get("notification_type").and_then(|t| t.as_str()).unwrap_or("") {
             "permission_prompt" | "elicitation_dialog" | "agent_needs_input" => "asking",
+            // Said a minute after its last answer: by then it may have a new task.
+            "idle_prompt" if layer_working(&layer) => return,
             "idle_prompt" => "done",
             _ => return,
         },
@@ -995,6 +1068,11 @@ fn hook(agent: &str) {
             let _ = crate::term::ask(&sock, &format!("note answer {}", hex(text.as_bytes())));
         }
     }
+}
+
+/// Whether that layer's agent says, in its title, that it works.
+fn layer_working(layer: &str) -> bool {
+    crate::term::ask(&format!("{}/{layer}.sock", crate::term::socket_dir()), "info").is_ok_and(|t| t.lines().any(|l| l == "state working"))
 }
 
 /// The skill that tells an agent about wires, for each agent installed.
@@ -1251,13 +1329,13 @@ fn spawn(rest: &[String]) -> Result<String, String> {
             let next = "Answer it (link_answer); your task is handed to it by itself once it is ready, and anything else it asks first is typed into your terminal.";
             if h.info.get("agent").is_some_and(|a| !a.is_empty()) {
                 let mut c = std::process::Command::new("setsid");
-                c.arg("-f").arg(own_exe()).args(["link", "_handover", &slot.to_string(), &id.to_string(), &q.text, &task]);
+                c.arg("-f").arg(own_exe()).args(["link", "_handover", &slot.to_string(), &id.to_string(), &ask_key(&q), &task]);
                 c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
                 c.spawn().map_err(|e| e.to_string())?;
                 Ok(format!("{opened} Before your task it asks:\n{}\n{next}", said(slot, &q)))
             } else {
                 eprintln!("{opened} Before the task it asks:\n{}\nAnswer it there or with `pleamar-wm link answer {slot}`; the task is handed once it is ready.", said(slot, &q));
-                hand_over(slot, id, &q.text, &task)
+                hand_over(slot, id, &ask_key(&q), &task)
             }
         }
         Ready::Gone(why) => Err(format!("{opened} But {why}: your task was not handed.")),
@@ -1299,7 +1377,7 @@ fn ready_for(id: i32, timeout: Duration, told: &str) -> Ready {
         }
         seen = true;
         match asked(id, &i) {
-            Some(q) if q.text != told => {
+            Some(q) if ask_key(&q) != told => {
                 ready = 0;
                 asking += 1;
                 if asking >= 2 {
@@ -1314,6 +1392,8 @@ fn ready_for(id: i32, timeout: Duration, told: &str) -> Ready {
                 let boxed = match agent.as_str() {
                     "claude" => claude_box(&screen).is_some(),
                     "codex" => screen.lines().any(|l| l.starts_with('›')),
+                    // opencode is quiet a while before it draws itself: its own screen, with its box.
+                    "opencode" => i.get("fullscreen").map(String::as_str) == Some("1") && screen.lines().any(|l| l.trim_start().starts_with('┃')),
                     _ => true,
                 };
                 let still = i.get("quiet").and_then(|q| q.parse::<u64>().ok()).is_some_and(|q| q > 1500);
@@ -1344,7 +1424,7 @@ fn hand_over(slot: usize, id: i32, told: &str, task: &str) -> Result<String, Str
         match ready_for(id, left, &told) {
             Ready::Yes => return go(&["delegate".to_owned(), slot.to_string(), task.to_owned()]),
             Ready::Asks(q) => {
-                told = q.text.clone();
+                told = ask_key(&q);
                 if mine > 0 {
                     tell(mine, &format!("[window {slot}, opened for your task, asks something more before it can take it] It is in the pasted text."), &said(slot, &q))?;
                 }
@@ -1611,6 +1691,22 @@ mod tests {
         assert_eq!(running(&later, handed), ["wait333"]);
         let all = [later, ended("2026-10-21T15:04:01.000Z", "wait333")].join("\n");
         assert!(running(&all, handed).is_empty());
+    }
+
+    #[test]
+    fn a_late_done_while_its_title_says_it_works_is_no_end() {
+        let i = |hook: &str, state: &str| Info::from([("hook".to_owned(), hook.to_owned()), ("state".to_owned(), state.to_owned())]);
+        assert!(at_rest(&i("done", "idle")));
+        assert!(!at_rest(&i("done", "working")));
+        assert!(!at_rest(&i("working", "idle")));
+    }
+
+    #[test]
+    fn a_question_drawn_again_with_other_words_above_is_the_same() {
+        let q = |text: &str| crate::term::Question { text: text.to_owned(), options: vec![(1, "Trust and continue".to_owned()), (2, "Quit".to_owned())], cursor: 0, yes_no: false };
+        assert_eq!(ask_key(&q("Trust this folder?")), ask_key(&q("…your permission settings. Folder settings can run code…")));
+        let yn = |text: &str| crate::term::Question { text: text.to_owned(), options: Vec::new(), cursor: 0, yes_no: true };
+        assert_ne!(ask_key(&yn("Overwrite a? [y/N]")), ask_key(&yn("Overwrite b? [y/N]")));
     }
 
     #[test]
