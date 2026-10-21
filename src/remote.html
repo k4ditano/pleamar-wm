@@ -875,6 +875,9 @@
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyV') { pasteShift = e.shiftKey; return; } // the paste event follows
     e.preventDefault();
     if (e.repeat) return;
+    // AltGr on Windows comes as Ctrl and Alt together: sent as they are, home
+    // would see Ctrl+AltGr+2, not «@». The Ctrl that came with it is let go.
+    if (code === 100 && e.getModifierState('AltGraph') && down.has(29)) { down.delete(29); hand('k 29 0'); }
     down.add(code); hand('k ' + code + ' 1');
   });
   keys.addEventListener('keyup', (e) => {
