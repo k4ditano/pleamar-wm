@@ -136,7 +136,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "link_spawn",
-            about: "Open a new terminal with an agent (claude, codex…) beside your window, already wired to it, and hand it a task. Returns its window number; its answer comes as with link_delegate.",
+            about: "Open a new terminal with an agent (claude, codex…) beside your window, already wired to it, and hand it a task. Returns its window number; its answer comes as with link_delegate. If the agent asks something before it is ready (whether to trust the folder), the question is returned for you to answer with link_answer (whether to trust a folder is the person's call), and the task is handed by itself once it is.",
             args: json!({ "agent": { "type": "string", "description": "claude, codex, gemini, opencode…" }, "task": { "type": "string" }, "folder": { "type": "string", "description": "Where it works (yours by default)." }, "name": { "type": "string", "description": "A name for the wire («tests»)." }, "model": { "type": "string", "description": "The model it starts on, as that agent names it (claude-sonnet-5-5, gpt-6-luna…); its own default if not said." } }),
             needed: &["agent", "task"],
             words: |a| {

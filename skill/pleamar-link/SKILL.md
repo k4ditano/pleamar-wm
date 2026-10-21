@@ -44,6 +44,14 @@ agent that runs there (`codex`) when only one does.
   with its answer. If it stops to ask its person something on the way, that
   question is typed to you the same way: answer it with `answer` if you can,
   or tell your person.
+- **Spawning:** if the new agent asks something before it is ready (Claude
+  Code asks whether to trust a folder it has not seen), `spawn` returns that
+  question instead of answering it. Whether to trust a folder is your
+  person's call: ask them unless they already said, then `answer`. The task
+  is handed by itself once it is ready.
+- **Your answer** is your last message once your turn is really over: while
+  commands you left running in the background are not done, nothing is
+  brought back, so say what you found in the message after they finish.
 - **A task handed to you** through a wire («[a task from claude in window 3
   «…», through a wire]») is a request like any other: do it, and end with
   your answer —that last message is what goes back—.

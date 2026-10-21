@@ -844,10 +844,60 @@ pub fn question(screen: &str) -> Option<Question> {
         let cursor = opts.iter().position(|o| o.1).unwrap_or(0);
         return Some(Question { text: text.join(" "), options: opts.into_iter().map(|o| (o.2, o.3)).collect(), cursor, yes_no: false });
     }
+    if let Some(q) = unnumbered(tail) {
+        return Some(q);
+    }
     // A yes/no, on the last line that says something.
     let last = tail.iter().rev().map(|l| unboxed(l)).find(|l| !l.is_empty())?;
     let yn = ["[y/N]", "[Y/n]", "(y/n)", "[y/n]", "(Y/n)", "(y/N)"];
     yn.iter().any(|m| last.contains(m)).then(|| Question { text: last.to_owned(), options: Vec::new(), cursor: 0, yes_no: true })
+}
+
+/// A menu with no numbers, as Claude Code asks whether to trust a folder
+/// (`❯ No, exit` / `  Yes, I trust this folder`): the lines just above how
+/// to answer it («Enter to confirm · Esc to cancel»), one under the cursor.
+/// Its options are numbered here from 1, in order.
+fn unnumbered(tail: &[&str]) -> Option<Question> {
+    let edge = |l: &str| unboxed(l).trim_matches(|c| matches!(c, '─' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘')).to_owned();
+    let cursor = |t: &str| matches!(t.chars().next(), Some('❯' | '›' | '>' | '▶' | '→'));
+    let said: Vec<usize> = (0..tail.len()).filter(|&k| !edge(tail[k]).is_empty()).collect();
+    let &how = said.last()?;
+    let low = edge(tail[how]).to_lowercase();
+    if !(low.contains("esc") && (low.contains("enter") || low.contains("confirm") || low.contains("select"))) {
+        return None;
+    }
+    // The options: the run of lines that say something just above it.
+    let mut end = how;
+    while end > 0 && edge(tail[end - 1]).is_empty() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && !edge(tail[start - 1]).is_empty() {
+        start -= 1;
+    }
+    let opts: Vec<String> = tail[start..end].iter().map(|l| edge(l)).collect();
+    let at: Vec<usize> = (0..opts.len()).filter(|&k| cursor(&opts[k])).collect();
+    if !(2..=9).contains(&opts.len()) || at.len() != 1 || opts.iter().any(|o| option_line(o).is_some()) {
+        return None;
+    }
+    // What it asks: what it says above them, up to a rule (a few lines at most).
+    let mut text: Vec<String> = Vec::new();
+    for l in tail[..start].iter().rev() {
+        let t = l.trim();
+        if t.chars().count() >= 10 && t.chars().all(|c| matches!(c, '─' | '━' | '═')) {
+            break;
+        }
+        let t = edge(l);
+        if !t.is_empty() {
+            text.push(t);
+        }
+        if text.len() == 8 {
+            break;
+        }
+    }
+    text.reverse();
+    let options = opts.iter().enumerate().map(|(k, o)| (k as u32 + 1, o.trim_start_matches(['❯', '›', '>', '▶', '→']).trim().to_owned())).collect();
+    Some(Question { text: text.join(" "), options, cursor: at[0], yes_no: false })
 }
 
 /// For the scene, every second: in which windows (`windows`, `slot pid`, as
@@ -1040,6 +1090,33 @@ Enter to select · ↑/↓ to navigate · Esc to cancel";
         assert_eq!(q.text, "Which colour should the bar be?");
         assert_eq!(q.options.iter().map(|o| o.0).collect::<Vec<_>>(), [1, 2, 3]);
         assert_eq!(q.cursor, 1);
+    }
+
+    #[test]
+    fn whether_to_trust_a_folder_is_a_question_with_no_numbers() {
+        let screen = "~/Proyectos/pleamar-wm main ≡
+❯ claude --model claude-opus-5-5
+
+──────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /home/abel/Proyectos/pleamar-wm
+
+ Quick safety check: Is this a project you created or one you trust?
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+";
+        let q = question(screen).unwrap();
+        assert!(q.text.starts_with("Accessing workspace: /home/abel/Proyectos/pleamar-wm Quick safety check"), "{}", q.text);
+        assert_eq!(q.options, [(1, "No, exit".to_owned()), (2, "Yes, I trust this folder".to_owned())]);
+        assert_eq!(q.cursor, 0);
+        // Claude Code's own box, waiting for the person, asks nothing.
+        assert_eq!(question("● Done.\n────────────────────\n❯ \n────────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt"), None);
     }
 
     #[test]

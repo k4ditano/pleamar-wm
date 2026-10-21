@@ -225,10 +225,175 @@ fn now_ms() -> u64 {
 fn kept_answer(i: &Info, after: u64) -> Option<String> {
     let cwd = i.get("cwd").filter(|c| !c.is_empty())?;
     match i.get("agent")?.as_str() {
+        "claude" => claude_answer(i.get("layer").and_then(|l| l.parse().ok()).unwrap_or(0), cwd, after),
         "codex" => codex_answer(cwd, after),
         "opencode" => opencode_answer(cwd, after),
         _ => None,
     }
+}
+
+/// When the last task through a wire was handed to that terminal (ms since the
+/// epoch, 0 if none), and how many answers its hooks had told then.
+fn handed(id: i32) -> (u64, u64) {
+    let num = |f: &str| std::fs::read_to_string(format!("{}/{id}.{f}", crate::term::socket_dir())).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
+    (num("handed"), num("handed-answers"))
+}
+
+/// Claude Code writes each conversation in `~/.claude/projects/<folder, its
+/// / and . as ->/<session>.jsonl` (or `$CLAUDE_CONFIG_DIR`'s): of that folder's
+/// written since `after`, the one a task through a wire came to after it if
+/// one did, and in it the last message it wrote. Its hooks say the same when
+/// they are set up; this is for when they are not, or say nothing (a turn
+/// stopped with Esc).
+fn claude_answer(id: i32, cwd: &str, after: u64) -> Option<String> {
+    // The one its hooks said it writes, if they did.
+    if let Some(said) = transcript_of(id).and_then(|p| claude_said(&tail_of(&p, 16 << 20)?, after)) {
+        return Some(said.1);
+    }
+    let home = std::env::var("CLAUDE_CONFIG_DIR").ok().filter(|h| !h.is_empty()).unwrap_or_else(|| format!("{}/.claude", std::env::var("HOME").unwrap_or_default()));
+    let folder: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let mut files: Vec<(u64, std::path::PathBuf)> = std::fs::read_dir(format!("{home}/projects/{folder}"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64, e.path())))
+        .filter(|(at, _)| at + 1000 >= after)
+        .collect();
+    files.sort();
+    let mut said: Vec<(bool, String)> = files.iter().rev().take(4).filter_map(|(_, p)| claude_said(&tail_of(p, 16 << 20)?, after)).collect();
+    // The one the task came to; failing that, the one written last.
+    let k = said.iter().position(|(asked, _)| *asked).unwrap_or(0);
+    (k < said.len()).then(|| said.swap_remove(k).1)
+}
+
+/// The record Claude Code's hooks said that terminal's conversation is kept in.
+fn transcript_of(id: i32) -> Option<std::path::PathBuf> {
+    let path = std::fs::read_to_string(format!("{}/{id}.transcript", crate::term::socket_dir())).ok()?;
+    Some(std::path::PathBuf::from(path.trim())).filter(|p| p.is_file())
+}
+
+/// Whether a Claude Code that ended its turn still has commands of its own
+/// running in the background, started since `after`: it is waiting for them
+/// (a build, tests), and goes on by itself when they are done.
+fn in_background(id: i32, i: &Info, after: u64) -> bool {
+    if after == 0 || i.get("agent").map(String::as_str) != Some("claude") {
+        return false;
+    }
+    transcript_of(id).and_then(|p| tail_of(&p, 16 << 20)).is_some_and(|t| !running(&t, after).is_empty())
+}
+
+/// Of (the end of) Claude Code's record: the commands it left running in the
+/// background since `after` that have not told it they ended.
+fn running(text: &str, after: u64) -> Vec<String> {
+    const STARTED: &str = "running in background with ID: ";
+    let mut ids: Vec<String> = Vec::new();
+    for l in text.lines().filter(|l| l.contains(STARTED) || l.contains("<task-id>")) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else { continue };
+        if v["type"] != "user" || v["timestamp"].as_str().and_then(iso_ms).is_none_or(|t| t + 1000 < after) {
+            continue;
+        }
+        // What it was told: a tool's result (text, or blocks of it), or a notice.
+        let mut said = String::new();
+        let mut gather = |c: &serde_json::Value| match c {
+            serde_json::Value::String(s) => said.push_str(s),
+            c => c.as_array().into_iter().flatten().for_each(|b| {
+                if let Some(t) = b["text"].as_str() {
+                    said.push_str(t);
+                }
+                match &b["content"] {
+                    serde_json::Value::String(s) => said.push_str(s),
+                    c => c.as_array().into_iter().flatten().filter_map(|x| x["text"].as_str()).for_each(|t| said.push_str(t)),
+                }
+            }),
+        };
+        gather(&v["message"]["content"]);
+        let word = |from: &str| from.chars().take_while(char::is_ascii_alphanumeric).collect::<String>();
+        for (k, _) in said.match_indices(STARTED) {
+            let id = word(&said[k + STARTED.len()..]);
+            if !id.is_empty() && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        for (k, _) in said.match_indices("<task-id>") {
+            let id = word(&said[k + 9..]);
+            let status = said[k..].split("<status>").nth(1).map(word).unwrap_or_default();
+            if status != "running" {
+                ids.retain(|i| *i != id);
+            }
+        }
+    }
+    ids
+}
+
+/// The last `bytes` of a file, from the first whole line in them: a
+/// conversation's record can be hundreds of megabytes.
+fn tail_of(path: &std::path::Path, bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(bytes))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let from = if len > bytes { buf.iter().position(|b| *b == b'\n').map_or(buf.len(), |k| k + 1) } else { 0 };
+    Some(String::from_utf8_lossy(&buf[from..]).into_owned())
+}
+
+/// Of (the end of) Claude Code's record: its last message written after
+/// `after` —and after the last task through a wire, if one came then—, all
+/// its text, and whether such a task came.
+fn claude_said(text: &str, after: u64) -> Option<(bool, String)> {
+    let (mut asked, mut id, mut answer) = (false, String::new(), String::new());
+    for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+        if v["isSidechain"] == true || v["timestamp"].as_str().and_then(iso_ms).is_none_or(|t| t + 1000 < after) {
+            continue;
+        }
+        let content = &v["message"]["content"];
+        let texts: Vec<&str> = match content {
+            serde_json::Value::String(s) => vec![s.as_str()],
+            c => c.as_array().map(|c| c.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect()).unwrap_or_default(),
+        };
+        match v["type"].as_str() {
+            Some("user") if after > 0 && texts.iter().any(|t| t.contains("through a wire]")) => {
+                asked = true;
+                id.clear();
+                answer.clear();
+            }
+            Some("assistant") if !texts.is_empty() => {
+                // A message comes in several lines, a block each.
+                let this = v["message"]["id"].as_str().unwrap_or("");
+                if this != id || this.is_empty() {
+                    id = this.to_owned();
+                    answer.clear();
+                }
+                for t in texts {
+                    if !answer.is_empty() {
+                        answer.push_str("\n\n");
+                    }
+                    answer.push_str(t.trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    (!answer.trim().is_empty()).then_some((asked, answer))
+}
+
+/// `2026-10-21T15:09:58.999Z` in ms since the epoch.
+fn iso_ms(t: &str) -> Option<u64> {
+    let n = |r: std::ops::Range<usize>| t.get(r)?.parse::<i64>().ok();
+    let (y, m, d, hh, mm, ss) = (n(0..4)?, n(5..7)?, n(8..10)?, n(11..13)?, n(14..16)?, n(17..19)?);
+    let ms = t.get(19..).and_then(|r| r.strip_prefix('.')).map_or(0, |r| {
+        let digits: String = r.chars().take_while(char::is_ascii_digit).take(3).collect();
+        format!("{digits:0<3}").parse::<i64>().unwrap_or(0)
+    });
+    // Days from the civil date (Howard Hinnant's days_from_civil).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    u64::try_from(((days * 24 + hh) * 60 + mm) * 60_000 + ss * 1000 + ms).ok()
 }
 
 /// Codex writes each conversation in `~/.codex/sessions/…/rollout-*.jsonl`
@@ -343,6 +508,11 @@ fn hooked_answer(id: i32) -> (u64, String) {
 fn wait_for(id: i32, timeout: Duration, asks: bool) -> Waited {
     let start = Instant::now();
     let (mut rest, mut asking) = (0, 0);
+    // At rest with commands of its own still running (it waits for them), since
+    // when; and whether it still had them, looked at every few seconds. Not for
+    // ever: a server it left running ends nothing.
+    let mut held: Option<Instant> = None;
+    let mut looked: Option<(Instant, bool)> = None;
     while start.elapsed() < timeout {
         let i = info(id);
         if i.is_empty() {
@@ -358,7 +528,23 @@ fn wait_for(id: i32, timeout: Duration, asks: bool) -> Waited {
             }
             None => {
                 asking = 0;
-                rest = if at_rest(&i) { rest + 1 } else { 0 };
+                let mut still = at_rest(&i);
+                if still {
+                    let waits = match looked {
+                        Some((at, w)) if at.elapsed() < Duration::from_secs(5) => w,
+                        _ => {
+                            let w = in_background(id, &i, HANDED_AT.with(|h| h.get()));
+                            looked = Some((Instant::now(), w));
+                            w
+                        }
+                    };
+                    if waits && held.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(15 * 60) {
+                        still = false;
+                    }
+                } else {
+                    (held, looked) = (None, None);
+                }
+                rest = if still { rest + 1 } else { 0 };
                 if rest >= 2 {
                     return Waited::Done;
                 }
@@ -463,7 +649,7 @@ fn answer(lines: &[&str]) -> String {
     // Codex's `─ Worked for 2s ───`).
     while kept.last().is_some_and(|l| {
         let t = l.trim_start();
-        t.is_empty() || t.starts_with("Worked for") || t.contains("? for shortcuts") || t.contains("ctrl+p commands") || matches!(t.chars().next(), Some('✻' | '✳' | '✶' | '✽' | '✢' | '·' | '─')) || (start.is_none() && took(t))
+        t.is_empty() || t.starts_with("Worked for") || t.contains("Restart to update") || t.contains("? for shortcuts") || t.contains("ctrl+p commands") || matches!(t.chars().next(), Some('✻' | '✳' | '✶' | '✽' | '✢' | '·' | '─')) || (start.is_none() && took(t))
     }) {
         kept.pop();
     }
@@ -608,7 +794,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     match wait_for(id, timeout, true) {
                         Waited::Done => {
                             taken(id);
-                            Ok(kept_answer(&info(id), 0).unwrap_or_else(|| answer(&read(id, 120).lines().collect::<Vec<_>>())))
+                            // As the one who handed it the last task would bring it: what its
+                            // hooks or its record kept since, whole; its screen only failing those.
+                            let (at, n) = handed(id);
+                            HANDED.with(|c| c.set(Some(n)));
+                            HANDED_AT.with(|c| c.set(at));
+                            Ok(since(id, read(id, 2000).lines().count().saturating_sub(120)))
                         }
                         Waited::Asks(q) => Ok(said(w.slot, &q)),
                         Waited::Gone => Err(format!("window {}'s terminal is gone", w.slot)),
@@ -646,6 +837,10 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     if tinfo.get("state").map(String::as_str) == Some("working") {
                         return Err(format!("window {}'s agent is busy: `wait {}` until it is done", w.slot, w.slot));
                     }
+                    // Over a question, the task's Enter would answer it.
+                    if let Some(q) = asked(id, &tinfo) {
+                        return Err(format!("{}\nNothing was handed: it asks that first. Answer it (`pleamar-wm link answer {}`), then hand the task.", said(w.slot, &q), w.slot));
+                    }
                     let me = h.wins.iter().find(|w| w.slot == h.slot).map(|w| w.title.clone()).unwrap_or_default();
                     let who = h.info.get("agent").filter(|a| !a.is_empty()).cloned().unwrap_or_else(|| "a shell".into());
                     let before = read(id, 2000).lines().count();
@@ -653,6 +848,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     HANDED_AT.with(|c| c.set(now_ms()));
                     // A task handed there before this one is not brought back by itself.
                     let _ = std::fs::write(format!("{}/{id}.handed", crate::term::socket_dir()), HANDED_AT.with(|c| c.get()).to_string());
+                    let _ = std::fs::write(format!("{}/{id}.handed-answers", crate::term::socket_dir()), HANDED.with(|c| c.get()).unwrap_or(0).to_string());
                     // The drop runs along the wire, towards it, while it works.
                     flow(k, if mine_is_a { 1 } else { -1 });
                     // A line that says what this is, as a paste of its own (a long
@@ -747,6 +943,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             tell(mine, &head, &answer)?;
             Ok(String::new())
         }
+        // (The process `spawn` leaves to hand the task once what it asked first is answered.)
+        "_handover" => {
+            let slot: usize = rest.first().and_then(|v| v.parse().ok()).ok_or(USAGE)?;
+            let id: i32 = rest.get(1).and_then(|v| v.parse().ok()).ok_or(USAGE)?;
+            hand_over(slot, id, rest.get(2).map_or("", String::as_str), rest.get(3).map_or("", String::as_str)).map(|_| String::new())
+        }
         "mcp" => {
             crate::mcp::run();
             Ok(String::new())
@@ -783,6 +985,10 @@ fn hook(agent: &str) {
         _ => return,
     };
     let sock = format!("{}/{layer}.sock", crate::term::socket_dir());
+    // Where it keeps this conversation (a new one after /clear or /resume).
+    if let Some(path) = v.get("transcript_path").and_then(|t| t.as_str()).filter(|_| matches!(event, "SessionStart" | "UserPromptSubmit" | "Stop")) {
+        let _ = std::fs::write(format!("{}/{layer}.transcript", crate::term::socket_dir()), path);
+    }
     let _ = crate::term::ask(&sock, &format!("note state {state}"));
     if event == "Stop" {
         if let Some(text) = v.get("last_assistant_message").and_then(|t| t.as_str()).filter(|t| !t.trim().is_empty()) {
@@ -1033,22 +1239,126 @@ fn spawn(rest: &[String]) -> Result<String, String> {
     paste(id, &command)?;
     std::thread::sleep(Duration::from_millis(120));
     keys(id, "enter")?;
-    let deadline = Instant::now() + Duration::from_secs(40);
-    loop {
+    let opened = format!("Opened window {slot} with {command} in {}, wired to yours.", tilde(&cwd));
+    match ready_for(id, Duration::from_secs(60), "") {
+        Ready::Yes => {
+            let handed = go(&["delegate".to_owned(), slot.to_string(), task])?;
+            Ok(format!("{opened} {handed}"))
+        }
+        // Not answered here (whether to trust a folder is the person's, or the
+        // caller's to ask them): told, and the task handed once it is answered.
+        Ready::Asks(q) => {
+            let next = "Answer it (link_answer); your task is handed to it by itself once it is ready, and anything else it asks first is typed into your terminal.";
+            if h.info.get("agent").is_some_and(|a| !a.is_empty()) {
+                let mut c = std::process::Command::new("setsid");
+                c.arg("-f").arg(own_exe()).args(["link", "_handover", &slot.to_string(), &id.to_string(), &q.text, &task]);
+                c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+                c.spawn().map_err(|e| e.to_string())?;
+                Ok(format!("{opened} Before your task it asks:\n{}\n{next}", said(slot, &q)))
+            } else {
+                eprintln!("{opened} Before the task it asks:\n{}\nAnswer it there or with `pleamar-wm link answer {slot}`; the task is handed once it is ready.", said(slot, &q));
+                hand_over(slot, id, &q.text, &task)
+            }
+        }
+        Ready::Gone(why) => Err(format!("{opened} But {why}: your task was not handed.")),
+        Ready::Late => Err(format!("{opened} But it did not get ready in 60 s: hand it the task with link_delegate {slot} when it is")),
+    }
+}
+
+/// How an agent just started came to be.
+enum Ready {
+    /// In its input box, waiting for a task.
+    Yes,
+    /// Asking its person something first (whether to trust the folder…).
+    Asks(crate::term::Question),
+    /// It left, or its terminal did.
+    Gone(String),
+    Late,
+}
+
+/// Waits for the agent started in that terminal to be in its input box, or to
+/// ask something other than `told` (seen twice, so as not to read a screen
+/// half drawn), or to leave.
+fn ready_for(id: i32, timeout: Duration, told: &str) -> Ready {
+    let start = Instant::now();
+    // Something told was asked by it: it was there.
+    let (mut seen, mut asking, mut ready) = (!told.is_empty(), 0, 0);
+    while start.elapsed() < timeout {
         std::thread::sleep(Duration::from_millis(600));
         let i = info(id);
-        if let Some(q) = asked(id, &i).filter(|_| i.get("agent").is_some_and(|a| !a.is_empty())) {
-            return Ok(format!("Opened window {slot} with {command}, wired to yours; before your task it asks:\n{}\nAnswer it with link_answer, then hand it the task with link_delegate {slot}.", said(slot, &q)));
+        if i.is_empty() {
+            return Ready::Gone("its terminal went away".into());
         }
-        if i.get("agent").is_some_and(|a| !a.is_empty()) && at_rest(&i) && i.get("quiet").and_then(|q| q.parse::<u64>().ok()).is_some_and(|q| q > 1500) {
-            break;
+        let agent = i.get("agent").cloned().unwrap_or_default();
+        if agent.is_empty() {
+            // Not started yet, or gone back to its shell.
+            if seen && i.get("quiet").and_then(|q| q.parse::<u64>().ok()).is_some_and(|q| q > 1500) {
+                return Ready::Gone("its agent left before it was ready".into());
+            }
+            continue;
         }
-        if Instant::now() > deadline {
-            return Err(format!("opened window {slot} and started {command}, but it did not get ready in 40 s: hand it the task with link_delegate {slot} when it is"));
+        seen = true;
+        match asked(id, &i) {
+            Some(q) if q.text != told => {
+                ready = 0;
+                asking += 1;
+                if asking >= 2 {
+                    return Ready::Asks(q);
+                }
+            }
+            Some(_) => (asking, ready) = (0, 0),
+            None => {
+                asking = 0;
+                let screen = read(id, 40);
+                // Its input box drawn: Claude Code's `❯` between two rules, Codex's `›`.
+                let boxed = match agent.as_str() {
+                    "claude" => claude_box(&screen).is_some(),
+                    "codex" => screen.lines().any(|l| l.starts_with('›')),
+                    _ => true,
+                };
+                let still = i.get("quiet").and_then(|q| q.parse::<u64>().ok()).is_some_and(|q| q > 1500);
+                ready = if boxed && still && at_rest(&i) { ready + 1 } else { 0 };
+                if ready >= 2 {
+                    return Ready::Yes;
+                }
+            }
         }
     }
-    let handed = go(&["delegate".to_owned(), slot.to_string(), task])?;
-    Ok(format!("Opened window {slot} with {command} in {}, wired to yours. {handed}", tilde(&cwd)))
+    Ready::Late
+}
+
+/// The task for an agent that asked something before it was ready, once
+/// that is answered: handed to it as `delegate` would; what else it asks
+/// first, typed into the caller's terminal. Not if it was handed another task
+/// meanwhile (the caller did not wait), nor if it left.
+fn hand_over(slot: usize, id: i32, told: &str, task: &str) -> Result<String, String> {
+    let since = now_ms();
+    let mine: i32 = std::env::var("PLEAMAR_TERMINAL").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut told = told.to_owned();
+    let deadline = Instant::now() + Duration::from_secs(3600);
+    loop {
+        if handed(id).0 >= since {
+            return Ok(format!("window {slot} was handed a task some other way: yours was not"));
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        match ready_for(id, left, &told) {
+            Ready::Yes => return go(&["delegate".to_owned(), slot.to_string(), task.to_owned()]),
+            Ready::Asks(q) => {
+                told = q.text.clone();
+                if mine > 0 {
+                    tell(mine, &format!("[window {slot}, opened for your task, asks something more before it can take it] It is in the pasted text."), &said(slot, &q))?;
+                }
+            }
+            Ready::Gone(why) => {
+                let text = format!("window {slot}: {why}, and your task was not handed to it.");
+                if mine > 0 {
+                    tell(mine, &format!("[window {slot} did not take the task you gave it when you opened it] It is in the pasted text."), &text)?;
+                }
+                return Err(text);
+            }
+            Ready::Late => return Err(format!("window {slot} was not ready in an hour: your task was not handed")),
+        }
+    }
 }
 
 /// Into the asking agent's terminal, once it is free —not over its person
@@ -1058,17 +1368,21 @@ fn tell(mine: i32, head: &str, text: &str) -> Result<(), String> {
     // read it between two steps: there it only waits for its person not to be
     // in the middle of writing (and, in Claude Code's, for its box to be
     // empty). Any other agent, until it is done.
+    // Never over what its person is writing, at rest or not: Claude Code's box
+    // must be empty (what it shows, so a draft rubbed out counts as none), any
+    // other's person not in the middle of a line.
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(3600) {
         let i = info(mine);
+        if i.is_empty() {
+            break;
+        }
         let agent = i.get("agent").map(String::as_str).unwrap_or("");
-        let free = i.get("draft").map(String::as_str) != Some("1");
-        let queues = match agent {
-            "claude" => free && claude_box_empty(&read(mine, 12)),
-            "codex" | "opencode" => free,
-            _ => false,
+        let free = match agent {
+            "claude" => claude_box_empty(&read(mine, 12)),
+            _ => i.get("draft").map(String::as_str) != Some("1"),
         };
-        if i.is_empty() || at_rest(&i) || queues {
+        if free && (at_rest(&i) || matches!(agent, "claude" | "codex" | "opencode")) {
             break;
         }
         std::thread::sleep(Duration::from_millis(700));
@@ -1082,10 +1396,15 @@ fn tell(mine: i32, head: &str, text: &str) -> Result<(), String> {
 
 /// Claude Code's input box, between its two rules: nothing written after its `❯`.
 fn claude_box_empty(screen: &str) -> bool {
+    claude_box(screen).is_some_and(str::is_empty)
+}
+
+/// What is written in Claude Code's input box (its `❯` between two rules), if it is drawn.
+fn claude_box(screen: &str) -> Option<&str> {
     let lines: Vec<&str> = screen.lines().collect();
     let rule = |l: &str| l.trim().chars().count() >= 20 && l.trim().chars().all(|c| c == '─');
-    let Some(k) = lines.iter().rposition(|l| l.trim_start().starts_with('❯')) else { return false };
-    k > 0 && rule(lines[k - 1]) && lines.get(k + 1).is_some_and(|l| rule(l)) && lines[k].trim_start().trim_start_matches('❯').trim().is_empty()
+    let k = lines.iter().rposition(|l| l.trim_start().starts_with('❯'))?;
+    (k > 0 && rule(lines[k - 1]) && lines.get(k + 1).is_some_and(|l| rule(l))).then(|| lines[k].trim_start().trim_start_matches('❯').trim())
 }
 
 /// That a task's answer was brought by `wait`, and when: the process that
@@ -1256,6 +1575,44 @@ mod tests {
         // Another folder's is not looked into; a task whose turn has not ended yet has no answer.
         assert_eq!(codex_said(&record, "/other", 0), None);
         assert_eq!(codex_said(&record, "/w", 300_000), Some(None));
+    }
+
+    #[test]
+    fn a_claude_code_answer_is_read_whole_from_its_record() {
+        let long = (1..=60).map(|k| format!("## {k}\nline {k}")).collect::<Vec<_>>().join("\n");
+        let line = |v: serde_json::Value| v.to_string();
+        let record = [
+            line(serde_json::json!({"type": "user", "timestamp": "2026-10-21T15:00:00.000Z", "message": {"content": "[a task from claude in window 0 «x», through a wire] first"}})),
+            line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:00:05.000Z", "message": {"id": "m1", "content": [{"type": "text", "text": "the first answer"}]}})),
+            line(serde_json::json!({"type": "user", "timestamp": "2026-10-21T15:09:59.000Z", "message": {"content": [{"type": "text", "text": "[a task from claude in window 0 «x», through a wire] second"}]}})),
+            line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:10:01.000Z", "message": {"id": "m2", "content": [{"type": "text", "text": "Let me look."}, {"type": "tool_use", "name": "Bash"}]}})),
+            line(serde_json::json!({"type": "user", "timestamp": "2026-10-21T15:10:02.000Z", "message": {"content": [{"type": "tool_result", "content": "through a wire] in a file"}]}})),
+            line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:10:03.000Z", "isSidechain": true, "message": {"id": "s1", "content": [{"type": "text", "text": "a subagent's"}]}})),
+            line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:10:50.000Z", "message": {"id": "m3", "content": [{"type": "text", "text": long}]}})),
+            line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:10:50.100Z", "message": {"id": "m3", "content": [{"type": "tool_use", "name": "Read"}]}})),
+        ]
+        .join("\n");
+        let handed = iso_ms("2026-10-21T15:09:58.999Z").unwrap();
+        assert_eq!(handed, 1_792_595_398_999);
+        assert_eq!(claude_said(&record, handed), Some((true, long.clone())));
+        assert_eq!(claude_said(&record, 0), Some((false, long)));
+        // Nothing written since: no answer.
+        assert_eq!(claude_said(&record, handed + 3_600_000), None);
+    }
+
+    #[test]
+    fn a_claude_code_waiting_for_its_own_commands_is_not_done() {
+        let line = |v: serde_json::Value| v.to_string();
+        let started = |ts: &str, id: &str| line(serde_json::json!({"type": "user", "timestamp": ts, "message": {"content": [{"type": "tool_result", "content": format!("Command running in background with ID: {id}. Output is being written to: /tmp/x")}]}}));
+        let ended = |ts: &str, id: &str| line(serde_json::json!({"type": "user", "timestamp": ts, "message": {"content": format!("<task-notification>\n<task-id>{id}</task-id>\n<status>completed</status>\n</task-notification>")}}));
+        let handed = iso_ms("2026-10-21T15:00:00.000Z").unwrap();
+        let record = [started("2026-10-21T14:00:00.000Z", "server1"), started("2026-10-21T15:01:00.000Z", "build22"), started("2026-10-21T15:01:05.000Z", "wait333")].join("\n");
+        // One left running before the task (a server) is not waited for.
+        assert_eq!(running(&record, handed), ["build22", "wait333"]);
+        let later = [record.clone(), ended("2026-10-21T15:04:00.000Z", "build22")].join("\n");
+        assert_eq!(running(&later, handed), ["wait333"]);
+        let all = [later, ended("2026-10-21T15:04:01.000Z", "wait333")].join("\n");
+        assert!(running(&all, handed).is_empty());
     }
 
     #[test]
