@@ -249,7 +249,9 @@ struct Shared {
 
 /// Whether the person is in the middle of writing something, after these keys:
 /// a letter (or a paste) starts it; Enter, Ctrl+C or Ctrl+U ends it. Escape
-/// sequences —arrows, the mouse, the window taking the focus— are not writing.
+/// sequences —arrows, the mouse, the window taking the focus— are not writing,
+/// nor what the terminal answers a program that asked it something (its
+/// colours, its name: `ESC ] 11;rgb:… ESC \`, `ESC P >|kitty… ESC \`).
 fn drafting(mut draft: bool, keys: &[u8]) -> bool {
     let mut k = 0;
     while k < keys.len() {
@@ -266,6 +268,16 @@ fn drafting(mut draft: bool, keys: &[u8]) -> bool {
                         }
                     }
                     Some(b'O') => k += 2,
+                    // A string, up to BEL or ST (`ESC \`).
+                    Some(b']' | b'P' | b'X' | b'^' | b'_') => {
+                        k += 2;
+                        while k < keys.len() && keys[k] != 0x07 && !(keys[k] == 0x1b && keys.get(k + 1) == Some(&b'\\')) {
+                            k += 1;
+                        }
+                        if keys.get(k) == Some(&0x1b) {
+                            k += 1;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1023,6 +1035,9 @@ mod tests {
         assert!(!drafting(false, b"\x1b[A\x1b[I\x1b[<0;10;5M\x1bOP"));
         // A paste is.
         assert!(drafting(false, b"\x1b[200~some text\x1b[201~"));
+        // What the terminal answers a program's questions is nobody writing.
+        assert!(!drafting(false, b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\\x1bP>|kitty(0.42.1)\x1b\\\x1b]10;rgb:ffff/ffff/ffff\x07"));
+        assert!(drafting(false, b"\x1b]11;rgb:0/0/0\x07hola"));
     }
 
     #[test]

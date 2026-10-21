@@ -1368,9 +1368,10 @@ fn tell(mine: i32, head: &str, text: &str) -> Result<(), String> {
     // read it between two steps: there it only waits for its person not to be
     // in the middle of writing (and, in Claude Code's, for its box to be
     // empty). Any other agent, until it is done.
-    // Never over what its person is writing, at rest or not: Claude Code's box
-    // must be empty (what it shows, so a draft rubbed out counts as none), any
-    // other's person not in the middle of a line.
+    // Never over what its person is writing, at rest or not: not in the middle
+    // of a line, or —Claude Code— with its box empty (a draft rubbed out is
+    // none). Only both: what Claude Code suggests in its empty box, in grey
+    // (`❯ vale, avísame cuando conteste`), reads as written, and nobody wrote it.
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(3600) {
         let i = info(mine);
@@ -1378,10 +1379,7 @@ fn tell(mine: i32, head: &str, text: &str) -> Result<(), String> {
             break;
         }
         let agent = i.get("agent").map(String::as_str).unwrap_or("");
-        let free = match agent {
-            "claude" => claude_box_empty(&read(mine, 12)),
-            _ => i.get("draft").map(String::as_str) != Some("1"),
-        };
+        let free = i.get("draft").map(String::as_str) != Some("1") || (agent == "claude" && claude_box_empty(&read(mine, 12)));
         if free && (at_rest(&i) || matches!(agent, "claude" | "codex" | "opencode")) {
             break;
         }
