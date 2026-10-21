@@ -210,11 +210,16 @@ pub struct Blur {
     pub saturation: f32,
     /// 1 as it was; less, darker (0 to 3).
     pub brightness: f32,
+    /// Windows' menus blurred behind even when they do not ask for it.
+    pub menus: bool,
+    /// Where those menus are less opaque than this (0 to 1), no blur: their
+    /// rounded corners and shadows stay clear.
+    pub menus_ignorealpha: f32,
 }
 
 impl Default for Blur {
     fn default() -> Self {
-        Blur { passes: 3, offset: 1.0, noise: 0.0, saturation: 1.0, brightness: 1.0 }
+        Blur { passes: 3, offset: 1.0, noise: 0.0, saturation: 1.0, brightness: 1.0, menus: false, menus_ignorealpha: 0.2 }
     }
 }
 
@@ -228,7 +233,15 @@ impl Blur {
             "noise" => self.noise = number(0.0..=0.5)?,
             "saturation" => self.saturation = number(0.0..=3.0)?,
             "brightness" => self.brightness = number(0.0..=3.0)?,
-            _ => return Err(format!("the blur has no '{k}': passes, offset, noise, saturation, brightness")),
+            "menus-ignorealpha" => self.menus_ignorealpha = number(0.0..=1.0)?,
+            "menus" => {
+                self.menus = match v.map(String::as_str) {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => return Err(format!("`{k} on` or `{k} off`")),
+                }
+            }
+            _ => return Err(format!("the blur has no '{k}': passes, offset, noise, saturation, brightness, menus, menus-ignorealpha")),
         }
         Ok(())
     }
@@ -855,11 +868,12 @@ mod tests {
     #[test]
     fn the_blur_line_sets_what_it_says_and_leaves_the_rest() {
         let mut c = Config::default();
-        parse("blur passes 5 noise 0.03 saturation 1.4", &mut c);
-        assert_eq!(c.blur, Blur { passes: 5, noise: 0.03, saturation: 1.4, ..Blur::default() });
+        parse("blur passes 5 noise 0.03 saturation 1.4 menus on menus-ignorealpha 0.5", &mut c);
+        assert_eq!(c.blur, Blur { passes: 5, noise: 0.03, saturation: 1.4, menus: true, menus_ignorealpha: 0.5, ..Blur::default() });
         // Out of its range, or a word it does not know: said, and left as it was.
         let mut b = Blur::default();
         assert!(b.set("passes", Some(&"9".to_owned())).is_err());
+        assert!(b.set("menus", Some(&"yes".to_owned())).is_err());
         assert!(b.set("glow", Some(&"1".to_owned())).is_err());
         assert_eq!(b, Blur::default());
     }

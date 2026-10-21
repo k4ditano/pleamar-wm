@@ -369,6 +369,9 @@ pub struct ClientLayer {
     pub keyboard: u8,
     /// Where what is behind it is shown blurred (ext-background-effect), from its corner.
     pub blur: Vec<[i32; 4]>,
+    /// Where it is less opaque than this (0: anywhere), what is behind is not
+    /// blurred: a blur it was given without asking, kept off its rounded corners.
+    pub blur_cut: f32,
     /// Which program it is (0: none known), so that its own changes do not
     /// count as «something changed behind» for its own pictures.
     pub owner: u64,
@@ -777,7 +780,7 @@ mod tests {
     fn dragging_while_windows_redraw_does_not_freeze() {
         let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0 };
         register(vec![(info, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere)))]);
-        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), owner: 0, zoom: 1.0 });
+        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0 });
         set_drag_icon(vec![(0, 7)]);
         let (done, finished) = std::sync::mpsc::channel();
         let mover = {

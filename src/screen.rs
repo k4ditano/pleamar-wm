@@ -546,19 +546,23 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 "#;
 
 /// What is blurred, onto the monitor where the glass is: its colour (`q.f.y`
-/// saturation, `q.f.z` brightness) and a grain that stays put (`q.f.x`).
+/// saturation, `q.f.z` brightness) and a grain that stays put (`q.f.x`). Drawn
+/// over `q.m`; cut by `mask`'s alpha where `q.k.x` (how opaque it must be) is
+/// more than 0 and the mask has alpha (`q.k.y` 0).
 const GLASS: &str = r#"
-struct Rect { r: vec4<f32>, f: vec4<f32> };
+struct Rect { r: vec4<f32>, f: vec4<f32>, m: vec4<f32>, k: vec4<f32> };
 @group(0) @binding(0) var t: texture_2d<f32>;
 @group(0) @binding(1) var s: sampler;
 @group(0) @binding(2) var<uniform> q: Rect;
-struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@group(0) @binding(3) var mask: texture_2d<f32>;
+struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) muv: vec2<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> V {
     let c = vec2<f32>(f32(i & 1u), f32((i >> 1u) & 1u));
-    let p = mix(q.r.xy, q.r.zw, c);
+    let p = mix(q.m.xy, q.m.zw, c);
     var v: V;
     v.pos = vec4<f32>(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
-    v.uv = c;
+    v.uv = (p - q.r.xy) / (q.r.zw - q.r.xy);
+    v.muv = c;
     return v;
 }
 fn grain(p: vec2<f32>) -> f32 {
@@ -566,9 +570,16 @@ fn grain(p: vec2<f32>) -> f32 {
 }
 @fragment fn fs(v: V) -> @location(0) vec4<f32> {
     let c = textureSample(t, s, v.uv).rgb;
+    let a = textureSample(mask, s, v.muv).a;
     let grey = vec3<f32>(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)));
-    let tinted = mix(grey, c, q.f.y) * q.f.z + vec3<f32>(grain(v.pos.xy) * q.f.x);
-    return vec4<f32>(clamp(tinted, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    let tinted = clamp(mix(grey, c, q.f.y) * q.f.z + vec3<f32>(grain(v.pos.xy) * q.f.x), vec3<f32>(0.0), vec3<f32>(1.0));
+    // Fully from the threshold up, fading out just below it, so a rounded
+    // corner keeps its smooth edge.
+    var m = 1.0;
+    if q.k.x > 0.0 && q.k.y < 0.5 {
+        m = smoothstep(max(q.k.x - 0.1, 0.0), q.k.x, a);
+    }
+    return vec4<f32>(tinted * m, m);
 }
 "#;
 
@@ -692,7 +703,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             // The quads left out of the pictures taken of the monitor.
             let mut unshared: Vec<usize> = Vec::new();
             // Before which quad what is behind gets blurred, and where (a program's glass).
-            let mut blurs: Vec<(usize, Vec<[i32; 4]>)> = Vec::new();
+            let mut blurs: Vec<Glass> = Vec::new();
             let mut arrived: Vec<(u64, Option<u64>, (u32, u32), PieceContent)> = Vec::new();
             let mut shows: Vec<u64> = Vec::new();
             let order = stacked(&st);
@@ -711,7 +722,8 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                         let c = &st.clients[*k];
                         if !c.blur.is_empty() && !c.pieces.is_empty() {
                             let z = c.zoom;
-                            blurs.push((quads.len(), c.blur.iter().map(|b| [c.rect[0] + (b[0] as f64 * z).round() as i32, c.rect[1] + (b[1] as f64 * z).round() as i32, (b[2] as f64 * z).ceil() as i32, (b[3] as f64 * z).ceil() as i32]).collect()));
+                            let rects = c.blur.iter().map(|b| [c.rect[0] + (b[0] as f64 * z).round() as i32, c.rect[1] + (b[1] as f64 * z).round() as i32, (b[2] as f64 * z).ceil() as i32, (b[3] as f64 * z).ceil() as i32]).collect();
+                            blurs.push(Glass { at: quads.len(), rects, cut: c.blur_cut, pieces: c.pieces.len() });
                         }
                         for p in &c.pieces {
                             let r = c.piece_rect(p);
@@ -941,7 +953,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
         let mut empty_first = scissor.is_some();
         let blank = scissor.is_some_and(|s| s[2] == 0 || s[3] == 0);
         let black_group = empty_first.then_some(&black_group);
-        for (upto, glass) in blurs.iter().map(|(at, r)| (*at, Some(r))).chain(std::iter::once((quads.len(), None))) {
+        for (upto, glass) in blurs.iter().map(|g| (g.at, Some(g))).chain(std::iter::once((quads.len(), None))) {
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("screen"),
@@ -974,7 +986,8 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             from = upto;
             let Some(glass) = glass else { continue };
             let below: Vec<(&wgpu::Texture, [i32; 4], bool)> = quads[..upto].iter().zip(&groups).filter_map(|((_, r, opaque), g)| Some((&bound[(*g)?].texture, *r, *opaque))).collect();
-            frost.apply(&device, &queue, &mut encoder, &pipeline, &smooth, &below, glass, &view, size);
+            let pieces: Vec<(&wgpu::Texture, [i32; 4], bool)> = (upto..upto + glass.pieces).filter_map(|i| Some((&bound[groups.get(i).copied().flatten()?].texture, quads[i].1, quads[i].2))).collect();
+            frost.apply(&device, &queue, &mut encoder, &pipeline, &smooth, &below, glass, &pieces, &view, size);
         }
         part(2, &mut parts);
         queue.submit(Some(encoder.finish()));
@@ -1081,6 +1094,16 @@ struct Readback {
     buffers: Vec<(u64, wgpu::Buffer, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
+/// Where a program's surface blurs what is below it: before which quad, the
+/// boxes, and, cut by its alpha (`cut` above 0), how many quads from `at` are
+/// its own pieces.
+struct Glass {
+    at: usize,
+    rects: Vec<[i32; 4]>,
+    cut: f32,
+    pieces: usize,
+}
+
 /// What a monitor was put together from, for a picture of it drawn again
 /// (`capture`): its quads' groups, which are only for the monitor, their
 /// places, and where glass blurs what is below it.
@@ -1090,7 +1113,7 @@ struct Drawn<'a> {
     unshared: &'a [usize],
     bound: &'a [Bound],
     rects: &'a [([i32; 4], bool)],
-    blurs: &'a [(usize, Vec<[i32; 4]>)],
+    blurs: &'a [Glass],
     smooth: &'a wgpu::Sampler,
 }
 
@@ -1108,7 +1131,7 @@ struct Frost {
 
 impl Frost {
     fn new(device: &wgpu::Device) -> Frost {
-        let made = |label: &str, source: &str, topology: wgpu::PrimitiveTopology| {
+        let made = |label: &str, source: &str, topology: wgpu::PrimitiveTopology, blend: Option<wgpu::BlendState>| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(source.into()) });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -1121,14 +1144,15 @@ impl Frost {
                     module: &module,
                     entry_point: Some("fs"),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format: wgpu::TextureFormat::Bgra8Unorm, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                    targets: &[Some(wgpu::ColorTargetState { format: wgpu::TextureFormat::Bgra8Unorm, blend, write_mask: wgpu::ColorWrites::ALL })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let blur_pipeline = made("blur", BLUR, wgpu::PrimitiveTopology::TriangleList);
-        let glass_pipeline = made("glass", GLASS, wgpu::PrimitiveTopology::TriangleStrip);
+        let blur_pipeline = made("blur", BLUR, wgpu::PrimitiveTopology::TriangleList, None);
+        // Over what is there: a glass cut by its alpha leaves it be where it is clear.
+        let glass_pipeline = made("glass", GLASS, wgpu::PrimitiveTopology::TriangleStrip, Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
         Frost {
             blur_layout: blur_pipeline.get_bind_group_layout(0),
             glass_layout: glass_pipeline.get_bind_group_layout(0),
@@ -1141,12 +1165,13 @@ impl Frost {
 
     /// What is `below` the glass (each quad's texture, place and whether it
     /// is opaque) blurred, and put onto `view` where the `glass` is, with its
-    /// grain and colour.
+    /// grain and colour; with a cut, only through its own `pieces` where they
+    /// are opaque enough.
     #[allow(clippy::too_many_arguments)]
-    fn apply(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, smooth: &wgpu::Sampler, below: &[(&wgpu::Texture, [i32; 4], bool)], glass: &[[i32; 4]], view: &wgpu::TextureView, size: (u32, u32)) {
+    fn apply(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, smooth: &wgpu::Sampler, below: &[(&wgpu::Texture, [i32; 4], bool)], glass: &Glass, pieces: &[(&wgpu::Texture, [i32; 4], bool)], view: &wgpu::TextureView, size: (u32, u32)) {
         let (w, h) = (size.0 as f32, size.1 as f32);
         // The box around the glass, on the monitor.
-        let b = glass.iter().fold([i32::MAX, i32::MAX, i32::MIN, i32::MIN], |a, r| [a[0].min(r[0]), a[1].min(r[1]), a[2].max(r[0] + r[2]), a[3].max(r[1] + r[3])]);
+        let b = glass.rects.iter().fold([i32::MAX, i32::MAX, i32::MIN, i32::MIN], |a, r| [a[0].min(r[0]), a[1].min(r[1]), a[2].max(r[0] + r[2]), a[3].max(r[1] + r[3])]);
         let b = [b[0].max(0), b[1].max(0), b[2].min(size.0 as i32), b[3].min(size.1 as i32)];
         let (bw, bh) = (b[2] - b[0], b[3] - b[1]);
         if bw <= 0 || bh <= 0 {
@@ -1214,8 +1239,15 @@ impl Frost {
             pass.set_bind_group(0, &g, &[]);
             pass.draw(0..3, 0..1);
         }
-        // And onto the picture, only where the glass is, with its grain and colour.
-        let back = bind(device, queue, &self.glass_layout, &views[0], smooth, &[b[0] as f32 / w, b[1] as f32 / h, b[2] as f32 / w, b[3] as f32 / h, blur.noise, blur.saturation, blur.brightness, 0.0]);
+        // And onto the picture, only where the glass is, with its grain and
+        // colour: over the whole box, or through each of its pieces when cut.
+        let uv = |r: [i32; 4]| [r[0] as f32 / w, r[1] as f32 / h, (r[0] + r[2]) as f32 / w, (r[1] + r[3]) as f32 / h];
+        let back = uv([b[0], b[1], bw, bh]);
+        let through: Vec<wgpu::BindGroup> = if glass.cut > 0.0 {
+            pieces.iter().map(|(t, r, opaque)| glass_bind(device, queue, &self.glass_layout, &views[0], &t.create_view(&Default::default()), smooth, back, [blur.noise, blur.saturation, blur.brightness], uv(*r), glass.cut, *opaque)).collect()
+        } else {
+            vec![glass_bind(device, queue, &self.glass_layout, &views[0], &views[0], smooth, back, [blur.noise, blur.saturation, blur.brightness], back, 0.0, true)]
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
@@ -1225,18 +1257,40 @@ impl Frost {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.glass_pipeline);
-        pass.set_bind_group(0, &back, &[]);
-        for r in glass {
+        for r in &glass.rects {
             let x0 = r[0].clamp(0, size.0 as i32);
             let y0 = r[1].clamp(0, size.1 as i32);
             let x1 = (r[0] + r[2]).clamp(0, size.0 as i32);
             let y1 = (r[1] + r[3]).clamp(0, size.1 as i32);
             if x1 > x0 && y1 > y0 {
                 pass.set_scissor_rect(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
-                pass.draw(0..4, 0..1);
+                for g in &through {
+                    pass.set_bind_group(0, g, &[]);
+                    pass.draw(0..4, 0..1);
+                }
             }
         }
     }
+}
+
+/// The glass's bind group: what is blurred over the box `back`, its grain and
+/// colour, drawn over `at`, and the `mask` whose alpha cuts it (`cut` 0, or
+/// an `opaque` mask: not cut).
+#[allow(clippy::too_many_arguments)]
+fn glass_bind(device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout, blurred: &wgpu::TextureView, mask: &wgpu::TextureView, sampler: &wgpu::Sampler, back: [f32; 4], look: [f32; 3], at: [f32; 4], cut: f32, opaque: bool) -> wgpu::BindGroup {
+    let uniform = [back[0], back[1], back[2], back[3], look[0], look[1], look[2], 0.0, at[0], at[1], at[2], at[3], cut, if opaque { 1.0 } else { 0.0 }, 0.0, 0.0];
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+    queue.write_buffer(&buffer, 0, as_bytes(&uniform));
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(blurred) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(mask) },
+        ],
+    })
 }
 
 /// A texture, a sampler and eight numbers, as the shaders here take them.
@@ -1297,7 +1351,7 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
             // behind a glass that is for pictures too is blurred here as well.
             let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
             let mut from = 0;
-            for (upto, glass) in d.blurs.iter().map(|(at, r)| (*at, Some(r))).chain(std::iter::once((groups.len(), None))) {
+            for (upto, glass) in d.blurs.iter().map(|g| (g.at, Some(g))).chain(std::iter::once((groups.len(), None))) {
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("a picture"),
@@ -1320,7 +1374,8 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
                 // A glass whose own surface is only for the monitor is not in the picture either.
                 let Some(glass) = glass.filter(|_| !unshared.contains(&upto)) else { continue };
                 let below: Vec<(&wgpu::Texture, [i32; 4], bool)> = (0..upto).filter(|i| !unshared.contains(i)).filter_map(|i| Some((&bound[groups[i]?].texture, d.rects[i].0, d.rects[i].1))).collect();
-                frost.apply(device, queue, &mut encoder, d.pipeline, d.smooth, &below, glass, &view, size);
+                let pieces: Vec<(&wgpu::Texture, [i32; 4], bool)> = (upto..upto + glass.pieces).filter_map(|i| Some((&bound[groups.get(i).copied().flatten()?].texture, d.rects[i].0, d.rects[i].1))).collect();
+                frost.apply(device, queue, &mut encoder, d.pipeline, d.smooth, &below, glass, &pieces, &view, size);
             }
             texture
         }
@@ -1429,9 +1484,9 @@ pub fn landed(screen: &Screen, to_render: &Sender<ToRender>) {
     layers::tell(ToLayers::Landed(name));
 }
 
-fn as_bytes(v: &[f32; 8]) -> &[u8] {
-    // SAFETY: eight f32 are thirty-two bytes, laid out as the uniform wants them.
-    unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, 32) }
+fn as_bytes<const N: usize>(v: &[f32; N]) -> &[u8] {
+    // SAFETY: N f32 are 4 * N bytes, laid out as the uniform wants them.
+    unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, 4 * N) }
 }
 
 thread_local! {
