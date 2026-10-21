@@ -25,6 +25,7 @@ mod term;
 mod link;
 mod mcp;
 mod keep;
+mod output;
 
 fn main() {
     // Called as the user's shell (the session's `SHELL`): the layer between
@@ -50,6 +51,11 @@ fn main() {
     // screenshots) and now runs here.
     if args.first().map(String::as_str) == Some("hyprctl") {
         std::process::exit(hyprctl(args.get(1).map(String::as_str).unwrap_or("")));
+    }
+    // `pleamar-wm output NAME at X,Y|vrr on|off`: a monitor changed while the
+    // session runs, answered with what was done or why not (see output.rs).
+    if args.first().map(String::as_str) == Some("output") {
+        std::process::exit(output::cli(&args[1..]));
     }
     // `pleamar-wm agent …`: the agent's hands from a shell (see agent_cli.rs).
     if args.first().map(String::as_str) == Some("agent") {

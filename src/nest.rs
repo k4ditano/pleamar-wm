@@ -882,6 +882,12 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         }
     }
     state.write_desktop();
+    // Where a monitor is asked to change (`pleamar-wm output`), beside the
+    // desktop file; a nest inside another compositor answers it has none.
+    if let Some(dir) = std::path::Path::new(&desktop_file_of(&state.socket)).parent() {
+        let _ = std::fs::create_dir_all(dir);
+        crate::output::serve(&dir.display().to_string());
+    }
     agent::start(&mut state);
     state.start_xwayland();
     state.export_environment();
@@ -1920,6 +1926,13 @@ impl State {
             }
         }
         let new_index = |old: usize| old_names.get(old).and_then(|n| monitors.iter().position(|m| &m.name == n));
+        // A power control follows its monitor to its new place in the list;
+        // one whose monitor left can set nothing more, and is told so.
+        let (powers, gone) = follow_monitors(std::mem::take(&mut self.powers), new_index);
+        self.powers = powers;
+        for p in gone {
+            p.failed();
+        }
         // The windows, by the name of their monitor; the ones on one that left,
         // to the first, remembering it; the ones whose monitor came back, to it.
         // Each with its workspace, whole (`Moved`), not mixed into the one shown.
@@ -4609,6 +4622,20 @@ impl GlobalDispatch<ZwlrOutputPowerManagerV1, ()> for State {
     }
 }
 
+/// Things kept by a monitor's index, moved to its index after the list
+/// changed; the ones whose monitor is gone come back on their own.
+fn follow_monitors<T>(kept: Vec<(T, usize)>, new_index: impl Fn(usize) -> Option<usize>) -> (Vec<(T, usize)>, Vec<T>) {
+    let mut stay = Vec::new();
+    let mut gone = Vec::new();
+    for (t, k) in kept {
+        match new_index(k) {
+            Some(k) => stay.push((t, k)),
+            None => gone.push(t),
+        }
+    }
+    (stay, gone)
+}
+
 /// A monitor's power, for a program to watch and set.
 impl Dispatch<ZwlrOutputPowerManagerV1, ()> for State {
     fn request(state: &mut Self, _: &Client, _: &ZwlrOutputPowerManagerV1, request: power_manager::Request, _: &(), _: &DisplayHandle, init: &mut DataInit<'_, Self>) {
@@ -4627,11 +4654,15 @@ impl Dispatch<ZwlrOutputPowerManagerV1, ()> for State {
 }
 
 impl Dispatch<ZwlrOutputPowerV1, usize> for State {
-    fn request(state: &mut Self, _: &Client, power: &ZwlrOutputPowerV1, request: output_power::Request, monitor: &usize, _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
+    fn request(state: &mut Self, _: &Client, power: &ZwlrOutputPowerV1, request: output_power::Request, _: &usize, _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
         match request {
             output_power::Request::SetMode { mode } => {
+                // Where its monitor is now: the list is re-sorted when one is
+                // moved, plugged in or out, and the index it was made with goes
+                // stale.
+                let Some(k) = state.powers.iter().find(|(p, _)| p == power).map(|(_, k)| *k) else { return };
                 let on = matches!(mode.into_result(), Ok(output_power::Mode::On));
-                layers::request_power(Some(*monitor), on);
+                layers::request_power(Some(k), on);
             }
             output_power::Request::Destroy => state.powers.retain(|(p, _)| p != power),
             _ => {}
@@ -4655,5 +4686,27 @@ fn write_control_entry() {
     let _ = std::fs::create_dir_all(&dir);
     if let Err(e) = std::fs::write(&file, text) {
         eprintln!("windows · could not write {file}: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::follow_monitors;
+
+    /// DP-1 at 0 and DP-2 at 1, then DP-2 moved left of DP-1 and the list
+    /// re-sorted: a control made on DP-2 now sets index 0, not DP-1's 1.
+    #[test]
+    fn a_power_control_follows_its_monitor() {
+        let old = ["DP-1", "DP-2"];
+        let now = ["DP-2", "DP-1"];
+        let new_index = |k: usize| old.get(k).and_then(|n| now.iter().position(|m| m == n));
+        let (stay, gone) = follow_monitors(vec![("on DP-2", 1), ("on DP-1", 0)], new_index);
+        assert_eq!(stay, vec![("on DP-2", 0), ("on DP-1", 1)]);
+        assert!(gone.is_empty());
+        let now = ["DP-1"];
+        let new_index = |k: usize| old.get(k).and_then(|n| now.iter().position(|m| m == n));
+        let (stay, gone) = follow_monitors(vec![("on DP-2", 1), ("on DP-1", 0)], new_index);
+        assert_eq!(stay, vec![("on DP-1", 0)]);
+        assert_eq!(gone, vec!["on DP-2"]);
     }
 }

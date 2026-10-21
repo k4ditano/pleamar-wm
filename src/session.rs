@@ -192,8 +192,10 @@ impl Output for DrmOutput {
                     if sdr.is_err() {
                         sdr = set_sdr(&self.drm, self.connector, &self.name);
                     }
-                    if config::get().monitor(&self.name).is_some_and(|r| r.vrr) {
-                        set_vrr(&self.drm, self.connector, self.crtc, &self.name);
+                    // Written either way when it is said: a CRTC keeps
+                    // VRR_ENABLED from whoever drove it last.
+                    if let Some(on) = vrr_at_first_frame(asked(&ASKED_VRR, &self.name), config::get().monitor(&self.name).map(|r| r.vrr)) {
+                        let _ = set_vrr(&self.drm, self.connector, self.crtc, &self.name, on);
                     }
                 }
                 Err(e) => eprintln!("session · {}: the monitor did not take its first frame: {e}", self.name),
@@ -469,6 +471,17 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
             }
         })
         .map_err(|e| e.to_string())?;
+    // A monitor changed while it runs, as `pleamar-wm output` asks (output.rs).
+    let (output_tx, output_rx) = smithay::reexports::calloop::channel::channel::<crate::output::Asked>();
+    crate::output::set_sink(Box::new(move |asked| output_tx.send(asked).is_ok()));
+    event_loop
+        .handle()
+        .insert_source(output_rx, |event, _, state: &mut State| {
+            if let smithay::reexports::calloop::channel::Event::Msg((name, wish, answer)) = event {
+                let _ = answer.send(state.apply_output(&name, &wish));
+            }
+        })
+        .map_err(|e| e.to_string())?;
     // A phone's fingers on its glass (`pleamar-wm remote`): what is under the
     // pointer moves with them, as with a touchpad's here.
     let (fingers_tx, fingers_rx) = smithay::reexports::calloop::channel::channel::<layers::Fingers>();
@@ -541,15 +554,111 @@ fn property(drm: &DrmDeviceFd, object: impl smithay::reexports::drm::control::Re
 
 /// Variable refresh, if the monitor can: the screen waits for the frame
 /// instead of the frame for the screen (a game that does not reach 165).
-fn set_vrr(drm: &DrmDeviceFd, conn: connector::Handle, crtc: crtc::Handle, name: &str) {
-    if property(drm, conn, "vrr_capable").is_none_or(|(_, v)| v == 0) {
-        println!("session · {name}: it cannot vary its refresh (vrr)");
-        return;
+/// Turned on or off: what was done, or why not.
+fn set_vrr(drm: &DrmDeviceFd, conn: connector::Handle, crtc: crtc::Handle, name: &str, on: bool) -> Result<String, String> {
+    let word = if on { "on" } else { "off" };
+    let enabled = property(drm, crtc, "VRR_ENABLED");
+    let change = crate::output::vrr_change(name, property(drm, conn, "vrr_capable").map(|(_, v)| v), enabled.map(|(_, v)| v), on);
+    let done = match (change, enabled) {
+        (Err(why), _) => {
+            println!("session · {why}");
+            return Err(why);
+        }
+        (Ok(None), _) => format!("{name}: variable refresh {word}"),
+        (Ok(Some(v)), Some((h, _))) => match drm.set_property(crtc, h, v) {
+            Ok(()) => format!("{name}: variable refresh {word}"),
+            Err(e) => {
+                let why = format!("{name}: variable refresh could not be turned {word}: {e}");
+                eprintln!("session · {why}");
+                return Err(why);
+            }
+        },
+        (Ok(Some(_)), None) => unreachable!("a value to write is only given where VRR_ENABLED is"),
+    };
+    println!("session · {done}");
+    Ok(done)
+}
+
+/// What `pleamar-wm output` asked while the session runs, by monitor: it
+/// outranks the monitor's line in session.conf until the session ends, and
+/// holds for a monitor plugged in again.
+static ASKED_VRR: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+/// Where, and whether `pleamar-wm output` asked it (true) or it was kept
+/// where it was when another one moved (false).
+static ASKED_AT: Mutex<Vec<(String, ((i32, i32), bool))>> = Mutex::new(Vec::new());
+
+/// How firmly a monitor is held where it is, firmest first: when two would
+/// cover the same part of the desktop, the looser one joins the row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Pin {
+    Asked,
+    Configured,
+    Kept,
+}
+
+/// Each monitor's place, from its size in units and where it is held, if
+/// anywhere: held ones where they are held unless a firmer one is there
+/// already; the rest left to right at the top, after the right edge of
+/// the held ones.
+fn place_row(items: &[((i32, i32), Option<((i32, i32), Pin)>)]) -> Vec<(i32, i32)> {
+    let mut held: Vec<usize> = (0..items.len()).filter(|k| items[*k].1.is_some()).collect();
+    held.sort_by_key(|k| items[*k].1.map(|(_, pin)| pin));
+    let mut out: Vec<Option<(i32, i32)>> = vec![None; items.len()];
+    let mut taken: Vec<[i32; 4]> = Vec::new();
+    for k in held {
+        let ((w, h), Some(((x, y), _))) = items[k] else { continue };
+        let b = [x, y, w, h];
+        if taken.iter().any(|t| crate::output::overlapping(&[("", *t), ("", b)]).is_some()) {
+            continue;
+        }
+        taken.push(b);
+        out[k] = Some((x, y));
     }
-    match property(drm, crtc, "VRR_ENABLED").map(|(h, _)| drm.set_property(crtc, h, 1)) {
-        Some(Ok(())) => println!("session · {name}: variable refresh on"),
-        _ => eprintln!("session · {name}: variable refresh could not be turned on"),
-    }
+    let mut x = taken.iter().map(|t| t[0] + t[2]).max().unwrap_or(0);
+    items
+        .iter()
+        .zip(out)
+        .map(|(((w, _), _), at)| {
+            at.unwrap_or_else(|| {
+                x += w;
+                (x - w, 0)
+            })
+        })
+        .collect()
+}
+
+/// A place kept for a monitor only because another moved goes with it:
+/// plugged in again, it joins the row. One asked for stays.
+fn forget_kept(present: &[&str]) {
+    ASKED_AT.lock().unwrap().retain(|(n, (_, asked))| *asked || present.contains(&n.as_str()));
+}
+
+fn asked<T: Copy>(list: &Mutex<Vec<(String, T)>>, name: &str) -> Option<T> {
+    list.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, v)| *v)
+}
+
+fn ask<T>(list: &Mutex<Vec<(String, T)>>, name: &str, value: T) {
+    let mut list = list.lock().unwrap();
+    list.retain(|(n, _)| n != name);
+    list.push((name.to_owned(), value));
+}
+
+/// Variable refresh turned now on a monitor that shows frames, or kept for
+/// its first one. The lock is held until the wish is kept: `DrmOutput::show`
+/// reads it under the same lock as it sets the mode, so a first frame that
+/// lands in between cannot miss it.
+fn vrr_now_or_when_lit(flips: &Mutex<Flips>, name: &str, on: bool, now: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    let f = flips.lock().unwrap();
+    let done = if f.set { now()? } else { format!("{name}: variable refresh {} once it lights", if on { "on" } else { "off" }) };
+    ask(&ASKED_VRR, name, on);
+    Ok(done)
+}
+
+/// What variable refresh is set to at a monitor's first frame: what was
+/// asked, or else its monitor line's (with no `vrr`, off); with neither,
+/// the CRTC is left as it is.
+fn vrr_at_first_frame(asked: Option<bool>, line: Option<bool>) -> Option<bool> {
+    asked.or(line)
 }
 
 /// The monitor told the frames are what they are, SDR in sRGB: pleamar-wm
@@ -678,6 +787,14 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode) }
 }
 
+/// The monitors, in their order, for the rest of the session to read by
+/// index: where each is, and whether it is lit. Both lists follow a re-sort
+/// together, or a power control made after it reads another monitor's.
+fn publish(monitors: &[Monitor]) {
+    layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
+    layers::set_powered(monitors.iter().map(|m| m.on).collect());
+}
+
 /// Where the configuration puts them; the ones it does not place, left to
 /// right after them, as `PLEAMAR_MONITORS` says («DP-3,HDMI-A-1») and then in
 /// the card's order. Numbered left to right, top to bottom.
@@ -690,17 +807,22 @@ fn place_monitors(monitors: &mut [Monitor]) {
         let names: Vec<&str> = order.split(',').map(str::trim).collect();
         monitors.sort_by_key(|m| names.iter().position(|n| *n == m.name).unwrap_or(names.len()));
     }
-    let placed: Vec<Option<(i32, i32)>> = monitors.iter().map(|m| config::get().monitor(&m.name).and_then(|r| r.at)).collect();
-    let mut x = monitors.iter().zip(&placed).filter_map(|(m, p)| p.map(|(px, _)| px + m.units().0)).max().unwrap_or(0);
-    for (m, p) in monitors.iter_mut().zip(&placed) {
-        (m.x, m.y) = match p {
-            Some(at) => *at,
-            None => {
-                let at = (x, 0);
-                x += m.units().0;
-                at
-            }
-        };
+    forget_kept(&monitors.iter().map(|m| m.name.as_str()).collect::<Vec<_>>());
+    let items: Vec<((i32, i32), Option<((i32, i32), Pin)>)> = monitors
+        .iter()
+        .map(|m| {
+            let pin = match asked(&ASKED_AT, &m.name) {
+                Some((at, true)) => Some((at, Pin::Asked)),
+                kept => config::get().monitor(&m.name).and_then(|r| r.at).map(|at| (at, Pin::Configured)).or(kept.map(|(at, _)| (at, Pin::Kept))),
+            };
+            (m.units(), pin)
+        })
+        .collect();
+    for ((m, (_, pin)), at) in monitors.iter_mut().zip(&items).zip(place_row(&items)) {
+        if pin.is_some_and(|(p, _)| p != at) {
+            println!("session · {}: its place is taken, so it joins the row", m.name);
+        }
+        (m.x, m.y) = at;
     }
     monitors.sort_by_key(|m| (m.x, m.y));
     let right = monitors.iter().map(|m| m.x + m.units().0).max().unwrap_or(0);
@@ -822,6 +944,59 @@ impl State {
         self.monitors_changed();
     }
 
+    /// One monitor changed as `pleamar-wm output` asks: all of the wish or
+    /// none of it, and what was done or why not.
+    fn apply_output(&mut self, name: &str, wish: &crate::output::Wish) -> Result<String, String> {
+        if let Some(why) = wish.not_yet() {
+            return Err(why);
+        }
+        let Some(m) = self.monitors.iter().find(|m| m.name == name) else {
+            let names: Vec<&str> = self.monitors.iter().filter(|m| m.crtc.is_some()).map(|m| m.name.as_str()).collect();
+            return Err(format!("there is no monitor {name}; there are {}", names.join(", ")));
+        };
+        let (Some(conn), Some(crtc)) = (m.connector, m.crtc) else {
+            return Err(format!("{name} is the phone's: `pleamar-wm remote` puts it where it goes"));
+        };
+        // Everything checked before anything is done.
+        if let Some((x, y)) = wish.at {
+            let boxes: Vec<(&str, [i32; 4])> = self
+                .monitors
+                .iter()
+                .filter(|o| o.crtc.is_some())
+                .map(|o| {
+                    let (w, h) = o.units();
+                    (o.name.as_str(), if o.name == name { [x, y, w, h] } else { [o.x, o.y, w, h] })
+                })
+                .collect();
+            if let Some((a, b)) = crate::output::overlapping(&boxes) {
+                return Err(format!("{a} and {b} would cover the same part of the desktop"));
+            }
+        }
+        // Variable refresh first: the one part the card can still refuse.
+        let mut done = Vec::new();
+        if let Some(on) = wish.vrr {
+            // Not lit yet, it is kept for the first frame: whether that can
+            // be done is asked of the card now, while nothing has moved.
+            if on && !m.flips.lock().unwrap().set {
+                crate::output::vrr_change(name, property(&self.drm, conn, "vrr_capable").map(|(_, v)| v), property(&self.drm, crtc, "VRR_ENABLED").map(|(_, v)| v), true)?;
+            }
+            done.push(vrr_now_or_when_lit(&m.flips, name, on, || set_vrr(&self.drm, conn, crtc, name, on))?);
+        }
+        if let Some(at) = wish.at {
+            // The others stay where they are: placed where they were, or the
+            // row left to right would close up around the one moved.
+            for o in self.monitors.iter().filter(|o| o.crtc.is_some() && o.name != name) {
+                if asked(&ASKED_AT, &o.name).is_none() && config::get().monitor(&o.name).and_then(|r| r.at).is_none() {
+                    ask(&ASKED_AT, &o.name, ((o.x, o.y), false));
+                }
+            }
+            ask(&ASKED_AT, name, (at, true));
+            self.monitors_changed();
+            done.push(format!("{name} at {},{}", at.0, at.1));
+        }
+        Ok(done.join("; "))
+    }
+
     /// The row of monitors is new (one plugged in or out, the phone's put up
     /// or taken down): placed again, and the scene's surfaces given again.
     fn monitors_changed(&mut self) {
@@ -840,7 +1015,7 @@ impl State {
             st.dirty = true;
         }
         self.sheets = give_sheets(&self.monitors, &self.surfaces, &self.to_render, &self.cursor_kind, &mut self.next_sheet);
-        layers::register(self.monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
+        publish(&self.monitors);
         layers::tell(ToLayers::Monitors);
         // Which one is the phone's, for the scene (-1: none).
         let phone = self.monitors.iter().position(|m| m.crtc.is_none()).map_or(-1.0, |k| k as f32);
@@ -1891,7 +2066,8 @@ fn keep_ahead() {
 
 #[cfg(test)]
 mod tests {
-    use super::{sdr_value, transition_between, turned_point};
+    use super::{ask, asked, forget_kept, place_monitors, place_row, publish, Monitor, sdr_value, transition_between, turned_point, vrr_at_first_frame, vrr_now_or_when_lit, Flips, Pin, ASKED_AT, ASKED_VRR};
+    use std::sync::{Arc, Mutex};
 
     /// A shape change plays the theme's transition that way if it has one,
     /// else the one the other way round backwards, else none.
@@ -1948,5 +2124,114 @@ mod tests {
         let odd: Vec<(u64, String)> = vec![(9, "BT2020_RGB".to_owned())];
         assert_eq!(sdr_value("Colorspace", 9, &odd), None);
         assert_eq!(sdr_value("max bpc", 12, &[]), None);
+    }
+
+    /// A wish for a monitor not lit yet is kept for its first frame, and one
+    /// for a lit monitor is done now and kept for the next time it is set.
+    #[test]
+    fn vrr_waits_for_the_first_frame_or_is_done() {
+        let flips: Mutex<Flips> = Default::default();
+        assert_eq!(vrr_now_or_when_lit(&flips, "TEST-A", true, || panic!("not lit: nothing to write")), Ok("TEST-A: variable refresh on once it lights".to_owned()));
+        assert_eq!(asked(&ASKED_VRR, "TEST-A"), Some(true));
+        flips.lock().unwrap().set = true;
+        assert_eq!(vrr_now_or_when_lit(&flips, "TEST-A", false, || Ok("written".to_owned())), Ok("written".to_owned()));
+        assert_eq!(asked(&ASKED_VRR, "TEST-A"), Some(false));
+        // Refused by the card: not kept.
+        assert!(vrr_now_or_when_lit(&flips, "TEST-A", true, || Err("refused".to_owned())).is_err());
+        assert_eq!(asked(&ASKED_VRR, "TEST-A"), Some(false));
+    }
+
+    /// The first frame, as `DrmOutput::show` takes it (the lock, `set`, then
+    /// the wish), racing a wish for that monitor: whichever goes first, the
+    /// wish is either written by the wish's side or read by the frame's.
+    #[test]
+    fn a_first_frame_racing_a_wish_does_not_lose_it() {
+        for k in 0..200 {
+            let name = format!("TEST-RACE-{k}");
+            let flips: Arc<Mutex<Flips>> = Default::default();
+            let (f2, n2) = (flips.clone(), name.clone());
+            let frame = std::thread::spawn(move || {
+                let mut f = f2.lock().unwrap();
+                f.set = true;
+                asked(&ASKED_VRR, &n2) == Some(true)
+            });
+            let written = std::sync::atomic::AtomicBool::new(false);
+            vrr_now_or_when_lit(&flips, &name, true, || {
+                written.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(String::new())
+            })
+            .unwrap();
+            let read_at_first_frame = frame.join().unwrap();
+            assert!(written.into_inner() || read_at_first_frame, "{name}: the wish was neither written nor read");
+        }
+    }
+
+    /// Off is written at the first frame too, asked or on the monitor's
+    /// line: a CRTC lit with VRR before keeps VRR_ENABLED at 1 otherwise.
+    #[test]
+    fn vrr_off_is_written_at_the_first_frame() {
+        assert_eq!(vrr_at_first_frame(Some(false), Some(true)), Some(false));
+        assert_eq!(vrr_at_first_frame(None, Some(false)), Some(false));
+        assert_eq!(vrr_at_first_frame(Some(true), None), Some(true));
+        assert_eq!(vrr_at_first_frame(None, None), None);
+        // And what that writes on a CRTC left at 1 by whoever was before.
+        assert_eq!(crate::output::vrr_change("DP-3", Some(1), Some(1), false), Ok(Some(0)));
+        assert_eq!(crate::output::vrr_change("DP-3", None, Some(1), false), Ok(Some(0)));
+    }
+
+    /// Two held on the same place: the firmer stays, the other joins the row
+    /// after the held ones, never on top.
+    #[test]
+    fn a_place_already_taken_joins_the_row() {
+        let w = (1920, 1080);
+        let at = |x, y, pin| Some(((x, y), pin));
+        assert_eq!(place_row(&[(w, None), (w, None)]), vec![(0, 0), (1920, 0)]);
+        assert_eq!(place_row(&[(w, at(0, 0, Pin::Kept)), (w, at(0, 0, Pin::Asked))]), vec![(1920, 0), (0, 0)]);
+        assert_eq!(place_row(&[(w, at(0, 0, Pin::Configured)), (w, at(500, 0, Pin::Kept)), (w, None)]), vec![(0, 0), (1920, 0), (3840, 0)]);
+        assert_eq!(place_row(&[(w, at(0, 1080, Pin::Asked)), (w, None)]), vec![(0, 1080), (1920, 0)]);
+    }
+
+    /// B kept where it was when A moved, B unplugged: plugged in again it is
+    /// placed as any new one; A's asked place stays.
+    #[test]
+    fn a_kept_place_goes_with_its_monitor() {
+        ask(&ASKED_AT, "TEST-PIN-A", ((0, 1080), true));
+        ask(&ASKED_AT, "TEST-PIN-B", ((0, 0), false));
+        forget_kept(&["TEST-PIN-A"]);
+        assert_eq!(asked(&ASKED_AT, "TEST-PIN-B"), None);
+        forget_kept(&[]);
+        assert_eq!(asked(&ASKED_AT, "TEST-PIN-A"), Some(((0, 1080), true)));
+    }
+
+    /// No screen: nothing is drawn in these tests.
+    use pleamar::wgpu;
+    struct Nowhere;
+    impl crate::screen::Output for Nowhere {
+        fn buffer(&mut self, _: &wgpu::Device, _: &[u64]) -> Option<(usize, wgpu::Texture)> {
+            None
+        }
+        fn show(&mut self, _: usize, _: pleamar::Sent, _: &wgpu::Device, _: &wgpu::Queue, _: bool) -> bool {
+            false
+        }
+    }
+
+    fn monitor(name: &str, crtc: u32, on: bool, x: i32) -> Monitor {
+        let crtc = smithay::reexports::drm::control::crtc::Handle::from(std::num::NonZeroU32::new(crtc).unwrap());
+        let screen = crate::screen::screen(name.into(), (1920, 1080), Box::new(Nowhere));
+        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000 }
+    }
+
+    /// The right one dark, then moved left of the other: once re-sorted, the
+    /// dark one is first, and what is read by index says so.
+    #[test]
+    fn being_off_follows_a_monitor_to_its_new_place() {
+        let mut monitors = vec![monitor("TEST-POW-A", 1, true, 0), monitor("TEST-POW-B", 2, false, 1920)];
+        ask(&ASKED_AT, "TEST-POW-B", ((-1920, 0), true));
+        place_monitors(&mut monitors);
+        publish(&monitors);
+        assert_eq!(monitors.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["TEST-POW-B", "TEST-POW-A"]);
+        assert!(!crate::layers::powered(0));
+        assert!(crate::layers::powered(1));
+        ASKED_AT.lock().unwrap().retain(|(n, _)| !n.starts_with("TEST-POW"));
     }
 }

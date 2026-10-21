@@ -523,6 +523,10 @@ is on the whole desktop is said, as it moves, on the `cursor.sock` next to
 the session's other sockets (`PLEAMAR_SOCKETS`): a pleamar scene that reads
 `cursor.x` gets it from there, so Marea's eyes follow the mouse anywhere and
 moving it wakes her. Monitors can be plugged in and out while it runs.
+`pleamar-wm output NAME at X,Y` moves one on the desktop and `… vrr on|off`
+turns its variable refresh on or off, until the session ends; each says what
+was done or why not (`output.sock`, beside `cursor.sock`). A mode, a scale or
+a turn is still a `monitor` line in session.conf, read at start.
 
 # What programs find
 

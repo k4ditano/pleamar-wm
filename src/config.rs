@@ -689,14 +689,14 @@ fn monitor_line(w: &[String]) -> Option<MonitorRule> {
 }
 
 /// `1920x1080@165`, `1920x1080@164.99Hz`, `1920x1080`.
-fn mode_wish(s: &str) -> Option<ModeWish> {
+pub(crate) fn mode_wish(s: &str) -> Option<ModeWish> {
     let (size, hz) = s.split_once('@').unwrap_or((s, "0"));
     let (w, h) = size.split_once('x')?;
     Some(ModeWish::Exact(w.parse().ok()?, h.parse().ok()?, hz.trim_end_matches("Hz").trim_end_matches("hz").parse().ok()?))
 }
 
 /// `1920,0` or Hyprland's `1920x0`.
-fn position(s: &str) -> Option<(i32, i32)> {
+pub(crate) fn position(s: &str) -> Option<(i32, i32)> {
     let (x, y) = s.split_once(',').or_else(|| s.split_once('x'))?;
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }

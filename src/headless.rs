@@ -18,6 +18,63 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Where `pleamar-wm output … at` put each monitor, by number; the others
+/// side by side, as they start.
+static ASKED_AT: Mutex<Vec<(usize, (i32, i32))>> = Mutex::new(Vec::new());
+
+fn placed(m: usize, unit_w: i32) -> (i32, i32) {
+    ASKED_AT.lock().unwrap().iter().find(|(k, _)| *k == m).map_or((m as i32 * unit_w, 0), |(_, at)| *at)
+}
+
+/// A monitor changed as `pleamar-wm output` asks, as a session would: one
+/// that is not a card's cannot vary its refresh, and moving one moves it
+/// in the desktop the programs and `hyprctl monitors` see. The pointer of
+/// `PLEAMAR_HEADLESS_INPUT` still takes them side by side.
+fn apply_output(name: &str, wish: &crate::output::Wish) -> Result<String, String> {
+    if let Some(why) = wish.not_yet() {
+        return Err(why);
+    }
+    let all = crate::layers::monitors();
+    let real: Vec<_> = all.iter().filter(|m| m.name != crate::layers::PHONE_NAME).collect();
+    if !real.iter().any(|m| m.name == name) {
+        let names: Vec<&str> = real.iter().map(|m| m.name.as_str()).collect();
+        return Err(format!("there is no monitor {name}; there are {}", names.join(", ")));
+    }
+    if let Some((x, y)) = wish.at {
+        let boxes: Vec<(&str, [i32; 4])> = real
+            .iter()
+            .map(|m| {
+                let (w, h) = ((m.size.0 as f64 / m.scale).round() as i32, (m.size.1 as f64 / m.scale).round() as i32);
+                (m.name.as_str(), if m.name == name { [x, y, w, h] } else { [m.x, m.y, w, h] })
+            })
+            .collect();
+        if let Some((a, b)) = crate::output::overlapping(&boxes) {
+            return Err(format!("{a} and {b} would cover the same part of the desktop"));
+        }
+    }
+    let mut done = Vec::new();
+    if let Some(on) = wish.vrr {
+        // No card, no connector to say it can.
+        crate::output::vrr_change(name, None, None, on)?;
+        done.push(format!("{name}: variable refresh off"));
+    }
+    if let Some(at) = wish.at {
+        // Gone between the check above and here: nothing is kept for it.
+        if !crate::layers::place(name, at) {
+            return Err(format!("{name} is gone"));
+        }
+        let m = name.strip_prefix("HEADLESS-").and_then(|n| n.parse::<usize>().ok()).map(|n| n - 1);
+        if let Some(m) = m {
+            let mut asked = ASKED_AT.lock().unwrap();
+            asked.retain(|(k, _)| *k != m);
+            asked.push((m, at));
+        }
+        crate::layers::tell(crate::layers::ToLayers::Monitors);
+        done.push(format!("{name} at {},{}", at.0, at.1));
+    }
+    Ok(done.join("; "))
+}
+
 pub struct Headless;
 
 /// A monitor with no screen: three textures, "flipped" at its refresh, and a picture.
@@ -149,7 +206,8 @@ impl pleamar::Platform for Headless {
                 sc
             })
             .collect();
-        crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: m as i32 * unit_w, y: 0, mhz: mhz_of(m), scale }, sc.clone())).collect());
+        crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz_of(m), scale }, sc.clone())).collect());
+        crate::output::set_sink(Box::new(|(name, wish, answer)| answer.send(apply_output(&name, &wish)).is_ok()));
         let cursor = Arc::new(Mutex::new(Cursor::Normal));
         let mut id = 7000;
         // Which sheets are on each monitor: to take one away, as if unplugged.
@@ -218,7 +276,7 @@ impl pleamar::Platform for Headless {
             let (cursor, mhz_of) = (cursor.clone(), mhz_of.clone());
             std::thread::spawn(move || {
                 let mut id = 9000;
-                let real = |screens: &[Screen]| screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: m as i32 * unit_w, y: 0, mhz: mhz_of(m), scale }, sc.clone())).collect::<Vec<_>>();
+                let real = |screens: &[Screen]| screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz_of(m), scale }, sc.clone())).collect::<Vec<_>>();
                 for wish in prx {
                     if let Some((sc, sheets, ..)) = phone.lock().unwrap().take() {
                         println!("headless · the phone's monitor goes");
@@ -291,7 +349,7 @@ impl pleamar::Platform for Headless {
                     lock.lock().unwrap().quit = true;
                     cv.notify_all();
                 }
-                crate::layers::register(screens[..last].iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: m as i32 * unit_w, y: 0, mhz: mhz_of(m), scale }, sc.clone())).collect());
+                crate::layers::register(screens[..last].iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz_of(m), scale }, sc.clone())).collect());
                 crate::layers::tell(crate::layers::ToLayers::Monitors);
                 // `PLEAMAR_HEADLESS_REPLUG=s`: and back that long after, for the
                 // compositor inside (its picture is not drawn again: this is to
@@ -299,7 +357,7 @@ impl pleamar::Platform for Headless {
                 if let Some(back) = std::env::var("PLEAMAR_HEADLESS_REPLUG").ok().and_then(|v| v.parse::<f32>().ok()) {
                     std::thread::sleep(Duration::from_secs_f32(back));
                     println!("headless · monitor HEADLESS-{} plugged back", last + 1);
-                    crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: m as i32 * unit_w, y: 0, mhz: mhz_of(m), scale }, sc.clone())).collect());
+                    crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz_of(m), scale }, sc.clone())).collect());
                     crate::layers::tell(crate::layers::ToLayers::Monitors);
                 }
             });

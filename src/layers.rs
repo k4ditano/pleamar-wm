@@ -597,6 +597,15 @@ pub fn register(monitors: Vec<(MonitorInfo, Screen)>) {
     *MONITORS.lock().unwrap() = monitors;
 }
 
+/// One monitor moved on the desktop, the rest as they are (a headless
+/// session's `pleamar-wm output … at`): false if there is none by that name.
+pub fn place(name: &str, (x, y): (i32, i32)) -> bool {
+    let mut all = MONITORS.lock().unwrap();
+    let Some((m, _)) = all.iter_mut().find(|(m, _)| m.name == name) else { return false };
+    (m.x, m.y) = (x, y);
+    true
+}
+
 pub fn monitors() -> Vec<MonitorInfo> {
     MONITORS.lock().unwrap().iter().map(|(m, _)| m.clone()).collect()
 }
