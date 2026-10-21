@@ -217,6 +217,8 @@ thread_local! {
     /// then: what is asked of it next may already be under way, and its own
     /// answer will take that one's place.
     static STOPPED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// How many answers its hooks had told with that one.
+    static STOPPED_N: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 fn now_ms() -> u64 {
@@ -543,6 +545,7 @@ fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> W
                 counted = Some(count);
                 if !in_background(id, &i, HANDED_AT.with(|h| h.get())) {
                     STOPPED.with(|s| *s.borrow_mut() = Some(text));
+                    STOPPED_N.with(|c| c.set(count));
                     return Waited::Done;
                 }
             }
@@ -857,10 +860,25 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     if text.is_empty() {
                         return Err("send N TEXT [--enter]".into());
                     }
+                    // Said to an agent whose hooks count its answers, by another agent: what
+                    // it answers is brought back as a delegated task's is. It may be at a
+                    // task now, and take this in the middle of it (one answer for both,
+                    // brought once) or after it (an answer of its own).
+                    let enter = rest.iter().any(|a| a == "--enter");
+                    let note = enter && h.info.get("agent").is_some_and(|a| !a.is_empty()) && tinfo.get("agent").is_some_and(|a| !a.is_empty()) && tinfo.get("hook").is_some_and(|h| !h.is_empty());
+                    let (count, at, busy) = (hooked_answer(id).0, now_ms(), !at_rest(&tinfo));
+                    let before = read(id, 2000).lines().count();
                     paste(id, &text)?;
-                    if rest.iter().any(|a| a == "--enter") {
+                    if enter {
                         std::thread::sleep(Duration::from_millis(150));
                         keys(id, "enter")?;
+                    }
+                    if note {
+                        let mut c = std::process::Command::new("setsid");
+                        c.arg("-f").arg(own_exe()).args(["link", "_deliver", &id.to_string(), &h.layer.to_string(), &k.to_string(), &(mine_is_a as u8).to_string(), &before.to_string(), &(6 * 3600).to_string(), &w.slot.to_string(), &count.to_string(), &at.to_string(), if busy { "note-busy" } else { "note" }]);
+                        c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+                        c.spawn().map_err(|e| e.to_string())?;
+                        return Ok(format!("typed into window {}; what its agent answers to it will be typed into this terminal (once, with the answer of a task it is at, if it takes it in the middle of it)", w.slot));
                     }
                     Ok(format!("typed into window {}", w.slot))
                 }
@@ -1010,6 +1028,10 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             let (id, mine, k, mine_is_a, before, timeout, slot) = (n(0) as i32, n(1) as i32, n(2) as usize, n(3) == 1, n(4) as usize, n(5) as u64, n(6));
             HANDED.with(|c| c.set(rest.get(7).and_then(|v| v.parse().ok())));
             HANDED_AT.with(|c| c.set(rest.get(8).and_then(|v| v.parse().ok()).unwrap_or(0)));
+            // Brought for something `send` typed, not for a task: `note-busy`, typed
+            // while it was at something else.
+            let note = rest.get(9).map(String::as_str);
+            let mut busy = note == Some("note-busy");
             // As long as it works, however long (a day at most): the time given counts
             // only while it shows no sign of working.
             let started = Instant::now();
@@ -1018,6 +1040,22 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             let (mut told, mut gone) = (String::new(), false);
             let done = loop {
                 match wait_for(id, deadline.saturating_duration_since(Instant::now()), true, Some(idle)) {
+                    // Typed while it was at something else, and that turn ended, but it is
+                    // at work again at once, with the answers as they were: what was
+                    // typed was queued, and this is its own turn. Its answer is the next.
+                    Waited::Done if busy && STOPPED.with(|s| s.borrow().is_some()) => {
+                        busy = false;
+                        let n = STOPPED_N.with(|c| c.get());
+                        let again = (0..8).any(|_| {
+                            std::thread::sleep(Duration::from_millis(500));
+                            info(id).get("hook").map(String::as_str) == Some("working") && hooked_answer(id).0 == n
+                        });
+                        if !again {
+                            break true;
+                        }
+                        HANDED.with(|c| c.set(Some(n)));
+                        STOPPED.with(|s| *s.borrow_mut() = None);
+                    }
                     Waited::Done => break true,
                     Waited::Late => break false,
                     Waited::Gone => {
@@ -1049,8 +1087,14 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             // Already brought by `wait`, or another task handed there since (whose
             // answer is the one the agent's record ends with): not typed in.
             let at = HANDED_AT.with(|h| h.get());
-            let later = std::fs::read_to_string(format!("{}/{id}.handed", crate::term::socket_dir())).ok().and_then(|t| t.trim().parse::<u64>().ok()).is_some_and(|t| t > at);
+            let later = note.is_none() && std::fs::read_to_string(format!("{}/{id}.handed", crate::term::socket_dir())).ok().and_then(|t| t.trim().parse::<u64>().ok()).is_some_and(|t| t > at);
             if taken_since(id, at) || later {
+                return Ok(String::new());
+            }
+            // One answer, brought once: a task and what was typed to it on the way
+            // can end in the same turn, and each has a messenger waiting for it.
+            let count = if STOPPED.with(|s| s.borrow().is_some()) { STOPPED_N.with(|c| c.get()) } else { hooked_answer(id).0 };
+            if done && count > 0 && brought_count(id) >= count {
                 return Ok(String::new());
             }
             let answer = if done { brought(id, before, deadline) } else { Some(since(id, before)).filter(|t| !t.trim().is_empty()) };
@@ -1072,7 +1116,11 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                 tell(mine, &format!("[window {slot} still has not answered your task after {}] It is in the pasted text.", long(started.elapsed())), &text)?;
                 return Ok(String::new());
             }
-            tell(mine, &format!("[the answer from window {slot}, to the task you handed it] It is in the pasted text."), &answer)?;
+            if count > 0 {
+                let _ = std::fs::write(format!("{}/{id}.brought", crate::term::socket_dir()), count.to_string());
+            }
+            let what = if note.is_some() { "to what you typed to it" } else { "to the task you handed it" };
+            tell(mine, &format!("[the answer from window {slot}, {what}] It is in the pasted text."), &answer)?;
             Ok(String::new())
         }
         // (The process `spawn` leaves to hand the task once what it asked first is answered.)
@@ -1558,6 +1606,12 @@ fn claude_box(screen: &str) -> Option<&str> {
 /// would type it in later leaves it.
 fn taken(id: i32) {
     let _ = std::fs::write(format!("{}/{id}.taken", crate::term::socket_dir()), now_ms().to_string());
+}
+
+/// How many answers of that terminal's agent (as its hooks count them) a
+/// messenger has brought back.
+fn brought_count(id: i32) -> u64 {
+    std::fs::read_to_string(format!("{}/{id}.brought", crate::term::socket_dir())).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
 }
 
 fn taken_since(id: i32, at: u64) -> bool {
