@@ -286,15 +286,19 @@ fn in_background(id: i32, i: &Info, after: u64) -> bool {
 }
 
 /// Of (the end of) Claude Code's record: the commands it left running in the
-/// background since `after` that have not told it they ended.
+/// background since `after` that have not told it they ended. That notice,
+/// come while it works, is kept as a queued one (`queue-operation`,
+/// `attachment`), not as something its person said.
 fn running(text: &str, after: u64) -> Vec<String> {
     const STARTED: &str = "running in background with ID: ";
     let mut ids: Vec<String> = Vec::new();
     for l in text.lines().filter(|l| l.contains(STARTED) || l.contains("<task-id>")) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else { continue };
-        if v["type"] != "user" || v["timestamp"].as_str().and_then(iso_ms).is_none_or(|t| t + 1000 < after) {
+        // Its own words (a command it wrote) say nothing of what runs.
+        if v["type"] == "assistant" || v["timestamp"].as_str().and_then(iso_ms).is_none_or(|t| t + 1000 < after) {
             continue;
         }
+        let told = v["type"] == "user";
         // What it was told: a tool's result (text, or blocks of it), or a notice.
         let mut said = String::new();
         let mut gather = |c: &serde_json::Value| match c {
@@ -310,8 +314,10 @@ fn running(text: &str, after: u64) -> Vec<String> {
             }),
         };
         gather(&v["message"]["content"]);
+        gather(&v["content"]);
+        gather(&v["attachment"]["prompt"]);
         let word = |from: &str| from.chars().take_while(char::is_ascii_alphanumeric).collect::<String>();
-        for (k, _) in said.match_indices(STARTED) {
+        for (k, _) in said.match_indices(STARTED).filter(|_| told) {
             let id = word(&said[k + STARTED.len()..]);
             if !id.is_empty() && !ids.contains(&id) {
                 ids.push(id);
@@ -506,9 +512,11 @@ fn hooked_answer(id: i32) -> (u64, String) {
 
 /// Waits for that terminal to be done —at rest twice in a row, asking
 /// nothing: a title that blinks between frames is not an end—, or, with
-/// `asks`, to stop on a question (seen twice too).
-fn wait_for(id: i32, timeout: Duration, asks: bool) -> Waited {
+/// `asks`, to stop on a question (seen twice too). Late after `timeout`, or
+/// —`idle`— once it has shown no sign of working for that long.
+fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> Waited {
     let start = Instant::now();
+    let mut sign = Instant::now();
     let (mut rest, mut asking) = (0, 0);
     // At rest with commands of its own still running (it waits for them), since
     // when; and whether it still had them, looked at every few seconds. Not for
@@ -519,6 +527,12 @@ fn wait_for(id: i32, timeout: Duration, asks: bool) -> Waited {
         let i = info(id);
         if i.is_empty() {
             return Waited::Gone;
+        }
+        if !at_rest(&i) {
+            sign = Instant::now();
+        }
+        if idle.is_some_and(|d| sign.elapsed() > d) {
+            return Waited::Late;
         }
         match asked(id, &i) {
             Some(q) => {
@@ -626,7 +640,7 @@ fn brought(id: i32, before: usize, deadline: Instant) -> Option<String> {
             return Some(text);
         }
         std::thread::sleep(Duration::from_secs(5));
-        if !matches!(wait_for(id, deadline.saturating_duration_since(Instant::now()), true), Waited::Done) {
+        if !matches!(wait_for(id, deadline.saturating_duration_since(Instant::now()), true, None), Waited::Done) {
             break;
         }
     }
@@ -835,14 +849,15 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                 }
                 "wait" => {
                     let timeout = Duration::from_secs(number(rest, "--timeout", 600));
-                    match wait_for(id, timeout, true) {
+                    // As the one who handed it the last task would bring it (waiting too for
+                    // what it left running in the background): what its hooks or its record
+                    // kept since, whole; its screen only failing those.
+                    let (at, n) = handed(id);
+                    HANDED.with(|c| c.set(Some(n)));
+                    HANDED_AT.with(|c| c.set(at));
+                    match wait_for(id, timeout, true, None) {
                         Waited::Done => {
                             taken(id);
-                            // As the one who handed it the last task would bring it: what its
-                            // hooks or its record kept since, whole; its screen only failing those.
-                            let (at, n) = handed(id);
-                            HANDED.with(|c| c.set(Some(n)));
-                            HANDED_AT.with(|c| c.set(at));
                             Ok(brought(id, read(id, 2000).lines().count().saturating_sub(120), Instant::now() + Duration::from_secs(60)).unwrap_or_else(|| nothing(w.slot)))
                         }
                         Waited::Asks(q) => Ok(said(w.slot, &q)),
@@ -940,7 +955,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     // run it): it waits for it.
                     let caller_agent = h.info.get("agent").is_some_and(|a| !a.is_empty());
                     if rest.iter().any(|a| a == "--wait") || !caller_agent {
-                        return match wait_for(id, Duration::from_secs(timeout), true) {
+                        return match wait_for(id, Duration::from_secs(timeout), true, None) {
                             Waited::Done => {
                                 back(k, mine_is_a);
                                 Ok(brought(id, before, Instant::now() + Duration::from_secs(timeout)).unwrap_or_else(|| nothing(w.slot)))
@@ -952,7 +967,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                             Waited::Gone => Err(format!("window {}'s terminal went away", w.slot)),
                             Waited::Late => {
                                 flow(k, 0);
-                                Err(format!("window {} did not finish in {timeout} s; so far:\n{}", w.slot, since(id, before)))
+                                Err(format!("window {} did not finish in {timeout} s (it goes on: `pleamar-wm link wait {}` brings its answer when it is done); so far:\n{}", w.slot, w.slot, since(id, before)))
                             }
                         };
                     }
@@ -973,12 +988,20 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             let (id, mine, k, mine_is_a, before, timeout, slot) = (n(0) as i32, n(1) as i32, n(2) as usize, n(3) == 1, n(4) as usize, n(5) as u64, n(6));
             HANDED.with(|c| c.set(rest.get(7).and_then(|v| v.parse().ok())));
             HANDED_AT.with(|c| c.set(rest.get(8).and_then(|v| v.parse().ok()).unwrap_or(0)));
-            let deadline = Instant::now() + Duration::from_secs(timeout);
-            let mut told = String::new();
+            // As long as it works, however long (a day at most): the time given counts
+            // only while it shows no sign of working.
+            let started = Instant::now();
+            let deadline = started + Duration::from_secs(timeout.max(24 * 3600));
+            let idle = Duration::from_secs(timeout);
+            let (mut told, mut gone) = (String::new(), false);
             let done = loop {
-                match wait_for(id, deadline.saturating_duration_since(Instant::now()), true) {
+                match wait_for(id, deadline.saturating_duration_since(Instant::now()), true, Some(idle)) {
                     Waited::Done => break true,
-                    Waited::Gone | Waited::Late => break false,
+                    Waited::Late => break false,
+                    Waited::Gone => {
+                        gone = true;
+                        break false;
+                    }
                     // It stopped to ask its person: the one who handed it the
                     // task is told (once for each question), and may answer.
                     Waited::Asks(q) => {
@@ -1010,8 +1033,17 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                 }
                 None => (false, "(nothing yet)".to_owned()),
             };
-            let head = if done { format!("[the answer from window {slot}, to the task you handed it] It is in the pasted text.") } else { format!("[window {slot} did not finish your task in {timeout} s] What it said so far is in the pasted text.") };
-            tell(mine, &head, &answer)?;
+            if gone {
+                tell(mine, &format!("[window {slot}'s terminal went away before it answered your task] It is in the pasted text."), &format!("What it said so far:\n{answer}"))?;
+                return Ok(String::new());
+            }
+            if !done {
+                let long = |d: Duration| if d.as_secs() < 120 { format!("{} s", d.as_secs()) } else { format!("{} min", d.as_secs() / 60) };
+                let text = format!("Window {slot} has not answered your task after {}, and has shown no sign of working for {}: no more is waited for it here. Ask for its answer with `pleamar-wm link wait {slot}` (link_wait) when you want it.\n\nWhat it said so far:\n{answer}", long(started.elapsed()), long(idle));
+                tell(mine, &format!("[window {slot} still has not answered your task after {}] It is in the pasted text.", long(started.elapsed())), &text)?;
+                return Ok(String::new());
+            }
+            tell(mine, &format!("[the answer from window {slot}, to the task you handed it] It is in the pasted text."), &answer)?;
             Ok(String::new())
         }
         // (The process `spawn` leaves to hand the task once what it asked first is answered.)
@@ -1689,8 +1721,15 @@ mod tests {
         assert_eq!(running(&record, handed), ["build22", "wait333"]);
         let later = [record.clone(), ended("2026-10-21T15:04:00.000Z", "build22")].join("\n");
         assert_eq!(running(&later, handed), ["wait333"]);
-        let all = [later, ended("2026-10-21T15:04:01.000Z", "wait333")].join("\n");
+        // Come while it worked, the notice is kept as a queued one.
+        let queued = line(serde_json::json!({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-21T15:04:01.000Z", "content": "<task-notification>\n<task-id>wait333</task-id>\n<status>completed</status>\n</task-notification>"}));
+        let all = [later.clone(), queued].join("\n");
         assert!(running(&all, handed).is_empty());
+        let attached = line(serde_json::json!({"type": "attachment", "timestamp": "2026-10-21T15:04:01.000Z", "attachment": {"type": "queued_command", "prompt": "<task-notification>\n<task-id>wait333</task-id>\n<status>failed</status>\n</task-notification>"}}));
+        assert!(running(&[later, attached].join("\n"), handed).is_empty());
+        // What it wrote itself starts nothing.
+        let wrote = line(serde_json::json!({"type": "assistant", "timestamp": "2026-10-21T15:05:00.000Z", "message": {"content": [{"type": "text", "text": "Command running in background with ID: fake1"}]}}));
+        assert!(running(&wrote, handed).is_empty());
     }
 
     #[test]

@@ -50,7 +50,7 @@ fn tools() -> Vec<Tool> {
         Tool {
             name: "link_delegate",
             about: "Hand a task to the agent in a wired window (another Claude Code, Codex…): it is typed there as a pasted task saying it comes from you, and its answer comes back. With wait=false (the default) this returns at once and the answer —or a question it stops to ask on the way— is typed into your terminal when it is there; with wait=true this call returns the answer (or the question). This is how you talk to another agent the person wired to you: never start another agent of your own for it (codex exec, claude -p…), and never use the screen's cursor.",
-            args: json!({ "window": window, "task": { "type": "string", "description": "What it has to do, as you would ask it." }, "wait": { "type": "boolean", "description": "Wait here for its answer (true), or have it typed into your terminal later (false, the default)." }, "timeout": { "type": "number", "description": "Seconds to give it (600)." } }),
+            args: json!({ "window": window, "task": { "type": "string", "description": "What it has to do, as you would ask it." }, "wait": { "type": "boolean", "description": "Wait here for its answer (true), or have it typed into your terminal later (false, the default)." }, "timeout": { "type": "number", "description": "With wait=true, seconds to wait here (600). With wait=false its answer is brought however long it works; this many seconds without any sign of it working (6 hours if not said), and you are told it has not answered." } }),
             needed: &["window", "task"],
             words: |a| {
                 let mut w = vec!["delegate".into(), s(a, "window"), s(a, "task")];
