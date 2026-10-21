@@ -213,6 +213,10 @@ thread_local! {
     static HANDED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
     /// When it was handed, in ms since the epoch: an answer kept before is not its.
     static HANDED_AT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The answer its hooks told when it ended the task's turn, kept as it was
+    /// then: what is asked of it next may already be under way, and its own
+    /// answer will take that one's place.
+    static STOPPED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 fn now_ms() -> u64 {
@@ -523,10 +527,25 @@ fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> W
     // ever: a server it left running ends nothing.
     let mut held: Option<Instant> = None;
     let mut looked: Option<(Instant, bool)> = None;
+    // The answers its hooks have told since the task, last seen: one more is the
+    // end of a turn, the task's if nothing it left runs on, though it may be
+    // already at what was asked next (queued while it worked) and never seen at rest.
+    let handed = HANDED.with(|h| h.get());
+    let mut counted = handed;
     while start.elapsed() < timeout {
         let i = info(id);
         if i.is_empty() {
             return Waited::Gone;
+        }
+        if let Some(n) = handed.filter(|_| i.get("hook").is_some_and(|h| !h.is_empty())) {
+            let (count, text) = hooked_answer(id);
+            if count > n && Some(count) != counted && !text.is_empty() {
+                counted = Some(count);
+                if !in_background(id, &i, HANDED_AT.with(|h| h.get())) {
+                    STOPPED.with(|s| *s.borrow_mut() = Some(text));
+                    return Waited::Done;
+                }
+            }
         }
         if !at_rest(&i) {
             sign = Instant::now();
@@ -599,6 +618,9 @@ fn said(slot: usize, q: &crate::term::Question) -> String {
 /// says what it is (the last one, if it handed several), or since a reading
 /// `before` had that many lines.
 fn since(id: i32, before: usize) -> String {
+    if let Some(text) = STOPPED.with(|s| s.borrow().clone()) {
+        return text;
+    }
     if let Some(n) = HANDED.with(|h| h.get()) {
         let (now, text) = hooked_answer(id);
         if now > n && !text.is_empty() {
