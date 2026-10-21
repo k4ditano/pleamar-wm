@@ -1009,9 +1009,16 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                             told = ask_key(&q);
                             tell(mine, &format!("[window {slot} stopped to ask something while on the task you handed it] It is in the pasted text."), &said(slot as usize, &q))?;
                         }
-                        // Until it is answered (by anyone), or the time is up.
-                        while Instant::now() < deadline && asked(id, &info(id)).is_some_and(|n| ask_key(&n) == told) {
+                        // Until it is answered (by anyone: gone from its screen a while,
+                        // not just drawn again), or the time is up. Then one that asks the
+                        // same, with the same options (a second command), is another.
+                        let mut away = 0;
+                        while Instant::now() < deadline && away < 2 {
                             std::thread::sleep(Duration::from_millis(700));
+                            away = if asked(id, &info(id)).is_some_and(|n| ask_key(&n) == told) { 0 } else { away + 1 };
+                        }
+                        if away >= 2 {
+                            told.clear();
                         }
                     }
                 }
@@ -1391,6 +1398,9 @@ enum Ready {
 /// half drawn), or to leave.
 fn ready_for(id: i32, timeout: Duration, told: &str) -> Ready {
     let start = Instant::now();
+    // What was told, until it is gone from its screen a while (answered): then
+    // the same again is another question.
+    let (mut told, mut away) = (told.to_owned(), 0);
     // Something told was asked by it: it was there.
     let (mut seen, mut asking, mut ready) = (!told.is_empty(), 0, 0);
     while start.elapsed() < timeout {
@@ -1408,7 +1418,12 @@ fn ready_for(id: i32, timeout: Duration, told: &str) -> Ready {
             continue;
         }
         seen = true;
-        match asked(id, &i) {
+        let q = asked(id, &i);
+        away = if q.as_ref().is_some_and(|q| ask_key(q) == told) { 0 } else { away + 1 };
+        if away >= 2 {
+            told.clear();
+        }
+        match q {
             Some(q) if ask_key(&q) != told => {
                 ready = 0;
                 asking += 1;
