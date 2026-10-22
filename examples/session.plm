@@ -1203,6 +1203,17 @@ scene Session {
 
     // Each monitor's shore.
     // What the rest of the scene reads of it: where it is, across and along.
+    let dki.c[4][12]
+    let dki.d[4][12]
+    let dki.a[4][12]
+    let dki.sz[4][12]
+    let dki.q[4][12]
+    let dkp.c[4][8]
+    let dkp.d[4][8]
+    let dkp.a[4][8]
+    let dks.c[4][2]
+    let dks.d[4][2]
+    let dks.a[4][2]
     let dk.a0[4]
     let dk.cr[4]
     let dk.cs[4]
@@ -1268,204 +1279,33 @@ scene Session {
         on change mouse.x + mouse.y * 8192 while dock.hide > 0.5 and not dk.open.$s and free.$s > 0.5 and mon == s and dk.mq.$s <= 2 and dragging < 0 { dk.open.$s = true }
         on change mouse.x + mouse.y * 8192 while dk.open.$s and (mon != s or dk.mq.$s > dk.q.$s + dkpl / 2 + 60) and dmenu.$s < 0 and pv.$s < 0 and dkdrag.$s < 0 { dk.open.$s = false }
         on change dock.hide while dock.hide < 0.5 { dk.open.$s = false }
-        image dockicon.$s.0 = from win.dock.$s.0.icon, 96, 96
-        prop buoy.$s.0 = 0 ~pop
-        follow buoy.$s.0 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(0 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.0 = 0 ~pop
-        follow here.$s.0 = if(0 < dk.n.$s, 1, 0)
-        prop ring.$s.0 = 1 ~760ms
-        prop hop.$s.0 = 0 ~560ms
-        follow hop.$s.0 = 0
-        fact hops.$s.0 = 0
-        let dka0.c.$s = dk.a0.$s + 14 + 0 * dkcell + dkcell / 2
-        let dka0.d.$s = (dka0.c.$s - dk.ma.$s) / dkreach
-        let dka0.$s = dka0.c.$s + dk.K.$s * (if(dka0.d.$s < -1, 0, if(dka0.d.$s < 0, pow(1 + dka0.d.$s, 3) / 3, if(dka0.d.$s < 1, (2 - pow(1 - dka0.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz0.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka0.d.$s)), 2)) * (1 + 0.14 * buoy.$s.0)
-        let dkiq0.$s = dk.q.$s + 3 + 12 * buoy.$s.0 + (dksz0.$s - dkic) * 0.55 + 104 * dkf * hop.$s.0 * (1 - hop.$s.0)
-        image dockicon.$s.1 = from win.dock.$s.1.icon, 96, 96
-        prop buoy.$s.1 = 0 ~pop
-        follow buoy.$s.1 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(1 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.1 = 0 ~pop
-        follow here.$s.1 = if(1 < dk.n.$s, 1, 0)
-        prop ring.$s.1 = 1 ~760ms
-        prop hop.$s.1 = 0 ~560ms
-        follow hop.$s.1 = 0
-        fact hops.$s.1 = 0
-        let dka1.c.$s = dk.a0.$s + 14 + 1 * dkcell + dkcell / 2
-        let dka1.d.$s = (dka1.c.$s - dk.ma.$s) / dkreach
-        let dka1.$s = dka1.c.$s + dk.K.$s * (if(dka1.d.$s < -1, 0, if(dka1.d.$s < 0, pow(1 + dka1.d.$s, 3) / 3, if(dka1.d.$s < 1, (2 - pow(1 - dka1.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz1.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka1.d.$s)), 2)) * (1 + 0.14 * buoy.$s.1)
-        let dkiq1.$s = dk.q.$s + 3 + 12 * buoy.$s.1 + (dksz1.$s - dkic) * 0.55 + 104 * dkf * hop.$s.1 * (1 - hop.$s.1)
-        image dockicon.$s.2 = from win.dock.$s.2.icon, 96, 96
-        prop buoy.$s.2 = 0 ~pop
-        follow buoy.$s.2 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(2 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.2 = 0 ~pop
-        follow here.$s.2 = if(2 < dk.n.$s, 1, 0)
-        prop ring.$s.2 = 1 ~760ms
-        prop hop.$s.2 = 0 ~560ms
-        follow hop.$s.2 = 0
-        fact hops.$s.2 = 0
-        let dka2.c.$s = dk.a0.$s + 14 + 2 * dkcell + dkcell / 2
-        let dka2.d.$s = (dka2.c.$s - dk.ma.$s) / dkreach
-        let dka2.$s = dka2.c.$s + dk.K.$s * (if(dka2.d.$s < -1, 0, if(dka2.d.$s < 0, pow(1 + dka2.d.$s, 3) / 3, if(dka2.d.$s < 1, (2 - pow(1 - dka2.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz2.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka2.d.$s)), 2)) * (1 + 0.14 * buoy.$s.2)
-        let dkiq2.$s = dk.q.$s + 3 + 12 * buoy.$s.2 + (dksz2.$s - dkic) * 0.55 + 104 * dkf * hop.$s.2 * (1 - hop.$s.2)
-        image dockicon.$s.3 = from win.dock.$s.3.icon, 96, 96
-        prop buoy.$s.3 = 0 ~pop
-        follow buoy.$s.3 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(3 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.3 = 0 ~pop
-        follow here.$s.3 = if(3 < dk.n.$s, 1, 0)
-        prop ring.$s.3 = 1 ~760ms
-        prop hop.$s.3 = 0 ~560ms
-        follow hop.$s.3 = 0
-        fact hops.$s.3 = 0
-        let dka3.c.$s = dk.a0.$s + 14 + 3 * dkcell + dkcell / 2
-        let dka3.d.$s = (dka3.c.$s - dk.ma.$s) / dkreach
-        let dka3.$s = dka3.c.$s + dk.K.$s * (if(dka3.d.$s < -1, 0, if(dka3.d.$s < 0, pow(1 + dka3.d.$s, 3) / 3, if(dka3.d.$s < 1, (2 - pow(1 - dka3.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz3.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka3.d.$s)), 2)) * (1 + 0.14 * buoy.$s.3)
-        let dkiq3.$s = dk.q.$s + 3 + 12 * buoy.$s.3 + (dksz3.$s - dkic) * 0.55 + 104 * dkf * hop.$s.3 * (1 - hop.$s.3)
-        image dockicon.$s.4 = from win.dock.$s.4.icon, 96, 96
-        prop buoy.$s.4 = 0 ~pop
-        follow buoy.$s.4 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(4 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.4 = 0 ~pop
-        follow here.$s.4 = if(4 < dk.n.$s, 1, 0)
-        prop ring.$s.4 = 1 ~760ms
-        prop hop.$s.4 = 0 ~560ms
-        follow hop.$s.4 = 0
-        fact hops.$s.4 = 0
-        let dka4.c.$s = dk.a0.$s + 14 + 4 * dkcell + dkcell / 2
-        let dka4.d.$s = (dka4.c.$s - dk.ma.$s) / dkreach
-        let dka4.$s = dka4.c.$s + dk.K.$s * (if(dka4.d.$s < -1, 0, if(dka4.d.$s < 0, pow(1 + dka4.d.$s, 3) / 3, if(dka4.d.$s < 1, (2 - pow(1 - dka4.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz4.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka4.d.$s)), 2)) * (1 + 0.14 * buoy.$s.4)
-        let dkiq4.$s = dk.q.$s + 3 + 12 * buoy.$s.4 + (dksz4.$s - dkic) * 0.55 + 104 * dkf * hop.$s.4 * (1 - hop.$s.4)
-        image dockicon.$s.5 = from win.dock.$s.5.icon, 96, 96
-        prop buoy.$s.5 = 0 ~pop
-        follow buoy.$s.5 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(5 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.5 = 0 ~pop
-        follow here.$s.5 = if(5 < dk.n.$s, 1, 0)
-        prop ring.$s.5 = 1 ~760ms
-        prop hop.$s.5 = 0 ~560ms
-        follow hop.$s.5 = 0
-        fact hops.$s.5 = 0
-        let dka5.c.$s = dk.a0.$s + 14 + 5 * dkcell + dkcell / 2
-        let dka5.d.$s = (dka5.c.$s - dk.ma.$s) / dkreach
-        let dka5.$s = dka5.c.$s + dk.K.$s * (if(dka5.d.$s < -1, 0, if(dka5.d.$s < 0, pow(1 + dka5.d.$s, 3) / 3, if(dka5.d.$s < 1, (2 - pow(1 - dka5.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz5.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka5.d.$s)), 2)) * (1 + 0.14 * buoy.$s.5)
-        let dkiq5.$s = dk.q.$s + 3 + 12 * buoy.$s.5 + (dksz5.$s - dkic) * 0.55 + 104 * dkf * hop.$s.5 * (1 - hop.$s.5)
-        image dockicon.$s.6 = from win.dock.$s.6.icon, 96, 96
-        prop buoy.$s.6 = 0 ~pop
-        follow buoy.$s.6 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(6 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.6 = 0 ~pop
-        follow here.$s.6 = if(6 < dk.n.$s, 1, 0)
-        prop ring.$s.6 = 1 ~760ms
-        prop hop.$s.6 = 0 ~560ms
-        follow hop.$s.6 = 0
-        fact hops.$s.6 = 0
-        let dka6.c.$s = dk.a0.$s + 14 + 6 * dkcell + dkcell / 2
-        let dka6.d.$s = (dka6.c.$s - dk.ma.$s) / dkreach
-        let dka6.$s = dka6.c.$s + dk.K.$s * (if(dka6.d.$s < -1, 0, if(dka6.d.$s < 0, pow(1 + dka6.d.$s, 3) / 3, if(dka6.d.$s < 1, (2 - pow(1 - dka6.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz6.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka6.d.$s)), 2)) * (1 + 0.14 * buoy.$s.6)
-        let dkiq6.$s = dk.q.$s + 3 + 12 * buoy.$s.6 + (dksz6.$s - dkic) * 0.55 + 104 * dkf * hop.$s.6 * (1 - hop.$s.6)
-        image dockicon.$s.7 = from win.dock.$s.7.icon, 96, 96
-        prop buoy.$s.7 = 0 ~pop
-        follow buoy.$s.7 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(7 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.7 = 0 ~pop
-        follow here.$s.7 = if(7 < dk.n.$s, 1, 0)
-        prop ring.$s.7 = 1 ~760ms
-        prop hop.$s.7 = 0 ~560ms
-        follow hop.$s.7 = 0
-        fact hops.$s.7 = 0
-        let dka7.c.$s = dk.a0.$s + 14 + 7 * dkcell + dkcell / 2
-        let dka7.d.$s = (dka7.c.$s - dk.ma.$s) / dkreach
-        let dka7.$s = dka7.c.$s + dk.K.$s * (if(dka7.d.$s < -1, 0, if(dka7.d.$s < 0, pow(1 + dka7.d.$s, 3) / 3, if(dka7.d.$s < 1, (2 - pow(1 - dka7.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz7.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka7.d.$s)), 2)) * (1 + 0.14 * buoy.$s.7)
-        let dkiq7.$s = dk.q.$s + 3 + 12 * buoy.$s.7 + (dksz7.$s - dkic) * 0.55 + 104 * dkf * hop.$s.7 * (1 - hop.$s.7)
-        image dockicon.$s.8 = from win.dock.$s.8.icon, 96, 96
-        prop buoy.$s.8 = 0 ~pop
-        follow buoy.$s.8 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(8 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.8 = 0 ~pop
-        follow here.$s.8 = if(8 < dk.n.$s, 1, 0)
-        prop ring.$s.8 = 1 ~760ms
-        prop hop.$s.8 = 0 ~560ms
-        follow hop.$s.8 = 0
-        fact hops.$s.8 = 0
-        let dka8.c.$s = dk.a0.$s + 14 + 8 * dkcell + dkcell / 2
-        let dka8.d.$s = (dka8.c.$s - dk.ma.$s) / dkreach
-        let dka8.$s = dka8.c.$s + dk.K.$s * (if(dka8.d.$s < -1, 0, if(dka8.d.$s < 0, pow(1 + dka8.d.$s, 3) / 3, if(dka8.d.$s < 1, (2 - pow(1 - dka8.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz8.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka8.d.$s)), 2)) * (1 + 0.14 * buoy.$s.8)
-        let dkiq8.$s = dk.q.$s + 3 + 12 * buoy.$s.8 + (dksz8.$s - dkic) * 0.55 + 104 * dkf * hop.$s.8 * (1 - hop.$s.8)
-        image dockicon.$s.9 = from win.dock.$s.9.icon, 96, 96
-        prop buoy.$s.9 = 0 ~pop
-        follow buoy.$s.9 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(9 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.9 = 0 ~pop
-        follow here.$s.9 = if(9 < dk.n.$s, 1, 0)
-        prop ring.$s.9 = 1 ~760ms
-        prop hop.$s.9 = 0 ~560ms
-        follow hop.$s.9 = 0
-        fact hops.$s.9 = 0
-        let dka9.c.$s = dk.a0.$s + 14 + 9 * dkcell + dkcell / 2
-        let dka9.d.$s = (dka9.c.$s - dk.ma.$s) / dkreach
-        let dka9.$s = dka9.c.$s + dk.K.$s * (if(dka9.d.$s < -1, 0, if(dka9.d.$s < 0, pow(1 + dka9.d.$s, 3) / 3, if(dka9.d.$s < 1, (2 - pow(1 - dka9.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz9.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka9.d.$s)), 2)) * (1 + 0.14 * buoy.$s.9)
-        let dkiq9.$s = dk.q.$s + 3 + 12 * buoy.$s.9 + (dksz9.$s - dkic) * 0.55 + 104 * dkf * hop.$s.9 * (1 - hop.$s.9)
-        image dockicon.$s.10 = from win.dock.$s.10.icon, 96, 96
-        prop buoy.$s.10 = 0 ~pop
-        follow buoy.$s.10 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(10 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.10 = 0 ~pop
-        follow here.$s.10 = if(10 < dk.n.$s, 1, 0)
-        prop ring.$s.10 = 1 ~760ms
-        prop hop.$s.10 = 0 ~560ms
-        follow hop.$s.10 = 0
-        fact hops.$s.10 = 0
-        let dka10.c.$s = dk.a0.$s + 14 + 10 * dkcell + dkcell / 2
-        let dka10.d.$s = (dka10.c.$s - dk.ma.$s) / dkreach
-        let dka10.$s = dka10.c.$s + dk.K.$s * (if(dka10.d.$s < -1, 0, if(dka10.d.$s < 0, pow(1 + dka10.d.$s, 3) / 3, if(dka10.d.$s < 1, (2 - pow(1 - dka10.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz10.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka10.d.$s)), 2)) * (1 + 0.14 * buoy.$s.10)
-        let dkiq10.$s = dk.q.$s + 3 + 12 * buoy.$s.10 + (dksz10.$s - dkic) * 0.55 + 104 * dkf * hop.$s.10 * (1 - hop.$s.10)
-        image dockicon.$s.11 = from win.dock.$s.11.icon, 96, 96
-        prop buoy.$s.11 = 0 ~pop
-        follow buoy.$s.11 = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(11 - dk.t.$s) / 1.8), 2), 0)
-        prop here.$s.11 = 0 ~pop
-        follow here.$s.11 = if(11 < dk.n.$s, 1, 0)
-        prop ring.$s.11 = 1 ~760ms
-        prop hop.$s.11 = 0 ~560ms
-        follow hop.$s.11 = 0
-        fact hops.$s.11 = 0
-        let dka11.c.$s = dk.a0.$s + 14 + 11 * dkcell + dkcell / 2
-        let dka11.d.$s = (dka11.c.$s - dk.ma.$s) / dkreach
-        let dka11.$s = dka11.c.$s + dk.K.$s * (if(dka11.d.$s < -1, 0, if(dka11.d.$s < 0, pow(1 + dka11.d.$s, 3) / 3, if(dka11.d.$s < 1, (2 - pow(1 - dka11.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dksz11.$s = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dka11.d.$s)), 2)) * (1 + 0.14 * buoy.$s.11)
-        let dkiq11.$s = dk.q.$s + 3 + 12 * buoy.$s.11 + (dksz11.$s - dkic) * 0.55 + 104 * dkf * hop.$s.11 * (1 - hop.$s.11)
-        let dks1.c.$s = dk.a0.$s + 14 + dk.n.$s * dkcell + 10
-        let dks1.d.$s = (dks1.c.$s - dk.ma.$s) / dkreach
-        let dks1.$s = dks1.c.$s + dk.K.$s * (if(dks1.d.$s < -1, 0, if(dks1.d.$s < 0, pow(1 + dks1.d.$s, 3) / 3, if(dks1.d.$s < 1, (2 - pow(1 - dks1.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dks2.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 - 10
-        let dks2.d.$s = (dks2.c.$s - dk.ma.$s) / dkreach
-        let dks2.$s = dks2.c.$s + dk.K.$s * (if(dks2.d.$s < -1, 0, if(dks2.d.$s < 0, pow(1 + dks2.d.$s, 3) / 3, if(dks2.d.$s < 1, (2 - pow(1 - dks2.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp0.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 0 * 26 + 13
-        let dkp0.d.$s = (dkp0.c.$s - dk.ma.$s) / dkreach
-        let dkp0.$s = dkp0.c.$s + dk.K.$s * (if(dkp0.d.$s < -1, 0, if(dkp0.d.$s < 0, pow(1 + dkp0.d.$s, 3) / 3, if(dkp0.d.$s < 1, (2 - pow(1 - dkp0.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp1.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 1 * 26 + 13
-        let dkp1.d.$s = (dkp1.c.$s - dk.ma.$s) / dkreach
-        let dkp1.$s = dkp1.c.$s + dk.K.$s * (if(dkp1.d.$s < -1, 0, if(dkp1.d.$s < 0, pow(1 + dkp1.d.$s, 3) / 3, if(dkp1.d.$s < 1, (2 - pow(1 - dkp1.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp2.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 2 * 26 + 13
-        let dkp2.d.$s = (dkp2.c.$s - dk.ma.$s) / dkreach
-        let dkp2.$s = dkp2.c.$s + dk.K.$s * (if(dkp2.d.$s < -1, 0, if(dkp2.d.$s < 0, pow(1 + dkp2.d.$s, 3) / 3, if(dkp2.d.$s < 1, (2 - pow(1 - dkp2.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp3.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 3 * 26 + 13
-        let dkp3.d.$s = (dkp3.c.$s - dk.ma.$s) / dkreach
-        let dkp3.$s = dkp3.c.$s + dk.K.$s * (if(dkp3.d.$s < -1, 0, if(dkp3.d.$s < 0, pow(1 + dkp3.d.$s, 3) / 3, if(dkp3.d.$s < 1, (2 - pow(1 - dkp3.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp4.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 4 * 26 + 13
-        let dkp4.d.$s = (dkp4.c.$s - dk.ma.$s) / dkreach
-        let dkp4.$s = dkp4.c.$s + dk.K.$s * (if(dkp4.d.$s < -1, 0, if(dkp4.d.$s < 0, pow(1 + dkp4.d.$s, 3) / 3, if(dkp4.d.$s < 1, (2 - pow(1 - dkp4.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp5.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 5 * 26 + 13
-        let dkp5.d.$s = (dkp5.c.$s - dk.ma.$s) / dkreach
-        let dkp5.$s = dkp5.c.$s + dk.K.$s * (if(dkp5.d.$s < -1, 0, if(dkp5.d.$s < 0, pow(1 + dkp5.d.$s, 3) / 3, if(dkp5.d.$s < 1, (2 - pow(1 - dkp5.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp6.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 6 * 26 + 13
-        let dkp6.d.$s = (dkp6.c.$s - dk.ma.$s) / dkreach
-        let dkp6.$s = dkp6.c.$s + dk.K.$s * (if(dkp6.d.$s < -1, 0, if(dkp6.d.$s < 0, pow(1 + dkp6.d.$s, 3) / 3, if(dkp6.d.$s < 1, (2 - pow(1 - dkp6.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
-        let dkp7.c.$s = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + 7 * 26 + 13
-        let dkp7.d.$s = (dkp7.c.$s - dk.ma.$s) / dkreach
-        let dkp7.$s = dkp7.c.$s + dk.K.$s * (if(dkp7.d.$s < -1, 0, if(dkp7.d.$s < 0, pow(1 + dkp7.d.$s, 3) / 3, if(dkp7.d.$s < 1, (2 - pow(1 - dkp7.d.$s, 3)) / 3, 2 / 3))) - 1 / 3)
+        repeat j in 0..12 {
+            image dockicon.$s.$j = from win.dock.$s.$j.icon, 96, 96
+            prop buoy.$s.$j = 0 ~pop
+            follow buoy.$s.$j = if(dk.on.$s and dock.mag < 0.5, pow(max(0, 1 - abs(j - dk.t.$s) / 1.8), 2), 0)
+            prop here.$s.$j = 0 ~pop
+            follow here.$s.$j = if(j < dk.n.$s, 1, 0)
+            prop ring.$s.$j = 1 ~760ms
+            prop hop.$s.$j = 0 ~560ms
+            follow hop.$s.$j = 0
+            fact hops.$s.$j = 0
+            dki.c[s][j] = dk.a0.$s + 14 + j * dkcell + dkcell / 2
+            dki.d[s][j] = (dki.c[s][j] - dk.ma.$s) / dkreach
+            dki.a[s][j] = dki.c[s][j] + dk.K.$s * (if(dki.d[s][j] < -1, 0, if(dki.d[s][j] < 0, pow(1 + dki.d[s][j], 3) / 3, if(dki.d[s][j] < 1, (2 - pow(1 - dki.d[s][j], 3)) / 3, 2 / 3))) - 1 / 3)
+            dki.sz[s][j] = dkic * (1 + dklift * dk.near.$s * pow(max(0, 1 - abs(dki.d[s][j])), 2)) * (1 + 0.14 * buoy.$s.$j)
+            dki.q[s][j] = dk.q.$s + 3 + 12 * buoy.$s.$j + (dki.sz[s][j] - dkic) * 0.55 + 104 * dkf * hop.$s.$j * (1 - hop.$s.$j)
+        }
+        dks.c[s][0] = dk.a0.$s + 14 + dk.n.$s * dkcell + 10
+        dks.d[s][0] = (dks.c[s][0] - dk.ma.$s) / dkreach
+        dks.a[s][0] = dks.c[s][0] + dk.K.$s * (if(dks.d[s][0] < -1, 0, if(dks.d[s][0] < 0, pow(1 + dks.d[s][0], 3) / 3, if(dks.d[s][0] < 1, (2 - pow(1 - dks.d[s][0], 3)) / 3, 2 / 3))) - 1 / 3)
+        dks.c[s][1] = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 - 10
+        dks.d[s][1] = (dks.c[s][1] - dk.ma.$s) / dkreach
+        dks.a[s][1] = dks.c[s][1] + dk.K.$s * (if(dks.d[s][1] < -1, 0, if(dks.d[s][1] < 0, pow(1 + dks.d[s][1], 3) / 3, if(dks.d[s][1] < 1, (2 - pow(1 - dks.d[s][1], 3)) / 3, 2 / 3))) - 1 / 3)
+        repeat j in 0..8 {
+            dkp.c[s][j] = dk.a0.$s + dkw.$s - 14 - dk.p.$s * 26 + j * 26 + 13
+            dkp.d[s][j] = (dkp.c[s][j] - dk.ma.$s) / dkreach
+            dkp.a[s][j] = dkp.c[s][j] + dk.K.$s * (if(dkp.d[s][j] < -1, 0, if(dkp.d[s][j] < 0, pow(1 + dkp.d[s][j], 3) / 3, if(dkp.d[s][j] < 1, (2 - pow(1 - dkp.d[s][j], 3)) / 3, 2 / 3))) - 1 / 3)
+        }
         group {
             z: 99982
             show: shore.$s > 0.01 and screen.index == s
@@ -1476,185 +1316,29 @@ scene Session {
                 box { from: if(dkvert, if(dock.side == 1, -140, screen.$s.width), -80), if(dkvert, -80, screen.$s.height); size: if(dkvert, 140, screen.$s.width + 160), if(dkvert, screen.$s.height + 160, 140) }
                 box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dk.a0.$s + dkw.$s / 2), if(dkvert, dk.a0.$s + dkw.$s / 2, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, (dkw.$s + dk.grow.$s) * (0.55 + 0.45 * shore.$s)), if(dkvert, (dkw.$s + dk.grow.$s) * (0.55 + 0.45 * shore.$s), dkpl); corner: 22 * dkf; blend: 22 + 36 * 4 * shore.$s * (1 - shore.$s) }
             }
-            group {
-                show: here.$s.0 > 0.01
-                opacity: here.$s.0
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka0.$s), if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.0; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.0) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.0); show: ring.$s.0 < 0.99 }
-                image dockicon.$s.0 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq0.$s), dka0.$s) - dksz0.$s / 2 * here.$s.0, if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dkiq0.$s)) - dksz0.$s / 2 * here.$s.0; size: dksz0.$s * here.$s.0, dksz0.$s * here.$s.0 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka0.$s), if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.0.focused, 2.4, 2); color: if(win.dock.$s.0.focused, mint, ink); opacity: if(win.dock.$s.0.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.0.windows == 1 or win.dock.$s.0.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka0.$s - 3.5), if(dkvert, dka0.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.0.focused, 2.4, 2); color: if(win.dock.$s.0.focused, mint, ink); opacity: if(win.dock.$s.0.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.0.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka0.$s + 3.5), if(dkvert, dka0.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.0.focused, 2.4, 2); color: if(win.dock.$s.0.focused, mint, ink); opacity: if(win.dock.$s.0.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.0.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka0.$s - 6), if(dkvert, dka0.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.0.focused, 2.4, 2); color: if(win.dock.$s.0.focused, mint, ink); opacity: if(win.dock.$s.0.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.0.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka0.$s + 6), if(dkvert, dka0.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.0.focused, 2.4, 2); color: if(win.dock.$s.0.focused, mint, ink); opacity: if(win.dock.$s.0.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.0.windows >= 3 }
-                zone box dockz.0.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka0.$s), if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 0 < dk.n.$s and not overview; label: "{win.dock.$s.0.name}" }
-            }
-            group {
-                show: here.$s.1 > 0.01
-                opacity: here.$s.1
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka1.$s), if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.1; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.1) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.1); show: ring.$s.1 < 0.99 }
-                image dockicon.$s.1 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq1.$s), dka1.$s) - dksz1.$s / 2 * here.$s.1, if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dkiq1.$s)) - dksz1.$s / 2 * here.$s.1; size: dksz1.$s * here.$s.1, dksz1.$s * here.$s.1 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka1.$s), if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.1.focused, 2.4, 2); color: if(win.dock.$s.1.focused, mint, ink); opacity: if(win.dock.$s.1.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.1.windows == 1 or win.dock.$s.1.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka1.$s - 3.5), if(dkvert, dka1.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.1.focused, 2.4, 2); color: if(win.dock.$s.1.focused, mint, ink); opacity: if(win.dock.$s.1.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.1.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka1.$s + 3.5), if(dkvert, dka1.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.1.focused, 2.4, 2); color: if(win.dock.$s.1.focused, mint, ink); opacity: if(win.dock.$s.1.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.1.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka1.$s - 6), if(dkvert, dka1.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.1.focused, 2.4, 2); color: if(win.dock.$s.1.focused, mint, ink); opacity: if(win.dock.$s.1.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.1.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka1.$s + 6), if(dkvert, dka1.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.1.focused, 2.4, 2); color: if(win.dock.$s.1.focused, mint, ink); opacity: if(win.dock.$s.1.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.1.windows >= 3 }
-                zone box dockz.1.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka1.$s), if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 1 < dk.n.$s and not overview; label: "{win.dock.$s.1.name}" }
-            }
-            group {
-                show: here.$s.2 > 0.01
-                opacity: here.$s.2
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka2.$s), if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.2; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.2) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.2); show: ring.$s.2 < 0.99 }
-                image dockicon.$s.2 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq2.$s), dka2.$s) - dksz2.$s / 2 * here.$s.2, if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dkiq2.$s)) - dksz2.$s / 2 * here.$s.2; size: dksz2.$s * here.$s.2, dksz2.$s * here.$s.2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka2.$s), if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.2.focused, 2.4, 2); color: if(win.dock.$s.2.focused, mint, ink); opacity: if(win.dock.$s.2.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.2.windows == 1 or win.dock.$s.2.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka2.$s - 3.5), if(dkvert, dka2.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.2.focused, 2.4, 2); color: if(win.dock.$s.2.focused, mint, ink); opacity: if(win.dock.$s.2.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.2.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka2.$s + 3.5), if(dkvert, dka2.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.2.focused, 2.4, 2); color: if(win.dock.$s.2.focused, mint, ink); opacity: if(win.dock.$s.2.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.2.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka2.$s - 6), if(dkvert, dka2.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.2.focused, 2.4, 2); color: if(win.dock.$s.2.focused, mint, ink); opacity: if(win.dock.$s.2.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.2.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka2.$s + 6), if(dkvert, dka2.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.2.focused, 2.4, 2); color: if(win.dock.$s.2.focused, mint, ink); opacity: if(win.dock.$s.2.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.2.windows >= 3 }
-                zone box dockz.2.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka2.$s), if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 2 < dk.n.$s and not overview; label: "{win.dock.$s.2.name}" }
-            }
-            group {
-                show: here.$s.3 > 0.01
-                opacity: here.$s.3
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka3.$s), if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.3; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.3) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.3); show: ring.$s.3 < 0.99 }
-                image dockicon.$s.3 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq3.$s), dka3.$s) - dksz3.$s / 2 * here.$s.3, if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dkiq3.$s)) - dksz3.$s / 2 * here.$s.3; size: dksz3.$s * here.$s.3, dksz3.$s * here.$s.3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka3.$s), if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.3.focused, 2.4, 2); color: if(win.dock.$s.3.focused, mint, ink); opacity: if(win.dock.$s.3.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.3.windows == 1 or win.dock.$s.3.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka3.$s - 3.5), if(dkvert, dka3.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.3.focused, 2.4, 2); color: if(win.dock.$s.3.focused, mint, ink); opacity: if(win.dock.$s.3.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.3.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka3.$s + 3.5), if(dkvert, dka3.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.3.focused, 2.4, 2); color: if(win.dock.$s.3.focused, mint, ink); opacity: if(win.dock.$s.3.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.3.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka3.$s - 6), if(dkvert, dka3.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.3.focused, 2.4, 2); color: if(win.dock.$s.3.focused, mint, ink); opacity: if(win.dock.$s.3.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.3.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka3.$s + 6), if(dkvert, dka3.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.3.focused, 2.4, 2); color: if(win.dock.$s.3.focused, mint, ink); opacity: if(win.dock.$s.3.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.3.windows >= 3 }
-                zone box dockz.3.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka3.$s), if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 3 < dk.n.$s and not overview; label: "{win.dock.$s.3.name}" }
-            }
-            group {
-                show: here.$s.4 > 0.01
-                opacity: here.$s.4
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka4.$s), if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.4; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.4) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.4); show: ring.$s.4 < 0.99 }
-                image dockicon.$s.4 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq4.$s), dka4.$s) - dksz4.$s / 2 * here.$s.4, if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dkiq4.$s)) - dksz4.$s / 2 * here.$s.4; size: dksz4.$s * here.$s.4, dksz4.$s * here.$s.4 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka4.$s), if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.4.focused, 2.4, 2); color: if(win.dock.$s.4.focused, mint, ink); opacity: if(win.dock.$s.4.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.4.windows == 1 or win.dock.$s.4.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka4.$s - 3.5), if(dkvert, dka4.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.4.focused, 2.4, 2); color: if(win.dock.$s.4.focused, mint, ink); opacity: if(win.dock.$s.4.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.4.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka4.$s + 3.5), if(dkvert, dka4.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.4.focused, 2.4, 2); color: if(win.dock.$s.4.focused, mint, ink); opacity: if(win.dock.$s.4.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.4.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka4.$s - 6), if(dkvert, dka4.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.4.focused, 2.4, 2); color: if(win.dock.$s.4.focused, mint, ink); opacity: if(win.dock.$s.4.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.4.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka4.$s + 6), if(dkvert, dka4.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.4.focused, 2.4, 2); color: if(win.dock.$s.4.focused, mint, ink); opacity: if(win.dock.$s.4.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.4.windows >= 3 }
-                zone box dockz.4.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka4.$s), if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 4 < dk.n.$s and not overview; label: "{win.dock.$s.4.name}" }
-            }
-            group {
-                show: here.$s.5 > 0.01
-                opacity: here.$s.5
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka5.$s), if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.5; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.5) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.5); show: ring.$s.5 < 0.99 }
-                image dockicon.$s.5 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq5.$s), dka5.$s) - dksz5.$s / 2 * here.$s.5, if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dkiq5.$s)) - dksz5.$s / 2 * here.$s.5; size: dksz5.$s * here.$s.5, dksz5.$s * here.$s.5 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka5.$s), if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.5.focused, 2.4, 2); color: if(win.dock.$s.5.focused, mint, ink); opacity: if(win.dock.$s.5.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.5.windows == 1 or win.dock.$s.5.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka5.$s - 3.5), if(dkvert, dka5.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.5.focused, 2.4, 2); color: if(win.dock.$s.5.focused, mint, ink); opacity: if(win.dock.$s.5.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.5.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka5.$s + 3.5), if(dkvert, dka5.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.5.focused, 2.4, 2); color: if(win.dock.$s.5.focused, mint, ink); opacity: if(win.dock.$s.5.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.5.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka5.$s - 6), if(dkvert, dka5.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.5.focused, 2.4, 2); color: if(win.dock.$s.5.focused, mint, ink); opacity: if(win.dock.$s.5.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.5.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka5.$s + 6), if(dkvert, dka5.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.5.focused, 2.4, 2); color: if(win.dock.$s.5.focused, mint, ink); opacity: if(win.dock.$s.5.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.5.windows >= 3 }
-                zone box dockz.5.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka5.$s), if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 5 < dk.n.$s and not overview; label: "{win.dock.$s.5.name}" }
-            }
-            group {
-                show: here.$s.6 > 0.01
-                opacity: here.$s.6
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka6.$s), if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.6; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.6) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.6); show: ring.$s.6 < 0.99 }
-                image dockicon.$s.6 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq6.$s), dka6.$s) - dksz6.$s / 2 * here.$s.6, if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dkiq6.$s)) - dksz6.$s / 2 * here.$s.6; size: dksz6.$s * here.$s.6, dksz6.$s * here.$s.6 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka6.$s), if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.6.focused, 2.4, 2); color: if(win.dock.$s.6.focused, mint, ink); opacity: if(win.dock.$s.6.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.6.windows == 1 or win.dock.$s.6.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka6.$s - 3.5), if(dkvert, dka6.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.6.focused, 2.4, 2); color: if(win.dock.$s.6.focused, mint, ink); opacity: if(win.dock.$s.6.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.6.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka6.$s + 3.5), if(dkvert, dka6.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.6.focused, 2.4, 2); color: if(win.dock.$s.6.focused, mint, ink); opacity: if(win.dock.$s.6.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.6.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka6.$s - 6), if(dkvert, dka6.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.6.focused, 2.4, 2); color: if(win.dock.$s.6.focused, mint, ink); opacity: if(win.dock.$s.6.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.6.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka6.$s + 6), if(dkvert, dka6.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.6.focused, 2.4, 2); color: if(win.dock.$s.6.focused, mint, ink); opacity: if(win.dock.$s.6.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.6.windows >= 3 }
-                zone box dockz.6.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka6.$s), if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 6 < dk.n.$s and not overview; label: "{win.dock.$s.6.name}" }
-            }
-            group {
-                show: here.$s.7 > 0.01
-                opacity: here.$s.7
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka7.$s), if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.7; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.7) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.7); show: ring.$s.7 < 0.99 }
-                image dockicon.$s.7 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq7.$s), dka7.$s) - dksz7.$s / 2 * here.$s.7, if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dkiq7.$s)) - dksz7.$s / 2 * here.$s.7; size: dksz7.$s * here.$s.7, dksz7.$s * here.$s.7 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka7.$s), if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.7.focused, 2.4, 2); color: if(win.dock.$s.7.focused, mint, ink); opacity: if(win.dock.$s.7.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.7.windows == 1 or win.dock.$s.7.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka7.$s - 3.5), if(dkvert, dka7.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.7.focused, 2.4, 2); color: if(win.dock.$s.7.focused, mint, ink); opacity: if(win.dock.$s.7.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.7.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka7.$s + 3.5), if(dkvert, dka7.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.7.focused, 2.4, 2); color: if(win.dock.$s.7.focused, mint, ink); opacity: if(win.dock.$s.7.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.7.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka7.$s - 6), if(dkvert, dka7.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.7.focused, 2.4, 2); color: if(win.dock.$s.7.focused, mint, ink); opacity: if(win.dock.$s.7.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.7.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka7.$s + 6), if(dkvert, dka7.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.7.focused, 2.4, 2); color: if(win.dock.$s.7.focused, mint, ink); opacity: if(win.dock.$s.7.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.7.windows >= 3 }
-                zone box dockz.7.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka7.$s), if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 7 < dk.n.$s and not overview; label: "{win.dock.$s.7.name}" }
-            }
-            group {
-                show: here.$s.8 > 0.01
-                opacity: here.$s.8
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka8.$s), if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.8; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.8) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.8); show: ring.$s.8 < 0.99 }
-                image dockicon.$s.8 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq8.$s), dka8.$s) - dksz8.$s / 2 * here.$s.8, if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dkiq8.$s)) - dksz8.$s / 2 * here.$s.8; size: dksz8.$s * here.$s.8, dksz8.$s * here.$s.8 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka8.$s), if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.8.focused, 2.4, 2); color: if(win.dock.$s.8.focused, mint, ink); opacity: if(win.dock.$s.8.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.8.windows == 1 or win.dock.$s.8.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka8.$s - 3.5), if(dkvert, dka8.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.8.focused, 2.4, 2); color: if(win.dock.$s.8.focused, mint, ink); opacity: if(win.dock.$s.8.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.8.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka8.$s + 3.5), if(dkvert, dka8.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.8.focused, 2.4, 2); color: if(win.dock.$s.8.focused, mint, ink); opacity: if(win.dock.$s.8.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.8.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka8.$s - 6), if(dkvert, dka8.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.8.focused, 2.4, 2); color: if(win.dock.$s.8.focused, mint, ink); opacity: if(win.dock.$s.8.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.8.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka8.$s + 6), if(dkvert, dka8.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.8.focused, 2.4, 2); color: if(win.dock.$s.8.focused, mint, ink); opacity: if(win.dock.$s.8.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.8.windows >= 3 }
-                zone box dockz.8.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka8.$s), if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 8 < dk.n.$s and not overview; label: "{win.dock.$s.8.name}" }
-            }
-            group {
-                show: here.$s.9 > 0.01
-                opacity: here.$s.9
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka9.$s), if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.9; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.9) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.9); show: ring.$s.9 < 0.99 }
-                image dockicon.$s.9 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq9.$s), dka9.$s) - dksz9.$s / 2 * here.$s.9, if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dkiq9.$s)) - dksz9.$s / 2 * here.$s.9; size: dksz9.$s * here.$s.9, dksz9.$s * here.$s.9 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka9.$s), if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.9.focused, 2.4, 2); color: if(win.dock.$s.9.focused, mint, ink); opacity: if(win.dock.$s.9.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.9.windows == 1 or win.dock.$s.9.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka9.$s - 3.5), if(dkvert, dka9.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.9.focused, 2.4, 2); color: if(win.dock.$s.9.focused, mint, ink); opacity: if(win.dock.$s.9.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.9.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka9.$s + 3.5), if(dkvert, dka9.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.9.focused, 2.4, 2); color: if(win.dock.$s.9.focused, mint, ink); opacity: if(win.dock.$s.9.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.9.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka9.$s - 6), if(dkvert, dka9.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.9.focused, 2.4, 2); color: if(win.dock.$s.9.focused, mint, ink); opacity: if(win.dock.$s.9.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.9.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka9.$s + 6), if(dkvert, dka9.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.9.focused, 2.4, 2); color: if(win.dock.$s.9.focused, mint, ink); opacity: if(win.dock.$s.9.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.9.windows >= 3 }
-                zone box dockz.9.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka9.$s), if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 9 < dk.n.$s and not overview; label: "{win.dock.$s.9.name}" }
-            }
-            group {
-                show: here.$s.10 > 0.01
-                opacity: here.$s.10
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka10.$s), if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.10; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.10) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.10); show: ring.$s.10 < 0.99 }
-                image dockicon.$s.10 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq10.$s), dka10.$s) - dksz10.$s / 2 * here.$s.10, if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dkiq10.$s)) - dksz10.$s / 2 * here.$s.10; size: dksz10.$s * here.$s.10, dksz10.$s * here.$s.10 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka10.$s), if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.10.focused, 2.4, 2); color: if(win.dock.$s.10.focused, mint, ink); opacity: if(win.dock.$s.10.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.10.windows == 1 or win.dock.$s.10.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka10.$s - 3.5), if(dkvert, dka10.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.10.focused, 2.4, 2); color: if(win.dock.$s.10.focused, mint, ink); opacity: if(win.dock.$s.10.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.10.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka10.$s + 3.5), if(dkvert, dka10.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.10.focused, 2.4, 2); color: if(win.dock.$s.10.focused, mint, ink); opacity: if(win.dock.$s.10.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.10.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka10.$s - 6), if(dkvert, dka10.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.10.focused, 2.4, 2); color: if(win.dock.$s.10.focused, mint, ink); opacity: if(win.dock.$s.10.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.10.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka10.$s + 6), if(dkvert, dka10.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.10.focused, 2.4, 2); color: if(win.dock.$s.10.focused, mint, ink); opacity: if(win.dock.$s.10.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.10.windows >= 3 }
-                zone box dockz.10.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka10.$s), if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 10 < dk.n.$s and not overview; label: "{win.dock.$s.10.name}" }
-            }
-            group {
-                show: here.$s.11 > 0.01
-                opacity: here.$s.11
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dka11.$s), if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.11; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.11) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.11); show: ring.$s.11 < 0.99 }
-                image dockicon.$s.11 { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq11.$s), dka11.$s) - dksz11.$s / 2 * here.$s.11, if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dkiq11.$s)) - dksz11.$s / 2 * here.$s.11; size: dksz11.$s * here.$s.11, dksz11.$s * here.$s.11 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka11.$s), if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.11.focused, 2.4, 2); color: if(win.dock.$s.11.focused, mint, ink); opacity: if(win.dock.$s.11.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.11.windows == 1 or win.dock.$s.11.windows >= 3) }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka11.$s - 3.5), if(dkvert, dka11.$s - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.11.focused, 2.4, 2); color: if(win.dock.$s.11.focused, mint, ink); opacity: if(win.dock.$s.11.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.11.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka11.$s + 3.5), if(dkvert, dka11.$s + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.11.focused, 2.4, 2); color: if(win.dock.$s.11.focused, mint, ink); opacity: if(win.dock.$s.11.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.11.windows == 2 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka11.$s - 6), if(dkvert, dka11.$s - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.11.focused, 2.4, 2); color: if(win.dock.$s.11.focused, mint, ink); opacity: if(win.dock.$s.11.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.11.windows >= 3 }
-                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dka11.$s + 6), if(dkvert, dka11.$s + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.11.focused, 2.4, 2); color: if(win.dock.$s.11.focused, mint, ink); opacity: if(win.dock.$s.11.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.11.windows >= 3 }
-                zone box dockz.11.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dka11.$s), if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and 11 < dk.n.$s and not overview; label: "{win.dock.$s.11.name}" }
+            repeat j in 0..12 {
+                group {
+                    show: here.$s.$j > 0.01
+                    opacity: here.$s.$j
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf), dki.a[s][j]), if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s - 22 * dkf)); radius: 18 + 30 * ring.$s.$j; scale: if(dkvert, 0.32, 1), if(dkvert, 1, 0.32); stroke: 1.4 * (1 - ring.$s.$j) + 0.3; color: ink; opacity: 45% * (1 - ring.$s.$j); show: ring.$s.$j < 0.99 }
+                    image dockicon.$s.$j { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dki.q[s][j]), dki.a[s][j]) - dki.sz[s][j] / 2 * here.$s.$j, if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dki.q[s][j])) - dki.sz[s][j] / 2 * here.$s.$j; size: dki.sz[s][j] * here.$s.$j, dki.sz[s][j] * here.$s.$j }
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dki.a[s][j]), if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.$j.focused, 2.4, 2); color: if(win.dock.$s.$j.focused, mint, ink); opacity: if(win.dock.$s.$j.focused, 95%, 55%); show: dock.dots > 0.5 and (win.dock.$s.$j.windows == 1 or win.dock.$s.$j.windows >= 3) }
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dki.a[s][j] - 3.5), if(dkvert, dki.a[s][j] - 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.$j.focused, 2.4, 2); color: if(win.dock.$s.$j.focused, mint, ink); opacity: if(win.dock.$s.$j.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.$j.windows == 2 }
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dki.a[s][j] + 3.5), if(dkvert, dki.a[s][j] + 3.5, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.$j.focused, 2.4, 2); color: if(win.dock.$s.$j.focused, mint, ink); opacity: if(win.dock.$s.$j.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.$j.windows == 2 }
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dki.a[s][j] - 6), if(dkvert, dki.a[s][j] - 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.$j.focused, 2.4, 2); color: if(win.dock.$s.$j.focused, mint, ink); opacity: if(win.dock.$s.$j.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.$j.windows >= 3 }
+                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf), dki.a[s][j] + 6), if(dkvert, dki.a[s][j] + 6, dk.cr.$s + dk.cs.$s * (dk.q.$s - 25 * dkf)); radius: if(win.dock.$s.$j.focused, 2.4, 2); color: if(win.dock.$s.$j.focused, mint, ink); opacity: if(win.dock.$s.$j.focused, 95%, 55%); show: dock.dots > 0.5 and win.dock.$s.$j.windows >= 3 }
+                    zone box dockz.$j.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dki.a[s][j]), if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, dkpl, dkcell), if(dkvert, dkcell, dkpl); cursor: pointer; active: shore.$s > 0.6 and j < dk.n.$s and not overview; label: "{win.dock.$s.$j.name}" }
+                }
             }
             // Between the programs and what is put away, and before the pools: a line of water.
-            box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dks1.$s), if(dkvert, dks1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, 30, 1), if(dkvert, 1, 30); color: ink; opacity: 18%; show: dk.m.$s > 0 }
-            box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dks2.$s), if(dkvert, dks2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, 30, 1), if(dkvert, 1, 30); color: ink; opacity: 18% }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp0.$s), if(dkvert, dkp0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(1 == dk.p.$s and win.used.$s < 1, 22%, 45%); show: 0 < dk.p.$s and win.shown.$s != 1 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp0.$s), if(dkvert, dkp0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 0 < dk.p.$s and win.shown.$s == 1 }
-            text "1" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp0.$s), if(dkvert, dkp0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 0 < dk.p.$s and win.shown.$s == 1 }
-            zone ellipse dkpool.0.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp0.$s), if(dkvert, dkp0.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 0 < dk.p.$s and not overview; label: "Workspace 1" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp1.$s), if(dkvert, dkp1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(2 == dk.p.$s and win.used.$s < 2, 22%, 45%); show: 1 < dk.p.$s and win.shown.$s != 2 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp1.$s), if(dkvert, dkp1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 1 < dk.p.$s and win.shown.$s == 2 }
-            text "2" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp1.$s), if(dkvert, dkp1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 1 < dk.p.$s and win.shown.$s == 2 }
-            zone ellipse dkpool.1.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp1.$s), if(dkvert, dkp1.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 1 < dk.p.$s and not overview; label: "Workspace 2" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp2.$s), if(dkvert, dkp2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(3 == dk.p.$s and win.used.$s < 3, 22%, 45%); show: 2 < dk.p.$s and win.shown.$s != 3 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp2.$s), if(dkvert, dkp2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 2 < dk.p.$s and win.shown.$s == 3 }
-            text "3" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp2.$s), if(dkvert, dkp2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 2 < dk.p.$s and win.shown.$s == 3 }
-            zone ellipse dkpool.2.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp2.$s), if(dkvert, dkp2.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 2 < dk.p.$s and not overview; label: "Workspace 3" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp3.$s), if(dkvert, dkp3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(4 == dk.p.$s and win.used.$s < 4, 22%, 45%); show: 3 < dk.p.$s and win.shown.$s != 4 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp3.$s), if(dkvert, dkp3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 3 < dk.p.$s and win.shown.$s == 4 }
-            text "4" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp3.$s), if(dkvert, dkp3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 3 < dk.p.$s and win.shown.$s == 4 }
-            zone ellipse dkpool.3.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp3.$s), if(dkvert, dkp3.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 3 < dk.p.$s and not overview; label: "Workspace 4" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp4.$s), if(dkvert, dkp4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(5 == dk.p.$s and win.used.$s < 5, 22%, 45%); show: 4 < dk.p.$s and win.shown.$s != 5 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp4.$s), if(dkvert, dkp4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 4 < dk.p.$s and win.shown.$s == 5 }
-            text "5" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp4.$s), if(dkvert, dkp4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 4 < dk.p.$s and win.shown.$s == 5 }
-            zone ellipse dkpool.4.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp4.$s), if(dkvert, dkp4.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 4 < dk.p.$s and not overview; label: "Workspace 5" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp5.$s), if(dkvert, dkp5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(6 == dk.p.$s and win.used.$s < 6, 22%, 45%); show: 5 < dk.p.$s and win.shown.$s != 6 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp5.$s), if(dkvert, dkp5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 5 < dk.p.$s and win.shown.$s == 6 }
-            text "6" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp5.$s), if(dkvert, dkp5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 5 < dk.p.$s and win.shown.$s == 6 }
-            zone ellipse dkpool.5.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp5.$s), if(dkvert, dkp5.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 5 < dk.p.$s and not overview; label: "Workspace 6" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp6.$s), if(dkvert, dkp6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(7 == dk.p.$s and win.used.$s < 7, 22%, 45%); show: 6 < dk.p.$s and win.shown.$s != 7 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp6.$s), if(dkvert, dkp6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 6 < dk.p.$s and win.shown.$s == 7 }
-            text "7" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp6.$s), if(dkvert, dkp6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 6 < dk.p.$s and win.shown.$s == 7 }
-            zone ellipse dkpool.6.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp6.$s), if(dkvert, dkp6.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 6 < dk.p.$s and not overview; label: "Workspace 7" }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp7.$s), if(dkvert, dkp7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if(8 == dk.p.$s and win.used.$s < 8, 22%, 45%); show: 7 < dk.p.$s and win.shown.$s != 8 }
-            ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp7.$s), if(dkvert, dkp7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: 7 < dk.p.$s and win.shown.$s == 8 }
-            text "8" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp7.$s), if(dkvert, dkp7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: 7 < dk.p.$s and win.shown.$s == 8 }
-            zone ellipse dkpool.7.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp7.$s), if(dkvert, dkp7.$s, dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and 7 < dk.p.$s and not overview; label: "Workspace 8" }
+            box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dks.a[s][0]), if(dkvert, dks.a[s][0], dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, 30, 1), if(dkvert, 1, 30); color: ink; opacity: 18%; show: dk.m.$s > 0 }
+            box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dks.a[s][1]), if(dkvert, dks.a[s][1], dk.cr.$s + dk.cs.$s * (dk.q.$s)); size: if(dkvert, 30, 1), if(dkvert, 1, 30); color: ink; opacity: 18% }
+            repeat j in 0..8 {
+                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp.a[s][j]), if(dkvert, dkp.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; stroke: 1.3; color: ink; opacity: if((j + 1) == dk.p.$s and win.used.$s < (j + 1), 22%, 45%); show: j < dk.p.$s and win.shown.$s != (j + 1) }
+                ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp.a[s][j]), if(dkvert, dkp.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 8; color: mint; opacity: 90%; show: j < dk.p.$s and win.shown.$s == (j + 1) }
+                text "{j + 1}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp.a[s][j]), if(dkvert, dkp.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s)); anchor: center; size: 9; weight: 700; color: #0c0e10; show: j < dk.p.$s and win.shown.$s == (j + 1) }
+                zone ellipse dkpool.$j.$s { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s), dkp.a[s][j]), if(dkvert, dkp.a[s][j], dk.cr.$s + dk.cs.$s * (dk.q.$s)); radius: 12; cursor: pointer; active: shore.$s > 0.6 and j < dk.p.$s and not overview; label: "Workspace {j + 1}" }
+            }
         }
         // Dragged, its icon goes out of the shore (far enough, unpinned, it
         // bursts into drops); only past a few pixels: a real mouse moves one
@@ -1707,7 +1391,7 @@ scene Session {
         // Its previews, as many as it has windows: over its icon at the bottom,
         // beside it on a side (window.plm's per window: pv.bx + pv.sx · turn).
         pv.n[s] = (win.dock.$s[max(pv.$s, 0)].windows)
-        let pv.ia.$s = pick(max(pv.$s, 0), dka0.$s, dka1.$s, dka2.$s, dka3.$s, dka4.$s, dka5.$s, dka6.$s, dka7.$s, dka8.$s, dka9.$s, dka10.$s, dka11.$s)
+        let pv.ia.$s = pick(max(pv.$s, 0), dki.a[s][0], dki.a[s][1], dki.a[s][2], dki.a[s][3], dki.a[s][4], dki.a[s][5], dki.a[s][6], dki.a[s][7], dki.a[s][8], dki.a[s][9], dki.a[s][10], dki.a[s][11])
         pv.bx[s] = if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s + dkpl / 2 + 127), clamp(pv.ia.$s, pv.n.$s * 116 + 20, screen.$s.width - pv.n.$s * 116 - 20) - (pv.n.$s - 1) * 116)
         pv.sx[s] = if(dkvert, dk.cs.$s * 232, 232)
         pv.by[s] = if(dkvert, clamp(pv.ia.$s, 110, screen.$s.height - 110) - 10, screen.$s.height - dk.q.$s - 140)
@@ -1726,7 +1410,7 @@ scene Session {
         let mn.pin.$s = (win.dock.$s[max(dmk.$s, 0)].pinned) > 0.5
         let mn.base.$s = 6 + mn.wn.$s * 28 + if(mn.wn.$s > 0, 10, 0)
         let mn.h.$s = mn.base.$s + if(mn.run.$s, 4, 2) * 28 + 6
-        let mn.ia.$s = pick(dmk.$s, dka0.$s, dka1.$s, dka2.$s, dka3.$s, dka4.$s, dka5.$s, dka6.$s, dka7.$s, dka8.$s, dka9.$s, dka10.$s, dka11.$s)
+        let mn.ia.$s = pick(dmk.$s, dki.a[s][0], dki.a[s][1], dki.a[s][2], dki.a[s][3], dki.a[s][4], dki.a[s][5], dki.a[s][6], dki.a[s][7], dki.a[s][8], dki.a[s][9], dki.a[s][10], dki.a[s][11])
         mn.x[s] = if(dkvert, if(dock.side == 1, dk.q.$s + dkpl / 2 + 14, screen.$s.width - dk.q.$s - dkpl / 2 - 14 - 220), clamp(mn.ia.$s - 110, 8, screen.$s.width - 228))
         mn.y[s] = if(dkvert, clamp(mn.ia.$s - mn.h.$s / 2, 8, screen.$s.height - mn.h.$s - 8), screen.$s.height - dk.q.$s - dkpl / 2 - 14 - mn.h.$s)
         // Away from the shore, its previews and its menu, they sink.
@@ -1742,269 +1426,29 @@ scene Session {
         group {
             z: 99984
             show: shore.$s > 0.01 and screen.index == s
-            measure tip.$s.0
-            group {
-                show: dk.on.$s and dk.hk.$s == 0 and 0 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq0.$s + dksz0.$s / 2 + 14 + (tip.$s.0.width + 22) / 2), dka0.$s), if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dkiq0.$s + dksz0.$s / 2 + 41)); size: (tip.$s.0.width + 22), 26; corner: 13 }
+            repeat j in 0..12 {
+                measure tip.$s.$j
+                group {
+                    show: dk.on.$s and dk.hk.$s == j and j < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
+                    body {
+                        color: #0c0e10
+                        rim: 12%
+                        shadow: 0, 6, 16, 40%
+                        box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dki.q[s][j] + dki.sz[s][j] / 2 + 14 + (tip.$s.$j.width + 22) / 2), dki.a[s][j]), if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dki.q[s][j] + dki.sz[s][j] / 2 + 41)); size: (tip.$s.$j.width + 22), 26; corner: 13 }
+                    }
+                    text win.dock.$s.$j.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dki.q[s][j] + dki.sz[s][j] / 2 + 14 + (tip.$s.$j.width + 22) / 2), dki.a[s][j]), if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dki.q[s][j] + dki.sz[s][j] / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.$j; lines: 1 }
                 }
-                text win.dock.$s.0.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq0.$s + dksz0.$s / 2 + 14 + (tip.$s.0.width + 22) / 2), dka0.$s), if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dkiq0.$s + dksz0.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.0; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.0.badge > 0 and 0 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq0.$s), dka0.$s) + 0.39 * dksz0.$s, if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dkiq0.$s)) - 0.39 * dksz0.$s; radius: 8.5 }
+                // Unread, a drop of coral on its corner.
+                group {
+                    show: win.dock.$s.$j.badge > 0 and j < dk.n.$s
+                    body {
+                        color: #ef7a66
+                        rim: 20%
+                        shadow: 0, 2, 5, 40%
+                        ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dki.q[s][j]), dki.a[s][j]) + 0.39 * dki.sz[s][j], if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dki.q[s][j])) - 0.39 * dki.sz[s][j]; radius: 8.5 }
+                    }
+                    text "{win.dock.$s.$j.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dki.q[s][j]), dki.a[s][j]) + 0.39 * dki.sz[s][j], if(dkvert, dki.a[s][j], dk.cr.$s + dk.cs.$s * (dki.q[s][j])) - 0.39 * dki.sz[s][j]; anchor: center; size: 10; weight: 700; color: #1a0c09 }
                 }
-                text "{win.dock.$s.0.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq0.$s), dka0.$s) + 0.39 * dksz0.$s, if(dkvert, dka0.$s, dk.cr.$s + dk.cs.$s * (dkiq0.$s)) - 0.39 * dksz0.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.1
-            group {
-                show: dk.on.$s and dk.hk.$s == 1 and 1 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq1.$s + dksz1.$s / 2 + 14 + (tip.$s.1.width + 22) / 2), dka1.$s), if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dkiq1.$s + dksz1.$s / 2 + 41)); size: (tip.$s.1.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.1.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq1.$s + dksz1.$s / 2 + 14 + (tip.$s.1.width + 22) / 2), dka1.$s), if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dkiq1.$s + dksz1.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.1; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.1.badge > 0 and 1 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq1.$s), dka1.$s) + 0.39 * dksz1.$s, if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dkiq1.$s)) - 0.39 * dksz1.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.1.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq1.$s), dka1.$s) + 0.39 * dksz1.$s, if(dkvert, dka1.$s, dk.cr.$s + dk.cs.$s * (dkiq1.$s)) - 0.39 * dksz1.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.2
-            group {
-                show: dk.on.$s and dk.hk.$s == 2 and 2 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq2.$s + dksz2.$s / 2 + 14 + (tip.$s.2.width + 22) / 2), dka2.$s), if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dkiq2.$s + dksz2.$s / 2 + 41)); size: (tip.$s.2.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.2.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq2.$s + dksz2.$s / 2 + 14 + (tip.$s.2.width + 22) / 2), dka2.$s), if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dkiq2.$s + dksz2.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.2; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.2.badge > 0 and 2 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq2.$s), dka2.$s) + 0.39 * dksz2.$s, if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dkiq2.$s)) - 0.39 * dksz2.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.2.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq2.$s), dka2.$s) + 0.39 * dksz2.$s, if(dkvert, dka2.$s, dk.cr.$s + dk.cs.$s * (dkiq2.$s)) - 0.39 * dksz2.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.3
-            group {
-                show: dk.on.$s and dk.hk.$s == 3 and 3 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq3.$s + dksz3.$s / 2 + 14 + (tip.$s.3.width + 22) / 2), dka3.$s), if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dkiq3.$s + dksz3.$s / 2 + 41)); size: (tip.$s.3.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.3.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq3.$s + dksz3.$s / 2 + 14 + (tip.$s.3.width + 22) / 2), dka3.$s), if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dkiq3.$s + dksz3.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.3; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.3.badge > 0 and 3 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq3.$s), dka3.$s) + 0.39 * dksz3.$s, if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dkiq3.$s)) - 0.39 * dksz3.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.3.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq3.$s), dka3.$s) + 0.39 * dksz3.$s, if(dkvert, dka3.$s, dk.cr.$s + dk.cs.$s * (dkiq3.$s)) - 0.39 * dksz3.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.4
-            group {
-                show: dk.on.$s and dk.hk.$s == 4 and 4 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq4.$s + dksz4.$s / 2 + 14 + (tip.$s.4.width + 22) / 2), dka4.$s), if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dkiq4.$s + dksz4.$s / 2 + 41)); size: (tip.$s.4.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.4.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq4.$s + dksz4.$s / 2 + 14 + (tip.$s.4.width + 22) / 2), dka4.$s), if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dkiq4.$s + dksz4.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.4; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.4.badge > 0 and 4 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq4.$s), dka4.$s) + 0.39 * dksz4.$s, if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dkiq4.$s)) - 0.39 * dksz4.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.4.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq4.$s), dka4.$s) + 0.39 * dksz4.$s, if(dkvert, dka4.$s, dk.cr.$s + dk.cs.$s * (dkiq4.$s)) - 0.39 * dksz4.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.5
-            group {
-                show: dk.on.$s and dk.hk.$s == 5 and 5 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq5.$s + dksz5.$s / 2 + 14 + (tip.$s.5.width + 22) / 2), dka5.$s), if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dkiq5.$s + dksz5.$s / 2 + 41)); size: (tip.$s.5.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.5.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq5.$s + dksz5.$s / 2 + 14 + (tip.$s.5.width + 22) / 2), dka5.$s), if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dkiq5.$s + dksz5.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.5; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.5.badge > 0 and 5 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq5.$s), dka5.$s) + 0.39 * dksz5.$s, if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dkiq5.$s)) - 0.39 * dksz5.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.5.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq5.$s), dka5.$s) + 0.39 * dksz5.$s, if(dkvert, dka5.$s, dk.cr.$s + dk.cs.$s * (dkiq5.$s)) - 0.39 * dksz5.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.6
-            group {
-                show: dk.on.$s and dk.hk.$s == 6 and 6 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq6.$s + dksz6.$s / 2 + 14 + (tip.$s.6.width + 22) / 2), dka6.$s), if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dkiq6.$s + dksz6.$s / 2 + 41)); size: (tip.$s.6.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.6.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq6.$s + dksz6.$s / 2 + 14 + (tip.$s.6.width + 22) / 2), dka6.$s), if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dkiq6.$s + dksz6.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.6; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.6.badge > 0 and 6 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq6.$s), dka6.$s) + 0.39 * dksz6.$s, if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dkiq6.$s)) - 0.39 * dksz6.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.6.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq6.$s), dka6.$s) + 0.39 * dksz6.$s, if(dkvert, dka6.$s, dk.cr.$s + dk.cs.$s * (dkiq6.$s)) - 0.39 * dksz6.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.7
-            group {
-                show: dk.on.$s and dk.hk.$s == 7 and 7 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq7.$s + dksz7.$s / 2 + 14 + (tip.$s.7.width + 22) / 2), dka7.$s), if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dkiq7.$s + dksz7.$s / 2 + 41)); size: (tip.$s.7.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.7.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq7.$s + dksz7.$s / 2 + 14 + (tip.$s.7.width + 22) / 2), dka7.$s), if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dkiq7.$s + dksz7.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.7; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.7.badge > 0 and 7 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq7.$s), dka7.$s) + 0.39 * dksz7.$s, if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dkiq7.$s)) - 0.39 * dksz7.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.7.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq7.$s), dka7.$s) + 0.39 * dksz7.$s, if(dkvert, dka7.$s, dk.cr.$s + dk.cs.$s * (dkiq7.$s)) - 0.39 * dksz7.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.8
-            group {
-                show: dk.on.$s and dk.hk.$s == 8 and 8 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq8.$s + dksz8.$s / 2 + 14 + (tip.$s.8.width + 22) / 2), dka8.$s), if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dkiq8.$s + dksz8.$s / 2 + 41)); size: (tip.$s.8.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.8.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq8.$s + dksz8.$s / 2 + 14 + (tip.$s.8.width + 22) / 2), dka8.$s), if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dkiq8.$s + dksz8.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.8; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.8.badge > 0 and 8 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq8.$s), dka8.$s) + 0.39 * dksz8.$s, if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dkiq8.$s)) - 0.39 * dksz8.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.8.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq8.$s), dka8.$s) + 0.39 * dksz8.$s, if(dkvert, dka8.$s, dk.cr.$s + dk.cs.$s * (dkiq8.$s)) - 0.39 * dksz8.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.9
-            group {
-                show: dk.on.$s and dk.hk.$s == 9 and 9 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq9.$s + dksz9.$s / 2 + 14 + (tip.$s.9.width + 22) / 2), dka9.$s), if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dkiq9.$s + dksz9.$s / 2 + 41)); size: (tip.$s.9.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.9.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq9.$s + dksz9.$s / 2 + 14 + (tip.$s.9.width + 22) / 2), dka9.$s), if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dkiq9.$s + dksz9.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.9; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.9.badge > 0 and 9 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq9.$s), dka9.$s) + 0.39 * dksz9.$s, if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dkiq9.$s)) - 0.39 * dksz9.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.9.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq9.$s), dka9.$s) + 0.39 * dksz9.$s, if(dkvert, dka9.$s, dk.cr.$s + dk.cs.$s * (dkiq9.$s)) - 0.39 * dksz9.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.10
-            group {
-                show: dk.on.$s and dk.hk.$s == 10 and 10 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq10.$s + dksz10.$s / 2 + 14 + (tip.$s.10.width + 22) / 2), dka10.$s), if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dkiq10.$s + dksz10.$s / 2 + 41)); size: (tip.$s.10.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.10.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq10.$s + dksz10.$s / 2 + 14 + (tip.$s.10.width + 22) / 2), dka10.$s), if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dkiq10.$s + dksz10.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.10; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.10.badge > 0 and 10 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq10.$s), dka10.$s) + 0.39 * dksz10.$s, if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dkiq10.$s)) - 0.39 * dksz10.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.10.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq10.$s), dka10.$s) + 0.39 * dksz10.$s, if(dkvert, dka10.$s, dk.cr.$s + dk.cs.$s * (dkiq10.$s)) - 0.39 * dksz10.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
-            }
-            measure tip.$s.11
-            group {
-                show: dk.on.$s and dk.hk.$s == 11 and 11 < dk.n.$s and pv.$s < 0 and dmenu.$s < 0 and dkdrag.$s < 0
-                body {
-                    color: #0c0e10
-                    rim: 12%
-                    shadow: 0, 6, 16, 40%
-                    box { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq11.$s + dksz11.$s / 2 + 14 + (tip.$s.11.width + 22) / 2), dka11.$s), if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dkiq11.$s + dksz11.$s / 2 + 41)); size: (tip.$s.11.width + 22), 26; corner: 13 }
-                }
-                text win.dock.$s.11.name { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq11.$s + dksz11.$s / 2 + 14 + (tip.$s.11.width + 22) / 2), dka11.$s), if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dkiq11.$s + dksz11.$s / 2 + 41)); anchor: center; size: 12; weight: 600; color: ink; measure: tip.$s.11; lines: 1 }
-            }
-            // Unread, a drop of coral on its corner.
-            group {
-                show: win.dock.$s.11.badge > 0 and 11 < dk.n.$s
-                body {
-                    color: #ef7a66
-                    rim: 20%
-                    shadow: 0, 2, 5, 40%
-                    ellipse { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq11.$s), dka11.$s) + 0.39 * dksz11.$s, if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dkiq11.$s)) - 0.39 * dksz11.$s; radius: 8.5 }
-                }
-                text "{win.dock.$s.11.badge, 0}" { at: if(dkvert, dk.cr.$s + dk.cs.$s * (dkiq11.$s), dka11.$s) + 0.39 * dksz11.$s, if(dkvert, dka11.$s, dk.cr.$s + dk.cs.$s * (dkiq11.$s)) - 0.39 * dksz11.$s; anchor: center; size: 10; weight: 700; color: #1a0c09 }
             }
             // Carried out of the shore: the icon at the mouse, and far enough, it
             // says it will go.
