@@ -2827,7 +2827,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.0.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.0.width > 0.5 }
-                    text pick(max(if(wire.0.a == i, wire.0.b, wire.0.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.0.width < 0.5 }
+                    text win[max(if(wire.0.a == i, wire.0.b, wire.0.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.0.width < 0.5 }
                 }
                 group {
                     show: (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i))
@@ -2840,7 +2840,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.1.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.1.width > 0.5 }
-                    text pick(max(if(wire.1.a == i, wire.1.b, wire.1.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.1.width < 0.5 }
+                    text win[max(if(wire.1.a == i, wire.1.b, wire.1.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.1.width < 0.5 }
                 }
                 group {
                     show: (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i))
@@ -2853,7 +2853,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.2.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.2.width > 0.5 }
-                    text pick(max(if(wire.2.a == i, wire.2.b, wire.2.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.2.width < 0.5 }
+                    text win[max(if(wire.2.a == i, wire.2.b, wire.2.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.2.width < 0.5 }
                 }
                 group {
                     show: (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i))
@@ -2866,7 +2866,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.3.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.3.width > 0.5 }
-                    text pick(max(if(wire.3.a == i, wire.3.b, wire.3.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.3.width < 0.5 }
+                    text win[max(if(wire.3.a == i, wire.3.b, wire.3.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.3.width < 0.5 }
                 }
                 group {
                     show: (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i))
@@ -2879,7 +2879,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.4.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.4.width > 0.5 }
-                    text pick(max(if(wire.4.a == i, wire.4.b, wire.4.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.4.width < 0.5 }
+                    text win[max(if(wire.4.a == i, wire.4.b, wire.4.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.4.width < 0.5 }
                 }
                 group {
                     show: (wire.5.a >= 0 and (wire.5.a == i or wire.5.b == i))
@@ -2892,7 +2892,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.5.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.5.width > 0.5 }
-                    text pick(max(if(wire.5.a == i, wire.5.b, wire.5.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.5.width < 0.5 }
+                    text win[max(if(wire.5.a == i, wire.5.b, wire.5.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.5.width < 0.5 }
                 }
                 group {
                     show: (wire.6.a >= 0 and (wire.6.a == i or wire.6.b == i))
@@ -2905,7 +2905,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.6.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.6.width > 0.5 }
-                    text pick(max(if(wire.6.a == i, wire.6.b, wire.6.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.6.width < 0.5 }
+                    text win[max(if(wire.6.a == i, wire.6.b, wire.6.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.6.width < 0.5 }
                 }
                 group {
                     show: (wire.7.a >= 0 and (wire.7.a == i or wire.7.b == i))
@@ -2918,7 +2918,7 @@ scene Session {
                     box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
                     text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
                     text wire.7.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.7.width > 0.5 }
-                    text pick(max(if(wire.7.a == i, wire.7.b, wire.7.a), 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.7.width < 0.5 }
+                    text win[max(if(wire.7.a == i, wire.7.b, wire.7.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.7.width < 0.5 }
                 }
             }
             // The mouse over a window wired to this one: this one lights up, a moment.
@@ -4648,14 +4648,14 @@ scene Session {
             group {
                 show: ph.lx > 150
                 opacity: smooth(150, 260, ph.lx)
-                text pick(max(ph.front, 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: ph.lx / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl > 0.5 }
-                text pick(max(ph.sd, 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: ph.lx / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl < 0.5 }
+                text win[max(ph.front, 0)].title { at: ph.lx / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl > 0.5 }
+                text win[max(ph.sd, 0)].title { at: ph.lx / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl < 0.5 }
             }
             group {
                 show: W - ph.lx > 150
                 opacity: smooth(150, 260, W - ph.lx)
-                text pick(max(ph.sd, 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: (ph.lx + W) / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(W - ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl > 0.5 }
-                text pick(max(ph.front, 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: (ph.lx + W) / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(W - ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl < 0.5 }
+                text win[max(ph.sd, 0)].title { at: (ph.lx + W) / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(W - ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl > 0.5 }
+                text win[max(ph.front, 0)].title { at: (ph.lx + W) / 2, H / 2; anchor: center; size: 17; weight: 600; width: max(W - ph.lx - 60, 20); lines: 2; align: center; color: ink; show: ph.fl < 0.5 }
             }
             // Near an edge, the one about to go fades out.
             box { from: 0, ph.sb; size: max(ph.lx - 4, 0), H - ph.sb - ph.hb; corner: 16; color: #05090b; opacity: 70% * (1 - smooth(0.08, 0.2, ph.lv)) }
@@ -4980,7 +4980,7 @@ scene Session {
         box { from: 0, 0; size: W, ph.sb; color: #05090b; opacity: 80% * (1 - pc) }
         text now.time { at: 22, ph.sb / 2 + 1; anchor: left center; size: 13.5; weight: 700; color: ink }
         // The app in front, beside the hour: the middle is Marea's (her island).
-        text pick(max(ph.front, 0), win.0.title, win.1.title, win.2.title, win.3.title, win.4.title, win.5.title, win.6.title, win.7.title, win.8.title, win.9.title, win.10.title, win.11.title, win.12.title, win.13.title, win.14.title, win.15.title) { at: 66, ph.sb / 2 + 1; anchor: left center; size: 12; weight: 600; width: W / 2 - 112; lines: 1; color: ink; opacity: 70% * (1 - pc); show: ph.front >= 0 }
+        text win[max(ph.front, 0)].title { at: 66, ph.sb / 2 + 1; anchor: left center; size: 12; weight: 600; width: W / 2 - 112; lines: 1; color: ink; opacity: 70% * (1 - pc); show: ph.front >= 0 }
         ellipse { at: W - 82, ph.sb / 2 + 1; radius: 3.5; color: mint }
         text "pleamar" { at: W - 74, ph.sb / 2 + 1; anchor: left center; size: 12.5; weight: 600; color: ink; opacity: 80% }
         box { from: 0, H - ph.hb; size: W, ph.hb; color: #05090b; opacity: 80% * (1 - pc) }
