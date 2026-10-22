@@ -329,6 +329,10 @@ no key of its own: `bind Super+m maximize` as Hyprland's `fullscreen 1`),
 `focus_left`/`right`/`up`/`down`, `zoom_in`/`zoom_out`…— or to programs. Each
 does what fits the layout of the monitor it acts on, so one set of keys serves
 them all.
+A program's own minimize and maximize buttons (a GTK 4 header bar, an X11
+window's) are events too, `window_minimize` and `window_maximize`, with the
+window's slot: `on window_minimize(v) { minimize win(v) }` in the scene says
+what they do.
 Start it with `defaults` to keep pleamar-wm's and change what you want;
 `pleamar-wm keys` shows them all:
 

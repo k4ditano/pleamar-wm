@@ -213,8 +213,18 @@ impl XwmHandler for State {
 
     fn minimize_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
-            self.set_minimized(slot, true);
+            self.asked("window_minimize", slot);
         }
+    }
+
+    fn maximize_request(&mut self, _: XwmId, window: X11Surface) {
+        if let Some(slot) = self.x11_slot(&window) {
+            self.asked("window_maximize", slot);
+        }
+    }
+
+    fn unmaximize_request(&mut self, xwm: XwmId, window: X11Surface) {
+        XwmHandler::maximize_request(self, xwm, window);
     }
 
     fn unminimize_request(&mut self, _: XwmId, window: X11Surface) {
