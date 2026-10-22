@@ -10930,6 +10930,13 @@ scene Session {
             wave.$i: 0 ~0ms
             wave.$i: 1 after 16ms
         }
+        // Its own maximize button, the same for it.
+        on window_maximize(v) while v == i and not win.$i.dialog and (F < 0.5 or fr) {
+            tmax.$i = if(F < 0.5, 1 - tmax.$i, tmax.$i)
+            maxed.$i = if(fr, 1 - maxed.$i, maxed.$i)
+            wave.$i: 0 ~0ms
+            wave.$i: 1 after 16ms
+        }
         // (Read here from `win.focus` itself, not through `fscreen` and the
         // others: a rule that follows a fact sees the `let`s made from it as
         // they were before it changed. The keyboard going to a window on the
@@ -12409,6 +12416,10 @@ scene Session {
     // All of its monitor and back: tiled, over the others (the bars and the
     // gaps kept); free, its green button.
     event maximize
+    // A window's own buttons, with its slot: put away, and maximized as above.
+    event window_minimize
+    on window_minimize(v) { minimize win(v) }
+    event window_maximize
     event overview
     event focus_next
     event focus_previous

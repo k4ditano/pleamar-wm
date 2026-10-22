@@ -1056,6 +1056,12 @@ impl State {
         let _ = self.to_render.send(ToRender::Nest(e));
     }
 
+    /// A window's own button (minimize, maximize) is the scene's to answer:
+    /// `window_minimize(i)`, `window_maximize(i)`, with the window's slot.
+    fn asked(&self, event: &str, slot: usize) {
+        let _ = self.to_render.send(ToRender::ExternalSignal(pleamar::scene::intern(event), Some(slot as f32)));
+    }
+
     fn window_of(&self, surface: &WlSurface) -> Option<usize> {
         self.slots.iter().position(|w| w.as_ref().is_some_and(|w| &w.surface == surface))
     }
@@ -3727,25 +3733,28 @@ impl XdgShellHandler for State {
         }
     }
 
-    /// Its own minimize button: away.
+    /// Its own minimize button: the scene says what it does.
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(slot) = self.window_of(surface.wl_surface()) {
-            self.set_minimized(slot, true);
+            self.asked("window_minimize", slot);
         }
     }
 
-    /// The layout is the scene's: a window that asks to be maximized is
-    /// answered, and stays where the scene has it.
+    /// The layout is the scene's: a window that asks to be maximized, or
+    /// back, is answered where it is, and the scene is told
+    /// (`window_maximize`). It is never told it is maximized, so it asks
+    /// the same way each time.
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         if surface.is_initial_configure_sent() {
             surface.send_configure();
         }
+        if let Some(slot) = self.window_of(surface.wl_surface()) {
+            self.asked("window_maximize", slot);
+        }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        }
+        XdgShellHandler::maximize_request(self, surface);
     }
 
     fn grab(&mut self, _: PopupSurface, _: WlSeat, _: Serial) {
