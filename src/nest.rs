@@ -2227,12 +2227,15 @@ impl State {
     }
 
     /// A program that asked to hold the pointer gets it while the pointer is
-    /// on its surface, and lets go of it when it leaves; the session is told
-    /// to keep the pointer still or inside that window.
+    /// on its window, and lets go of it when it leaves; the session is told to
+    /// keep the pointer still or inside that window. A browser draws its page
+    /// in a subsurface that lets the mouse through, so the pointer's focus is
+    /// the window's own surface while the hold is asked on the subsurface: it
+    /// is looked for in the whole window, the focused surface first.
     fn update_constraint(&mut self) {
         let focus = self.pointer.current_focus();
         if let Some(s) = self.constrained.clone() {
-            if focus.as_ref() != Some(&s) {
+            if !focus.as_ref().is_some_and(|f| same_window(f, &s)) {
                 if s.alive() {
                     with_pointer_constraint(&s, &self.pointer, |c| {
                         if let Some(c) = c {
@@ -2245,10 +2248,12 @@ impl State {
             }
         }
         let Some(f) = focus else { return };
-        if self.constrained.as_ref() == Some(&f) {
+        if self.constrained.is_some() {
             return;
         }
-        let locked = with_pointer_constraint(&f, &self.pointer, |c| {
+        let pointer = self.pointer.clone();
+        let Some(holder) = window_surfaces(&f).into_iter().find(|s| with_pointer_constraint(s, &pointer, |c| c.is_some())) else { return };
+        let locked = with_pointer_constraint(&holder, &self.pointer, |c| {
             let c = c?;
             if !c.is_active() {
                 c.activate();
@@ -2256,7 +2261,7 @@ impl State {
             Some(matches!(&*c, PointerConstraint::Locked(_)))
         });
         let Some(locked) = locked else { return };
-        self.constrained = Some(f);
+        self.constrained = Some(holder);
         let monitors = layers::monitors();
         let rect = self.pointer_on.and_then(|s| self.slots.get(s)).and_then(Option::as_ref).and_then(|w| w.shown.clone()).and_then(|(name, r)| {
             monitors.iter().find(|m| m.name == name).map(|m| [r[0] + m.x, r[1] + m.y, r[2], r[3]])
@@ -3110,6 +3115,39 @@ pub fn stop_launched() {
     for &g in groups.iter().filter(|g| alive(**g)) {
         unsafe { libc::kill(-g, libc::SIGKILL) };
     }
+}
+
+/// The root surface of the window a surface belongs to.
+fn window_root(surface: &WlSurface) -> WlSurface {
+    let mut root = surface.clone();
+    while let Some(p) = get_parent(&root) {
+        root = p;
+    }
+    root
+}
+
+/// Whether two surfaces are parts of one window.
+fn same_window(a: &WlSurface, b: &WlSurface) -> bool {
+    a == b || (a.alive() && b.alive() && window_root(a) == window_root(b))
+}
+
+/// `surface` first, then the rest of its window's surfaces (the root and every
+/// subsurface). Collected before anything is asked of them: a surface's state
+/// cannot be looked at from inside the walk.
+fn window_surfaces(surface: &WlSurface) -> Vec<WlSurface> {
+    let mut all = vec![surface.clone()];
+    with_surface_tree_downward(
+        &window_root(surface),
+        (),
+        |_, _, _| TraversalAction::DoChildren(()),
+        |s, _, _| {
+            if s != surface {
+                all.push(s.clone());
+            }
+        },
+        |_, _, _| true,
+    );
+    all
 }
 
 /// A surface and every subsurface in it enter a monitor (leaving another):
