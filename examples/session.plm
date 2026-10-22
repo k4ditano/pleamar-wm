@@ -4130,8 +4130,13 @@ scene Session {
     // between the same two; in the first free place—, and the ones of a
     // window that goes ──
     repeat q in 0..1 {
-        let wn.free = if(wire.0.a < 0, 0, if(wire.1.a < 0, 1, if(wire.2.a < 0, 2, if(wire.3.a < 0, 3, if(wire.4.a < 0, 4, if(wire.5.a < 0, 5, if(wire.6.a < 0, 6, if(wire.7.a < 0, 7, -1))))))))
-        let wn.dup = (wire.0.a == wnew.a and wire.0.b == wnew.b) or (wire.0.a == wnew.b and wire.0.b == wnew.a) or (wire.1.a == wnew.a and wire.1.b == wnew.b) or (wire.1.a == wnew.b and wire.1.b == wnew.a) or (wire.2.a == wnew.a and wire.2.b == wnew.b) or (wire.2.a == wnew.b and wire.2.b == wnew.a) or (wire.3.a == wnew.a and wire.3.b == wnew.b) or (wire.3.a == wnew.b and wire.3.b == wnew.a) or (wire.4.a == wnew.a and wire.4.b == wnew.b) or (wire.4.a == wnew.b and wire.4.b == wnew.a) or (wire.5.a == wnew.a and wire.5.b == wnew.b) or (wire.5.a == wnew.b and wire.5.b == wnew.a) or (wire.6.a == wnew.a and wire.6.b == wnew.b) or (wire.6.a == wnew.b and wire.6.b == wnew.a) or (wire.7.a == wnew.a and wire.7.b == wnew.b) or (wire.7.a == wnew.b and wire.7.b == wnew.a)
+        // The first free place, and whether these two are already wired.
+        let wn.free = -1
+        let wn.dup = 0
+        repeat j in 0..8 {
+            wn.free = if(wn.free < 0 and wire.$j.a < 0, j, wn.free)
+            wn.dup = wn.dup or (wire.$j.a == wnew.a and wire.$j.b == wnew.b) or (wire.$j.a == wnew.b and wire.$j.b == wnew.a)
+        }
         repeat j in 0..8 {
             on change wnew.go while wnew.go > 0.5 and wn.free == j and not wn.dup {
                 wire.$j.a = wnew.a
