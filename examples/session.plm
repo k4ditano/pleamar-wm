@@ -6913,6 +6913,11 @@ scene Session {
     let focus.pool = win[max(win.focus, 0)].pool
     let focus.dialog = win[max(win.focus, 0)].dialog
     let focus.floats = win[max(win.focus, 0)].floating
+    // (Super+arrows: each window's middle on the whole desktop, and how
+    // near it is the way asked; see the actions.)
+    let dir.cx[16]
+    let dir.cy[16]
+    let dir.score[16]
     repeat i in 0..16 {
         // A window is laid out on its own monitor: how big that one is and how
         // many windows share it. Each copy of the scene draws only its own.
@@ -7264,54 +7269,9 @@ scene Session {
         let dirc.main = pick(max(dir.q - 1, 0), dir.fx - dirc.x, dirc.x - dir.fx, dir.fy - dirc.y, dirc.y - dir.fy)
         let dirc.cross = pick(max(dir.q - 1, 0), abs(dirc.y - dir.fy), abs(dirc.y - dir.fy), abs(dirc.x - dir.fx), abs(dirc.x - dir.fx))
         let dirc.score = if(dirc.ok and dirc.main > 8, dirc.main + 3 * dirc.cross, 1000000)
-        on focus_left while win.focus == i {
-            dir.q = 1
-            dir.fx = dirc.x
-            dir.fy = dirc.y
-            dir.best = -1
-            dir.bs = 1000000
-            dir.n = dir.n + 1
-            dir.go: 0 ~0ms
-            dir.go: 1 after 16ms
-        }
-        on focus_right while win.focus == i {
-            dir.q = 2
-            dir.fx = dirc.x
-            dir.fy = dirc.y
-            dir.best = -1
-            dir.bs = 1000000
-            dir.n = dir.n + 1
-            dir.go: 0 ~0ms
-            dir.go: 1 after 16ms
-        }
-        on focus_up while win.focus == i {
-            dir.q = 3
-            dir.fx = dirc.x
-            dir.fy = dirc.y
-            dir.best = -1
-            dir.bs = 1000000
-            dir.n = dir.n + 1
-            dir.go: 0 ~0ms
-            dir.go: 1 after 16ms
-        }
-        on focus_down while win.focus == i {
-            dir.q = 4
-            dir.fx = dirc.x
-            dir.fy = dirc.y
-            dir.best = -1
-            dir.bs = 1000000
-            dir.n = dir.n + 1
-            dir.go: 0 ~0ms
-            dir.go: 1 after 16ms
-        }
-        // Every window's guard is read before any of them runs, so each one
-        // nearer than none passed, and the last of them won: from the
-        // leftmost of three, Super+Right went to the third. Each one keeps
-        // the best so far as it runs.
-        on change dir.n while dir.q > 0 and dirc.score < dir.bs {
-            dir.best = if(dirc.score < dir.bs, i, dir.best)
-            dir.bs = min(dir.bs, dirc.score)
-        }
+        dir.cx[i] = dirc.x
+        dir.cy[i] = dirc.y
+        dir.score[i] = dirc.score
         //  Floated off a tiled monitor: it lifts off its tile, smaller, in the
         //  middle of where it was (its tile is the others' now).
         let flw = min(w.$i * 0.86, Ws * 0.62)
@@ -8558,9 +8518,8 @@ scene Session {
     // ── the keyboard to the window that way (Super+arrows): the nearest one
     // whose middle is that way, by where the windows are drawn, across
     // monitors too; the same in every layout, free too. The one with the
-    // keyboard says where it is and which way; each window, in its own
-    // block, offers itself if it is nearer that way than the best so far;
-    // a moment later the best one has it. ──
+    // keyboard says where it is and which way; each window says how near
+    // it is that way, and a moment later the nearest one has it. ──
     event focus_left
     event focus_right
     event focus_up
@@ -8568,10 +8527,18 @@ scene Session {
     fact dir.q = 0                 // 1 left · 2 right · 3 up · 4 down
     fact dir.fx = 0
     fact dir.fy = 0
-    fact dir.n = 0
-    fact dir.best = -1
-    fact dir.bs = 1000000
     prop dir.go = 0 ~0ms
+    on focus_left while win.focus >= 0 { dir.q = 1; dir.fx = dir.cx[win.focus]; dir.fy = dir.cy[win.focus]; dir.go: 0 ~0ms; dir.go: 1 after 16ms }
+    on focus_right while win.focus >= 0 { dir.q = 2; dir.fx = dir.cx[win.focus]; dir.fy = dir.cy[win.focus]; dir.go: 0 ~0ms; dir.go: 1 after 16ms }
+    on focus_up while win.focus >= 0 { dir.q = 3; dir.fx = dir.cx[win.focus]; dir.fy = dir.cy[win.focus]; dir.go: 0 ~0ms; dir.go: 1 after 16ms }
+    on focus_down while win.focus >= 0 { dir.q = 4; dir.fx = dir.cx[win.focus]; dir.fy = dir.cy[win.focus]; dir.go: 0 ~0ms; dir.go: 1 after 16ms }
+    // The nearest that way: the first with the lowest score.
+    let dir.bs = 1000000
+    let dir.best = -1
+    repeat i in 0..16 {
+        dir.best = if(dir.score[i] < dir.bs, i, dir.best)
+        dir.bs = min(dir.bs, dir.score[i])
+    }
     on change dir.go while dir.go > 0.5 and dir.best >= 0 and dir.bs < 999999 { focus win(dir.best) }
     event close
     event minimize
