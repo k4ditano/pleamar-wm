@@ -10,6 +10,7 @@ mod remote_rtc;
 mod remote_files;
 mod config;
 mod cursor;
+mod cursor_theme;
 mod desktop;
 mod nest;
 mod phone;

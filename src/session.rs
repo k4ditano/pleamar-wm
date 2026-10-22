@@ -11,6 +11,7 @@
 use pleamar::scene::{Cursor, Mods, Screens, Surface, ToRender};
 use pleamar::wgpu;
 use crate::config;
+use crate::cursor_theme::{self, Playing, Theme};
 use crate::layers::{self, MonitorInfo, ToLayers};
 use crate::route::Route;
 use crate::screen::{self, Hit, LayerFrames, LayerWindow, Output, Screen};
@@ -233,11 +234,9 @@ struct State {
     /// Each picture of the theme read so far (a shape, or a transition between
     /// two), for each way a monitor stands (quarter turns) and each size the
     /// monitors' scales ask for: its frames on the card, each with its tip,
-    /// both turned, and how long it shows. Those the theme lacks, so they are
-    /// not looked for again; and what reading more needs.
+    /// both turned, and how long it shows; and what reading more needs.
     cursors: Vec<(String, u8, u32, Vec<CursorFrame>)>,
-    cursor_missing: std::collections::HashSet<String>,
-    cursor_theme: Option<xcursor::CursorTheme>,
+    cursor_theme: Theme,
     cursor_sizes: Vec<u32>,
     cursor_gbm: Option<Arc<Mutex<gbm::Device<DrmDeviceFd>>>>,
     /// The shape asked for, what is on screen on the way to it, and what was
@@ -403,7 +402,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     layers::set_card(drm.clone());
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
-    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_missing: Default::default(), cursor_theme: None, cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
+    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
     // The cursor the scene and the programs ask for, whenever it changes.
     let (cursor_tx, cursor_rx) = smithay::reexports::calloop::channel::channel::<(bool, Cursor)>();
@@ -727,28 +726,15 @@ fn choose_mode(modes: &[Mode], wish: Option<&config::ModeWish>) -> Option<Mode> 
 /// A program's own cursor on the card: its pixels in the plane's 64 × 64
 /// (what is beyond, cut), its tip inside it.
 fn custom_cursor(gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, p: &layers::CursorPicture) -> Option<(gbm::BufferObject<()>, (i32, i32), std::sync::Arc<(Vec<u8>, (i32, i32))>)> {
-    let ((w, h), data, hot) = &**p;
-    let mut px = vec![0u8; 64 * 64 * 4];
-    for y in 0..(*h).min(64) {
-        let n = (*w).min(64) * 4;
-        px[y * 64 * 4..y * 64 * 4 + n].copy_from_slice(data.get(y * w * 4..y * w * 4 + n)?);
-    }
-    let hot = (hot.0.clamp(0, 63), hot.1.clamp(0, 63));
+    let (px, hot) = cursor_theme::program_picture(p)?;
     let mut bo = gbm.lock().unwrap().create_buffer_object::<()>(64, 64, gbm::Format::Argb8888, gbm::BufferObjectFlags::CURSOR | gbm::BufferObjectFlags::WRITE).ok()?;
     bo.write(&px).ok()?;
     Some((bo, hot, std::sync::Arc::new((px, hot))))
 }
 
-/// The cursor's size a scale asks for: XCURSOR_SIZE (24) times it.
-fn cursor_size_at(scale: f64) -> u32 {
-    static BASE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    let base = *BASE.get_or_init(|| std::env::var("XCURSOR_SIZE").ok().and_then(|v| v.parse::<f64>().ok()).filter(|v| *v > 0.0).unwrap_or(24.0));
-    (base * scale).round() as u32
-}
-
-/// And the one a monitor asks for, at its scale.
+/// The cursor's size a monitor asks for, at its scale.
 fn cursor_size(m: &Monitor) -> u32 {
-    cursor_size_at(m.scale)
+    cursor_theme::size_at(m.scale)
 }
 
 /// Where a point of a monitor seen upright (`size` its upright size) falls
@@ -1151,104 +1137,46 @@ impl State {
     /// are read now, any other (and the theme's transitions between two) the
     /// first time it is asked for.
     fn make_cursors(&mut self, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>) {
-        let theme = std::env::var("XCURSOR_THEME").ok().filter(|t| !t.is_empty()).or_else(|| {
-            let home = std::env::var("HOME").ok()?;
-            let text = std::fs::read_to_string(format!("{home}/.icons/default/index.theme")).ok()?;
-            text.lines().find_map(|l| l.trim().strip_prefix("Inherits=")).map(|v| v.split(',').next().unwrap_or("").trim().to_owned())
-        });
         // As big as each monitor's scale asks (the plane holds up to 64).
         let mut sizes: Vec<u32> = self.monitors.iter().map(cursor_size).collect();
         if sizes.is_empty() {
-            sizes.push(cursor_size_at(1.0));
+            sizes.push(cursor_theme::size_at(1.0));
         }
         sizes.sort();
         sizes.dedup();
         self.cursor_sizes = sizes;
-        self.cursor_theme = theme.as_deref().map(xcursor::CursorTheme::load);
+        self.cursor_theme = Theme::load();
         self.cursor_gbm = Some(gbm.clone());
-        for c in CURSOR_KINDS {
+        for c in cursor_theme::KINDS {
             self.load_cursor(c.name());
         }
-        // The usual arrow: white, with a dark edge.
         if !self.cursors.iter().any(|c| c.0 == "default") {
-            let mut px = vec![0u8; 64 * 64 * 4];
-            let arrow: [&str; 19] = [
-                "X", "XX", "X.X", "X..X", "X...X", "X....X", "X.....X", "X......X", "X.......X", "X........X", "X.........X", "X..........X", "X......XXXXX", "X...X..X", "X..XX..X",
-                "X.X  X..X", "XX   X..X", "X     X..X", "      XXX",
-            ];
-            for (y, row) in arrow.iter().enumerate() {
-                for (x, c) in row.chars().enumerate() {
-                    let v: [u8; 4] = match c {
-                        'X' => [20, 20, 20, 255],
-                        '.' => [255, 255, 255, 255],
-                        _ => continue,
-                    };
-                    let i = (y * 64 + x) * 4;
-                    px[i..i + 4].copy_from_slice(&v);
-                }
-            }
-            self.cursor_missing.remove("default");
+            let px = cursor_theme::arrow();
+            self.cursor_theme.has("default");
             let sizes = self.cursor_sizes.clone();
             for size in sizes {
                 self.put_cursor("default", size, vec![(px.clone(), (0, 0), 0)]);
             }
         }
-        println!("session · cursor: {} at {:?} px ({} pictures)", theme.as_deref().unwrap_or("its own arrow"), self.cursor_sizes, self.cursors.len());
+        println!("session · cursor: {} at {:?} px ({} pictures)", self.cursor_theme.name.as_deref().unwrap_or("its own arrow"), self.cursor_sizes, self.cursors.len());
         self.show_cursor();
     }
 
     /// A picture of the theme on the card, by its name (`pointer`,
     /// `default-to-pointer`), read once, at each size the monitors ask for:
-    /// whether it is there. A shape is also looked for by the older names
-    /// themes give it.
+    /// whether it is there.
     fn load_cursor(&mut self, name: &str) -> bool {
         if self.cursors.iter().any(|c| c.0 == name) {
             return true;
         }
-        if self.cursor_missing.contains(name) {
-            return false;
-        }
-        let mut candidates = vec![name.to_owned()];
-        if let Some(k) = CURSOR_KINDS.iter().find(|k| k.name() == name) {
-            candidates.extend(cursor_alternatives(*k).iter().map(|n| n.to_string()));
-        }
-        if let Ok(icon) = name.parse::<smithay::input::pointer::CursorIcon>() {
-            candidates.extend(icon.alt_names().iter().map(|n| n.to_string()));
-        }
-        let images = self.cursor_theme.as_ref().and_then(|t| {
-            candidates.iter().find_map(|n| {
-                let path = t.load_icon(n)?;
-                let data = std::fs::read(path).ok()?;
-                let images: Vec<_> = xcursor::parser::parse_xcursor(&data)?.into_iter().filter(|i| i.width <= 64 && i.height <= 64).collect();
-                (!images.is_empty()).then_some(images)
-            })
-        });
-        let Some(images) = images else {
-            self.cursor_missing.insert(name.to_owned());
-            return false;
-        };
-        // An animated one is several images of each size: for each size asked
-        // for, the frames of the closest one there is, in order.
-        let mut any = false;
         let sizes = self.cursor_sizes.clone();
-        for size in sizes {
-            let Some(best) = images.iter().map(|i| i.size).min_by_key(|s| (*s as i64 - size as i64).abs()) else { continue };
-            let frames = images
-                .iter()
-                .filter(|i| i.size == best)
-                .map(|i| {
-                    let mut px = vec![0u8; 64 * 64 * 4];
-                    for y in 0..i.height as usize {
-                        let row = &i.pixels_rgba[y * i.width as usize * 4..(y + 1) * i.width as usize * 4];
-                        px[y * 64 * 4..y * 64 * 4 + row.len()].copy_from_slice(row);
-                    }
-                    (px, (i.xhot as i32, i.yhot as i32), i.delay)
-                })
-                .collect();
+        let Some(each) = self.cursor_theme.frames(name, &sizes) else { return false };
+        let mut any = false;
+        for (size, frames) in each {
             any |= self.put_cursor(name, size, frames);
         }
         if !any {
-            self.cursor_missing.insert(name.to_owned());
+            self.cursor_theme.lacks(name);
             return false;
         }
         self.touch_cursor(name);
@@ -1270,7 +1198,7 @@ impl State {
         let busy: Vec<String> = [self.shown.map(|c| c.name().to_owned()), self.queued.map(|c| c.name().to_owned()), self.playing.as_ref().map(|p| p.asset.clone()), self.on_plane.clone()].into_iter().flatten().collect();
         let mut extra: Vec<(u64, String)> = Vec::new();
         for c in &self.cursors {
-            if CURSOR_KINDS.iter().any(|k| k.name() == c.0) || busy.contains(&c.0) || extra.iter().any(|e| e.1 == c.0) {
+            if cursor_theme::KINDS.iter().any(|k| k.name() == c.0) || busy.contains(&c.0) || extra.iter().any(|e| e.1 == c.0) {
                 continue;
             }
             extra.push((self.cursor_used.get(&c.0).copied().unwrap_or(0), c.0.clone()));
@@ -1344,13 +1272,7 @@ impl State {
     /// Where in its frames the picture on screen is: a transition played
     /// backwards counts down, a shape goes round.
     fn frame_index(&self, len: usize) -> usize {
-        match &self.playing {
-            Some(p) if p.transition => {
-                let i = self.frame.min(len.saturating_sub(1));
-                if p.reverse { len - 1 - i } else { i }
-            }
-            _ => self.frame % len.max(1),
-        }
+        self.playing.as_ref().map_or(self.frame % len.max(1), |p| p.index(self.frame, len))
     }
 
     /// The frame on screen, as that monitor shows it.
@@ -1403,7 +1325,7 @@ impl State {
         self.queued = None;
         self.playing = Some(Playing { asset: want.name().to_owned(), reverse: false, transition: false });
         if let Some(from) = from.filter(|f| *f != want) {
-            if let Some((asset, reverse)) = transition_between(from.name(), want.name(), |n| self.load_cursor(n)) {
+            if let Some((asset, reverse)) = cursor_theme::transition_between(from.name(), want.name(), |n| self.load_cursor(n)) {
                 self.playing = Some(Playing { asset, reverse, transition: true });
             }
         }
@@ -1865,65 +1787,9 @@ struct CursorFrame {
     delay: u32,
 }
 
-/// What the cursor plane shows: a picture of the theme by its name, and
-/// whether it is a transition, played once (backwards, if it is the one for
-/// the other way round).
-struct Playing {
-    asset: String,
-    reverse: bool,
-    transition: bool,
-}
-
 /// How many of the theme's pictures beyond the usual shapes stay on the card
 /// (shapes and transitions; the last used).
 const CURSOR_CACHE: usize = 24;
-
-/// The shapes read when the session starts.
-const CURSOR_KINDS: [Cursor; 12] = [
-    Cursor::Normal,
-    Cursor::Hand,
-    Cursor::Text,
-    Cursor::Grab,
-    Cursor::Grabbing,
-    Cursor::EwResize,
-    Cursor::NsResize,
-    Cursor::NwseResize,
-    Cursor::NeswResize,
-    Cursor::Move,
-    Cursor::NotAllowed,
-    Cursor::Crosshair,
-];
-
-/// The older names themes give those shapes, after their standard one.
-fn cursor_alternatives(kind: Cursor) -> &'static [&'static str] {
-    match kind {
-        Cursor::Normal => &["left_ptr", "arrow"],
-        Cursor::Hand => &["hand2", "pointing_hand", "hand1"],
-        Cursor::Text => &["xterm", "ibeam"],
-        Cursor::Grab => &["openhand", "hand1"],
-        Cursor::Grabbing => &["closedhand", "fleur"],
-        Cursor::EwResize => &["col-resize", "sb_h_double_arrow", "h_double_arrow", "size_hor"],
-        Cursor::NsResize => &["row-resize", "sb_v_double_arrow", "v_double_arrow", "size_ver"],
-        Cursor::NwseResize => &["size_fdiag", "bd_double_arrow", "bottom_right_corner"],
-        Cursor::NeswResize => &["size_bdiag", "fd_double_arrow", "bottom_left_corner"],
-        Cursor::Move => &["all-scroll", "fleur", "size_all"],
-        Cursor::NotAllowed => &["crossed_circle", "forbidden"],
-        Cursor::Crosshair => &["cross", "tcross"],
-        Cursor::Named(_) => &[],
-    }
-}
-
-/// The theme's transition from one shape to another, if it has one: `a-to-b`
-/// played forwards, or else `b-to-a` played backwards. `has` loads one by
-/// name and says whether it is there.
-fn transition_between(a: &str, b: &str, mut has: impl FnMut(&str) -> bool) -> Option<(String, bool)> {
-    let forwards = format!("{a}-to-{b}");
-    if has(&forwards) {
-        return Some((forwards, false));
-    }
-    let backwards = format!("{b}-to-{a}");
-    has(&backwards).then_some((backwards, true))
-}
 
 /// A cursor's picture as the card knows it: the buffer itself stays with the
 /// session (`cursors`), which keeps it alive; this goes to the cursor thread.
@@ -2066,7 +1932,8 @@ fn keep_ahead() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ask, asked, forget_kept, place_monitors, place_row, publish, Monitor, sdr_value, transition_between, turned_point, vrr_at_first_frame, vrr_now_or_when_lit, Flips, Pin, ASKED_AT, ASKED_VRR};
+    use super::{ask, asked, forget_kept, place_monitors, place_row, publish, Monitor, sdr_value, turned_point, vrr_at_first_frame, vrr_now_or_when_lit, Flips, Pin, ASKED_AT, ASKED_VRR};
+    use crate::cursor_theme::transition_between;
     use std::sync::{Arc, Mutex};
 
     /// A shape change plays the theme's transition that way if it has one,
