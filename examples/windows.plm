@@ -53,7 +53,7 @@ scene Windows {
 
     // What is shared by every slot: how many there are and which one has the keyboard.
     let n = max(win.count, 1)
-    let focus_place = pick(win.focus, win.0.place, win.1.place, win.2.place, win.3.place, win.4.place, win.5.place)
+    let focus_place = win[max(win.focus, 0)].place
     let areah = H - bar - gap
     let lead.w = if(n < 1.5, W - 2 * gap, (W - 3 * gap) * ratio)
     let stack.h = (areah - (n - 2) * gap) / max(n - 1, 1)
@@ -62,7 +62,7 @@ scene Windows {
     let cell.w = (W - 80 - (cols - 1) * 30) / cols
     let cell.h = (areah - 40 - (rows - 1) * 30) / rows
 
-    repeat i in 0..6 {
+    repeat i in 0..win.max {
         // ── where it goes: the leader on the left, the rest stacked on the right ──
         let p = max(win.$i.place, 0)
         let leads = p < 0.5
@@ -159,7 +159,7 @@ scene Windows {
     on press app.1 { launch "gnome-calculator" }
     on press app.2 { launch "gnome-text-editor" }
     on press glance { toggle overview }
-    text "{win.count} of 6 · Alt+Return terminal · Alt+o at a glance · Alt+j/k keyboard · Alt+m lead · Alt+h/l width · Alt+q close" {
+    text "{win.count} of {win.max} · Alt+Return terminal · Alt+o at a glance · Alt+j/k keyboard · Alt+m lead · Alt+h/l width · Alt+q close" {
         at: W - 18, 23; anchor: right center; size: 11; color: ink; opacity: 45%
     }
     text "Nothing open yet: Alt+Return, or a button above." { at: W / 2, H / 2; anchor: center; size: 15; color: ink; opacity: if(win.count < 0.5, 45%, 0) }
@@ -170,8 +170,8 @@ scene Windows {
     on key Alt+m { promote win(win.focus) }
     on key Alt+o { toggle overview }
     on key Escape while overview { overview = false }
-    on key Alt+j { focus win(pick(mod(focus_place + 1, n), win.order.0, win.order.1, win.order.2, win.order.3, win.order.4, win.order.5)) }
-    on key Alt+k { focus win(pick(mod(focus_place + n - 1, n), win.order.0, win.order.1, win.order.2, win.order.3, win.order.4, win.order.5)) }
+    on key Alt+j { focus win(win.order[mod(focus_place + 1, n)]) }
+    on key Alt+k { focus win(win.order[mod(focus_place + n - 1, n)]) }
     on key Alt+h { ratio = clamp(ratio - 0.05, 0.25, 0.8) }
     on key Alt+l { ratio = clamp(ratio + 0.05, 0.25, 0.8) }
 }

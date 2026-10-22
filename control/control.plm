@@ -29,24 +29,17 @@ scene Control {
     let bcols = clamp(floor((aw + 10) / 240), 1, 3)
 
     fact page = 0                  // 0 layouts · 1 keys · 2 about · 3 build · 4 dock
-    fact has.0 = false             // a monitor there (by the session's order)
-    fact has.1 = false
-    fact has.2 = false
-    fact has.3 = false
-    fact sel.0 = -1                // its layout now: 0…7, 8 free (a canvas); -1 not known yet
-    fact sel.1 = -1
-    fact sel.2 = -1
-    fact sel.3 = -1
+    // Each monitor, by the session's order: whether there is one there, its
+    // layout now (0 to 7, 8 free (a canvas), -1 not known yet), its name, and
+    // what it is now.
+    repeat k in 0..4 {
+        fact has.$k = false
+        fact sel.$k = -1
+        text mon.$k = ""
+        text now.$k = ""
+    }
     fact toasted = 0               // counts what was saved: each one shows the note
     fact reachable = true          // pleamar-wm answers (it is a session of its own)
-    text mon.0 = ""
-    text mon.1 = ""
-    text mon.2 = ""
-    text mon.3 = ""
-    text now.0 = ""
-    text now.1 = ""
-    text now.2 = ""
-    text now.3 = ""
     text toast = ""
     text version = ""
     fact peek = -1                 // the layout the preview shows: the one under the mouse
@@ -148,8 +141,8 @@ scene Control {
         text "pleamar-wm does not answer: the control centre works inside a pleamar-wm session." { at: px, 120; size: 13; color: #ef7a66; show: not reachable }
 
         repeat k in 0..4 {
-            let here = pick(k, has.0, has.1, has.2, has.3)
-            let sel = pick(k, sel.0, sel.1, sel.2, sel.3)
+            let here = has[k]
+            let sel = sel[k]
             let y = 108 + k * (lcard + 14)
             group {
                 show: here
@@ -162,8 +155,8 @@ scene Control {
                 // The monitor: its shape, its name, and what it is now.
                 box { from: px + 16, y + 18; size: 26, 17; corner: 3; stroke: 1.5; color: mint }
                 box { from: px + 26, y + 36; size: 6, 3; corner: 1; color: mint }
-                text pick(k, mon.0, mon.1, mon.2, mon.3) { at: px + 54, y + 27; anchor: left center; size: 15; weight: 650; color: ink }
-                text pick(k, now.0, now.1, now.2, now.3) { at: W - 46, y + 27; anchor: right center; size: 12; color: mint }
+                text mon[k] { at: px + 54, y + 27; anchor: left center; size: 15; weight: 650; color: ink }
+                text now[k] { at: W - 46, y + 27; anchor: right center; size: 12; color: mint }
 
                 repeat l in 0..9 {
                     let tx = px + 16 + mod(l, lcols) * 82
@@ -245,7 +238,10 @@ scene Control {
 
     // ── the preview: four windows as the layout under the mouse (or the
     // first monitor's) would put them, moving there as they would ──
-    let monitors = has.0 + has.1 + has.2 + has.3
+    let monitors = 0
+    repeat k in 0..4 {
+        monitors += has.$k
+    }
     let shown.l = if(peek >= 0, peek, sel.0)
     let pfy = 132 + monitors * (lcard + 14)
     let pfw = min(W - px - 24, (H - pfy - 60) * 16 / 9)
