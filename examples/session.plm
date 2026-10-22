@@ -2744,42 +2744,21 @@ scene Session {
     fact ovdrag = -1
     fact pdrag.s = -1
     fact pdrag.k = 0
-    image appicon.0 = from win.0.icon, 64, 64
-    image appicon.1 = from win.1.icon, 64, 64
-    image appicon.2 = from win.2.icon, 64, 64
-    image appicon.3 = from win.3.icon, 64, 64
-    image appicon.4 = from win.4.icon, 64, 64
-    image appicon.5 = from win.5.icon, 64, 64
-    image appicon.6 = from win.6.icon, 64, 64
-    image appicon.7 = from win.7.icon, 64, 64
-    image appicon.8 = from win.8.icon, 64, 64
-    image appicon.9 = from win.9.icon, 64, 64
-    image appicon.10 = from win.10.icon, 64, 64
-    image appicon.11 = from win.11.icon, 64, 64
-    image appicon.12 = from win.12.icon, 64, 64
-    image appicon.13 = from win.13.icon, 64, 64
-    image appicon.14 = from win.14.icon, 64, 64
-    image appicon.15 = from win.15.icon, 64, 64
-    let pc.n.0 = max(win.pools.0, win.used.0 + 1)
-    let pc.w.0 = min(screen.0.width * 0.12, (screen.0.height - 160 - (pc.n.0 - 1) * 20) / pc.n.0 * screen.0.width / max(screen.0.height, 1))
-    let pc.h.0 = pc.w.0 * screen.0.height / max(screen.0.width, 1)
-    let pc.x.0 = screen.0.width - pc.w.0 - 40
-    let pc.y.0 = screen.0.height / 2 - (pc.n.0 * pc.h.0 + (pc.n.0 - 1) * 20) / 2
-    let pc.n.1 = max(win.pools.1, win.used.1 + 1)
-    let pc.w.1 = min(screen.1.width * 0.12, (screen.1.height - 160 - (pc.n.1 - 1) * 20) / pc.n.1 * screen.1.width / max(screen.1.height, 1))
-    let pc.h.1 = pc.w.1 * screen.1.height / max(screen.1.width, 1)
-    let pc.x.1 = screen.1.width - pc.w.1 - 40
-    let pc.y.1 = screen.1.height / 2 - (pc.n.1 * pc.h.1 + (pc.n.1 - 1) * 20) / 2
-    let pc.n.2 = max(win.pools.2, win.used.2 + 1)
-    let pc.w.2 = min(screen.2.width * 0.12, (screen.2.height - 160 - (pc.n.2 - 1) * 20) / pc.n.2 * screen.2.width / max(screen.2.height, 1))
-    let pc.h.2 = pc.w.2 * screen.2.height / max(screen.2.width, 1)
-    let pc.x.2 = screen.2.width - pc.w.2 - 40
-    let pc.y.2 = screen.2.height / 2 - (pc.n.2 * pc.h.2 + (pc.n.2 - 1) * 20) / 2
-    let pc.n.3 = max(win.pools.3, win.used.3 + 1)
-    let pc.w.3 = min(screen.3.width * 0.12, (screen.3.height - 160 - (pc.n.3 - 1) * 20) / pc.n.3 * screen.3.width / max(screen.3.height, 1))
-    let pc.h.3 = pc.w.3 * screen.3.height / max(screen.3.width, 1)
-    let pc.x.3 = screen.3.width - pc.w.3 - 40
-    let pc.y.3 = screen.3.height / 2 - (pc.n.3 * pc.h.3 + (pc.n.3 - 1) * 20) / 2
+    repeat k in 0..16 {
+        image appicon.$k = from win.$k.icon, 64, 64
+    }
+    let pc.n[4]
+    let pc.w[4]
+    let pc.h[4]
+    let pc.x[4]
+    let pc.y[4]
+    repeat k in 0..4 {
+        pc.n[k] = max(win.pools.$k, win.used.$k + 1)
+        pc.w[k] = min(screen.$k.width * 0.12, (screen.$k.height - 160 - (pc.n.$k - 1) * 20) / pc.n.$k * screen.$k.width / max(screen.$k.height, 1))
+        pc.h[k] = pc.w.$k * screen.$k.height / max(screen.$k.width, 1)
+        pc.x[k] = screen.$k.width - pc.w.$k - 40
+        pc.y[k] = screen.$k.height / 2 - (pc.n.$k * pc.h.$k + (pc.n.$k - 1) * 20) / 2
+    }
     // Where the mouse is among its monitor's cards: which one it is over.
     let pc.mn = pc.n[mon]
     let pc.mw = pc.w[mon]
@@ -5075,14 +5054,10 @@ scene Session {
         // The one that gets the keyboard, mostly out of sight on a canvas:
         // the camera goes to it.
         on change win.$i.focused while win.$i.focused and C and fr and dragging < 0 and (fgx + fgw / 2 < x0 or fgx + fgw / 2 > x0 + Ws or fgy + fgh / 2 < y0 or fgy + fgh / 2 > y0 + ah) {
-            cvx.0 = if(sc == 0, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.0)
-            cvy.0 = if(sc == 0, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.0)
-            cvx.1 = if(sc == 1, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.1)
-            cvy.1 = if(sc == 1, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.1)
-            cvx.2 = if(sc == 2, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.2)
-            cvy.2 = if(sc == 2, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.2)
-            cvx.3 = if(sc == 3, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.3)
-            cvy.3 = if(sc == 3, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.3)
+            repeat k in 0..4 {
+                cvx.$k = if(sc == k, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.$k)
+                cvy.$k = if(sc == k, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.$k)
+            }
         }
         // Super+0: its box, for the camera to take them all in.
         on change cvf.n while cvf.k == sc and (cvf.only < 0 or cvf.only == i) and C and fr and win.$i.open and not win.$i.minimized and ws.here {
