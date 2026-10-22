@@ -161,22 +161,10 @@ scene Session {
     permissions { services: "clock" }
     service clock as now { time: text; hour: number }
     // Each window's turn on the phone, left to right as they opened, and how many there are.
-    let ph.on.0 = phone >= 0 and win.0.open and win.0.screen == phone and not win.0.dialog
-    let ph.on.1 = phone >= 0 and win.1.open and win.1.screen == phone and not win.1.dialog
-    let ph.on.2 = phone >= 0 and win.2.open and win.2.screen == phone and not win.2.dialog
-    let ph.on.3 = phone >= 0 and win.3.open and win.3.screen == phone and not win.3.dialog
-    let ph.on.4 = phone >= 0 and win.4.open and win.4.screen == phone and not win.4.dialog
-    let ph.on.5 = phone >= 0 and win.5.open and win.5.screen == phone and not win.5.dialog
-    let ph.on.6 = phone >= 0 and win.6.open and win.6.screen == phone and not win.6.dialog
-    let ph.on.7 = phone >= 0 and win.7.open and win.7.screen == phone and not win.7.dialog
-    let ph.on.8 = phone >= 0 and win.8.open and win.8.screen == phone and not win.8.dialog
-    let ph.on.9 = phone >= 0 and win.9.open and win.9.screen == phone and not win.9.dialog
-    let ph.on.10 = phone >= 0 and win.10.open and win.10.screen == phone and not win.10.dialog
-    let ph.on.11 = phone >= 0 and win.11.open and win.11.screen == phone and not win.11.dialog
-    let ph.on.12 = phone >= 0 and win.12.open and win.12.screen == phone and not win.12.dialog
-    let ph.on.13 = phone >= 0 and win.13.open and win.13.screen == phone and not win.13.dialog
-    let ph.on.14 = phone >= 0 and win.14.open and win.14.screen == phone and not win.14.dialog
-    let ph.on.15 = phone >= 0 and win.15.open and win.15.screen == phone and not win.15.dialog
+    let ph.on[16]
+    repeat k in 0..16 {
+        ph.on[k] = phone >= 0 and win.$k.open and win.$k.screen == phone and not win.$k.dialog
+    }
     let ph.n = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11 + ph.on.12 + ph.on.13 + ph.on.14 + ph.on.15
     let ph.k.0 = 0
     let ph.k.1 = ph.on.0
@@ -212,22 +200,10 @@ scene Session {
     fact ph.ratio = 0.5
     fact ph.solo = 0
     let ph.ka = if(ph.kf > 0, ph.kf - 1, 1)
-    let ph.adj.0 = ph.on.0 and ph.front != 0 and ph.k.0 == ph.ka
-    let ph.adj.1 = ph.on.1 and ph.front != 1 and ph.k.1 == ph.ka
-    let ph.adj.2 = ph.on.2 and ph.front != 2 and ph.k.2 == ph.ka
-    let ph.adj.3 = ph.on.3 and ph.front != 3 and ph.k.3 == ph.ka
-    let ph.adj.4 = ph.on.4 and ph.front != 4 and ph.k.4 == ph.ka
-    let ph.adj.5 = ph.on.5 and ph.front != 5 and ph.k.5 == ph.ka
-    let ph.adj.6 = ph.on.6 and ph.front != 6 and ph.k.6 == ph.ka
-    let ph.adj.7 = ph.on.7 and ph.front != 7 and ph.k.7 == ph.ka
-    let ph.adj.8 = ph.on.8 and ph.front != 8 and ph.k.8 == ph.ka
-    let ph.adj.9 = ph.on.9 and ph.front != 9 and ph.k.9 == ph.ka
-    let ph.adj.10 = ph.on.10 and ph.front != 10 and ph.k.10 == ph.ka
-    let ph.adj.11 = ph.on.11 and ph.front != 11 and ph.k.11 == ph.ka
-    let ph.adj.12 = ph.on.12 and ph.front != 12 and ph.k.12 == ph.ka
-    let ph.adj.13 = ph.on.13 and ph.front != 13 and ph.k.13 == ph.ka
-    let ph.adj.14 = ph.on.14 and ph.front != 14 and ph.k.14 == ph.ka
-    let ph.adj.15 = ph.on.15 and ph.front != 15 and ph.k.15 == ph.ka
+    let ph.adj[16]
+    repeat j in 0..16 {
+        ph.adj[j] = ph.on.$j and ph.front != j and ph.k.$j == ph.ka
+    }
     let ph.auto = -1 + 1 * ph.adj.0 + 2 * ph.adj.1 + 3 * ph.adj.2 + 4 * ph.adj.3 + 5 * ph.adj.4 + 6 * ph.adj.5 + 7 * ph.adj.6 + 8 * ph.adj.7 + 9 * ph.adj.8 + 10 * ph.adj.9 + 11 * ph.adj.10 + 12 * ph.adj.11 + 13 * ph.adj.12 + 14 * ph.adj.13 + 15 * ph.adj.14 + 16 * ph.adj.15
     let ph.sok = ph.side >= 0 and ph.side != ph.front and ph.on[max(ph.side, 0)]
     let ph.sd = if(ph.sok, ph.side, ph.auto)
@@ -370,21 +346,11 @@ scene Session {
         cvp.x = cvx[mon]
         cvp.y = cvy[mon]
     }
-    on drag canvas_bg while cvp.k == 0 and keys.super > 0.5 {
-        cvx.0 = cvp.x - drag.dx / cvz.0
-        cvy.0 = cvp.y - drag.dy / cvz.0
-    }
-    on drag canvas_bg while cvp.k == 1 and keys.super > 0.5 {
-        cvx.1 = cvp.x - drag.dx / cvz.1
-        cvy.1 = cvp.y - drag.dy / cvz.1
-    }
-    on drag canvas_bg while cvp.k == 2 and keys.super > 0.5 {
-        cvx.2 = cvp.x - drag.dx / cvz.2
-        cvy.2 = cvp.y - drag.dy / cvz.2
-    }
-    on drag canvas_bg while cvp.k == 3 and keys.super > 0.5 {
-        cvx.3 = cvp.x - drag.dx / cvz.3
-        cvy.3 = cvp.y - drag.dy / cvz.3
+    repeat j in 0..4 {
+        on drag canvas_bg while cvp.k == j and keys.super > 0.5 {
+            cvx.$j = cvp.x - drag.dx / cvz.$j
+            cvy.$j = cvp.y - drag.dy / cvz.$j
+        }
     }
     on drag canvas_bg while cvp.k >= 0 and keys.super < 0.5 { cvp.k = -1 }
     on release canvas_bg { cvp.k = -1 }
@@ -404,29 +370,13 @@ scene Session {
     fact cvw.y = 0
     fact cvw.z = 1
     fact cvw.n = 0
-    on change cvw.n while cvw.k == 0 {
-        cvw.z = clamp(cvz.0 * if(cvw.d > 0, 1 + 0.12 * cvw.d, 1 / (1 - 0.12 * cvw.d)), 0.1, 1)
-        cvx.0 = cvx.0 + (cvw.x - win.reserved.0.left) * (1 / cvz.0 - 1 / cvw.z)
-        cvy.0 = cvy.0 + (cvw.y - win.reserved.0.top - bar) * (1 / cvz.0 - 1 / cvw.z)
-        cvz.0 = cvw.z
-    }
-    on change cvw.n while cvw.k == 1 {
-        cvw.z = clamp(cvz.1 * if(cvw.d > 0, 1 + 0.12 * cvw.d, 1 / (1 - 0.12 * cvw.d)), 0.1, 1)
-        cvx.1 = cvx.1 + (cvw.x - win.reserved.1.left) * (1 / cvz.1 - 1 / cvw.z)
-        cvy.1 = cvy.1 + (cvw.y - win.reserved.1.top - bar) * (1 / cvz.1 - 1 / cvw.z)
-        cvz.1 = cvw.z
-    }
-    on change cvw.n while cvw.k == 2 {
-        cvw.z = clamp(cvz.2 * if(cvw.d > 0, 1 + 0.12 * cvw.d, 1 / (1 - 0.12 * cvw.d)), 0.1, 1)
-        cvx.2 = cvx.2 + (cvw.x - win.reserved.2.left) * (1 / cvz.2 - 1 / cvw.z)
-        cvy.2 = cvy.2 + (cvw.y - win.reserved.2.top - bar) * (1 / cvz.2 - 1 / cvw.z)
-        cvz.2 = cvw.z
-    }
-    on change cvw.n while cvw.k == 3 {
-        cvw.z = clamp(cvz.3 * if(cvw.d > 0, 1 + 0.12 * cvw.d, 1 / (1 - 0.12 * cvw.d)), 0.1, 1)
-        cvx.3 = cvx.3 + (cvw.x - win.reserved.3.left) * (1 / cvz.3 - 1 / cvw.z)
-        cvy.3 = cvy.3 + (cvw.y - win.reserved.3.top - bar) * (1 / cvz.3 - 1 / cvw.z)
-        cvz.3 = cvw.z
+    repeat j in 0..4 {
+        on change cvw.n while cvw.k == j {
+            cvw.z = clamp(cvz.$j * if(cvw.d > 0, 1 + 0.12 * cvw.d, 1 / (1 - 0.12 * cvw.d)), 0.1, 1)
+            cvx.$j = cvx.$j + (cvw.x - win.reserved.$j.left) * (1 / cvz.$j - 1 / cvw.z)
+            cvy.$j = cvy.$j + (cvw.y - win.reserved.$j.top - bar) * (1 / cvz.$j - 1 / cvw.z)
+            cvz.$j = cvw.z
+        }
     }
 
     // Where the one with the keyboard is in the order of all of them, and how many there are.
@@ -451,10 +401,9 @@ scene Session {
     }
     // Each monitor's name (the session says it at startup): for the control
     // centre, which picks a monitor's layout by its name.
-    text monname.0 = ""
-    text monname.1 = ""
-    text monname.2 = ""
-    text monname.3 = ""
+    repeat k in 0..4 {
+        text monname.$k = ""
+    }
     // How far each monitor's strip has glided (scrolling), and where it is shown.
     repeat k in 0..4 {
         fact sco.$k = 0
@@ -490,33 +439,14 @@ scene Session {
     }
     // Free is a canvas, and a canvas is free: one follows the other. A canvas
     // starts where the monitor's windows are, as they are.
-    on change free.0 while free.0 < 0.5 { cv.0 = 0 }
-    on change free.0 while free.0 > 0.5 { cv.0 = 1 }
-    on change cv.0 while cv.0 > 0.5 {
-        cvx.0 = 0
-        cvy.0 = 0
-        cvz.0 = 1
-    }
-    on change free.1 while free.1 < 0.5 { cv.1 = 0 }
-    on change free.1 while free.1 > 0.5 { cv.1 = 1 }
-    on change cv.1 while cv.1 > 0.5 {
-        cvx.1 = 0
-        cvy.1 = 0
-        cvz.1 = 1
-    }
-    on change free.2 while free.2 < 0.5 { cv.2 = 0 }
-    on change free.2 while free.2 > 0.5 { cv.2 = 1 }
-    on change cv.2 while cv.2 > 0.5 {
-        cvx.2 = 0
-        cvy.2 = 0
-        cvz.2 = 1
-    }
-    on change free.3 while free.3 < 0.5 { cv.3 = 0 }
-    on change free.3 while free.3 > 0.5 { cv.3 = 1 }
-    on change cv.3 while cv.3 > 0.5 {
-        cvx.3 = 0
-        cvy.3 = 0
-        cvz.3 = 1
+    repeat k in 0..4 {
+        on change free.$k while free.$k < 0.5 { cv.$k = 0 }
+        on change free.$k while free.$k > 0.5 { cv.$k = 1 }
+        on change cv.$k while cv.$k > 0.5 {
+            cvx.$k = 0
+            cvy.$k = 0
+            cvz.$k = 1
+        }
     }
     // The last one put away: Super+Shift+M brings it back.
     fact last_min = -1
@@ -968,185 +898,52 @@ scene Session {
     // In: into its group first (if it is in one and the camera sees more),
     // then into it alone. Out: from it to its group, then twice as far each
     // time. The camera follows the keyboard while on a group or a window.
-    on zoom_in while zf and fscreen == 0 and zf.w > 0.001 {
-        zi.g = if(zf.g and cam.0.m < 1.5 and max(cam.0.w, cam.0.h) > zf.gd + 0.001, 1, 0)
-        cam.0.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.0.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.0.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.0.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.0.m = if(zi.g > 0.5, 1, 2)
-    }
-    on zoom_out while zf and fscreen == 0 {
-        zi.g = if(cam.0.m > 1.5 and zf.g, 1, 0)
-        zi.b = min(1, max(cam.0.w, cam.0.h) * 2)
-        cam.0.x = if(zi.g > 0.5, zf.gx, clamp(cam.0.x + cam.0.w / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.0.y = if(zi.g > 0.5, zf.gy, clamp(cam.0.y + cam.0.h / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.0.w = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.0.h = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.0.m = if(zi.g > 0.5, 1, 0)
-    }
-    on change win.focus while zf and fscreen == 0 and cam.0.m > 0.5 and zf.w > 0.001 {
-        zi.g = if(cam.0.m < 1.5 and zf.g, 1, 0)
-        cam.0.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.0.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.0.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.0.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.0.m = if(zi.g > 0.5, 1, 2)
-    }
-    // Super and the wheel: closer or further, keeping the point under the
-    // pointer where it is.
-    on change zw.n while zw.k == 0 and lay.0 == 7 and free.0 < 0.5 {
-        zi.b = clamp(max(cam.0.w, cam.0.h) * if(zw.d > 0, 1 / (1 + 0.2 * zw.d), 1 - 0.2 * zw.d), 0.04, 1)
-        zi.w = if(zi.b > 0.999, 1, min(1, cam.0.w * zi.b / max(cam.0.w, cam.0.h)))
-        zi.h = if(zi.b > 0.999, 1, min(1, cam.0.h * zi.b / max(cam.0.w, cam.0.h)))
-        cam.0.x = clamp(zw.x - (zw.x - cam.0.x) * zi.w / max(cam.0.w, 0.0001), 0, 1 - zi.w)
-        cam.0.y = clamp(zw.y - (zw.y - cam.0.y) * zi.h / max(cam.0.h, 0.0001), 0, 1 - zi.h)
-        cam.0.w = zi.w
-        cam.0.h = zi.h
-        cam.0.m = 0
-    }
-    on still cam.0.w for 250ms {
-        camr.0.w = cam.0.w
-        camr.0.h = cam.0.h
-    }
-    on still cam.0.h for 250ms {
-        camr.0.w = cam.0.w
-        camr.0.h = cam.0.h
-    }
-    on zoom_in while zf and fscreen == 1 and zf.w > 0.001 {
-        zi.g = if(zf.g and cam.1.m < 1.5 and max(cam.1.w, cam.1.h) > zf.gd + 0.001, 1, 0)
-        cam.1.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.1.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.1.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.1.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.1.m = if(zi.g > 0.5, 1, 2)
-    }
-    on zoom_out while zf and fscreen == 1 {
-        zi.g = if(cam.1.m > 1.5 and zf.g, 1, 0)
-        zi.b = min(1, max(cam.1.w, cam.1.h) * 2)
-        cam.1.x = if(zi.g > 0.5, zf.gx, clamp(cam.1.x + cam.1.w / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.1.y = if(zi.g > 0.5, zf.gy, clamp(cam.1.y + cam.1.h / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.1.w = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.1.h = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.1.m = if(zi.g > 0.5, 1, 0)
-    }
-    on change win.focus while zf and fscreen == 1 and cam.1.m > 0.5 and zf.w > 0.001 {
-        zi.g = if(cam.1.m < 1.5 and zf.g, 1, 0)
-        cam.1.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.1.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.1.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.1.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.1.m = if(zi.g > 0.5, 1, 2)
-    }
-    // Super and the wheel: closer or further, keeping the point under the
-    // pointer where it is.
-    on change zw.n while zw.k == 1 and lay.1 == 7 and free.1 < 0.5 {
-        zi.b = clamp(max(cam.1.w, cam.1.h) * if(zw.d > 0, 1 / (1 + 0.2 * zw.d), 1 - 0.2 * zw.d), 0.04, 1)
-        zi.w = if(zi.b > 0.999, 1, min(1, cam.1.w * zi.b / max(cam.1.w, cam.1.h)))
-        zi.h = if(zi.b > 0.999, 1, min(1, cam.1.h * zi.b / max(cam.1.w, cam.1.h)))
-        cam.1.x = clamp(zw.x - (zw.x - cam.1.x) * zi.w / max(cam.1.w, 0.0001), 0, 1 - zi.w)
-        cam.1.y = clamp(zw.y - (zw.y - cam.1.y) * zi.h / max(cam.1.h, 0.0001), 0, 1 - zi.h)
-        cam.1.w = zi.w
-        cam.1.h = zi.h
-        cam.1.m = 0
-    }
-    on still cam.1.w for 250ms {
-        camr.1.w = cam.1.w
-        camr.1.h = cam.1.h
-    }
-    on still cam.1.h for 250ms {
-        camr.1.w = cam.1.w
-        camr.1.h = cam.1.h
-    }
-    on zoom_in while zf and fscreen == 2 and zf.w > 0.001 {
-        zi.g = if(zf.g and cam.2.m < 1.5 and max(cam.2.w, cam.2.h) > zf.gd + 0.001, 1, 0)
-        cam.2.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.2.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.2.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.2.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.2.m = if(zi.g > 0.5, 1, 2)
-    }
-    on zoom_out while zf and fscreen == 2 {
-        zi.g = if(cam.2.m > 1.5 and zf.g, 1, 0)
-        zi.b = min(1, max(cam.2.w, cam.2.h) * 2)
-        cam.2.x = if(zi.g > 0.5, zf.gx, clamp(cam.2.x + cam.2.w / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.2.y = if(zi.g > 0.5, zf.gy, clamp(cam.2.y + cam.2.h / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.2.w = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.2.h = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.2.m = if(zi.g > 0.5, 1, 0)
-    }
-    on change win.focus while zf and fscreen == 2 and cam.2.m > 0.5 and zf.w > 0.001 {
-        zi.g = if(cam.2.m < 1.5 and zf.g, 1, 0)
-        cam.2.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.2.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.2.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.2.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.2.m = if(zi.g > 0.5, 1, 2)
-    }
-    // Super and the wheel: closer or further, keeping the point under the
-    // pointer where it is.
-    on change zw.n while zw.k == 2 and lay.2 == 7 and free.2 < 0.5 {
-        zi.b = clamp(max(cam.2.w, cam.2.h) * if(zw.d > 0, 1 / (1 + 0.2 * zw.d), 1 - 0.2 * zw.d), 0.04, 1)
-        zi.w = if(zi.b > 0.999, 1, min(1, cam.2.w * zi.b / max(cam.2.w, cam.2.h)))
-        zi.h = if(zi.b > 0.999, 1, min(1, cam.2.h * zi.b / max(cam.2.w, cam.2.h)))
-        cam.2.x = clamp(zw.x - (zw.x - cam.2.x) * zi.w / max(cam.2.w, 0.0001), 0, 1 - zi.w)
-        cam.2.y = clamp(zw.y - (zw.y - cam.2.y) * zi.h / max(cam.2.h, 0.0001), 0, 1 - zi.h)
-        cam.2.w = zi.w
-        cam.2.h = zi.h
-        cam.2.m = 0
-    }
-    on still cam.2.w for 250ms {
-        camr.2.w = cam.2.w
-        camr.2.h = cam.2.h
-    }
-    on still cam.2.h for 250ms {
-        camr.2.w = cam.2.w
-        camr.2.h = cam.2.h
-    }
-    on zoom_in while zf and fscreen == 3 and zf.w > 0.001 {
-        zi.g = if(zf.g and cam.3.m < 1.5 and max(cam.3.w, cam.3.h) > zf.gd + 0.001, 1, 0)
-        cam.3.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.3.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.3.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.3.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.3.m = if(zi.g > 0.5, 1, 2)
-    }
-    on zoom_out while zf and fscreen == 3 {
-        zi.g = if(cam.3.m > 1.5 and zf.g, 1, 0)
-        zi.b = min(1, max(cam.3.w, cam.3.h) * 2)
-        cam.3.x = if(zi.g > 0.5, zf.gx, clamp(cam.3.x + cam.3.w / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.3.y = if(zi.g > 0.5, zf.gy, clamp(cam.3.y + cam.3.h / 2 - zi.b / 2, 0, 1 - zi.b))
-        cam.3.w = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.3.h = if(zi.g > 0.5, zf.gd, zi.b)
-        cam.3.m = if(zi.g > 0.5, 1, 0)
-    }
-    on change win.focus while zf and fscreen == 3 and cam.3.m > 0.5 and zf.w > 0.001 {
-        zi.g = if(cam.3.m < 1.5 and zf.g, 1, 0)
-        cam.3.x = if(zi.g > 0.5, zf.gx, zf.x)
-        cam.3.y = if(zi.g > 0.5, zf.gy, zf.y)
-        cam.3.w = if(zi.g > 0.5, zf.gd, zf.w)
-        cam.3.h = if(zi.g > 0.5, zf.gd, zf.h)
-        cam.3.m = if(zi.g > 0.5, 1, 2)
-    }
-    // Super and the wheel: closer or further, keeping the point under the
-    // pointer where it is.
-    on change zw.n while zw.k == 3 and lay.3 == 7 and free.3 < 0.5 {
-        zi.b = clamp(max(cam.3.w, cam.3.h) * if(zw.d > 0, 1 / (1 + 0.2 * zw.d), 1 - 0.2 * zw.d), 0.04, 1)
-        zi.w = if(zi.b > 0.999, 1, min(1, cam.3.w * zi.b / max(cam.3.w, cam.3.h)))
-        zi.h = if(zi.b > 0.999, 1, min(1, cam.3.h * zi.b / max(cam.3.w, cam.3.h)))
-        cam.3.x = clamp(zw.x - (zw.x - cam.3.x) * zi.w / max(cam.3.w, 0.0001), 0, 1 - zi.w)
-        cam.3.y = clamp(zw.y - (zw.y - cam.3.y) * zi.h / max(cam.3.h, 0.0001), 0, 1 - zi.h)
-        cam.3.w = zi.w
-        cam.3.h = zi.h
-        cam.3.m = 0
-    }
-    on still cam.3.w for 250ms {
-        camr.3.w = cam.3.w
-        camr.3.h = cam.3.h
-    }
-    on still cam.3.h for 250ms {
-        camr.3.w = cam.3.w
-        camr.3.h = cam.3.h
+    repeat j in 0..4 {
+        on zoom_in while zf and fscreen == j and zf.w > 0.001 {
+            zi.g = if(zf.g and cam.$j.m < 1.5 and max(cam.$j.w, cam.$j.h) > zf.gd + 0.001, 1, 0)
+            cam.$j.x = if(zi.g > 0.5, zf.gx, zf.x)
+            cam.$j.y = if(zi.g > 0.5, zf.gy, zf.y)
+            cam.$j.w = if(zi.g > 0.5, zf.gd, zf.w)
+            cam.$j.h = if(zi.g > 0.5, zf.gd, zf.h)
+            cam.$j.m = if(zi.g > 0.5, 1, 2)
+        }
+        on zoom_out while zf and fscreen == j {
+            zi.g = if(cam.$j.m > 1.5 and zf.g, 1, 0)
+            zi.b = min(1, max(cam.$j.w, cam.$j.h) * 2)
+            cam.$j.x = if(zi.g > 0.5, zf.gx, clamp(cam.$j.x + cam.$j.w / 2 - zi.b / 2, 0, 1 - zi.b))
+            cam.$j.y = if(zi.g > 0.5, zf.gy, clamp(cam.$j.y + cam.$j.h / 2 - zi.b / 2, 0, 1 - zi.b))
+            cam.$j.w = if(zi.g > 0.5, zf.gd, zi.b)
+            cam.$j.h = if(zi.g > 0.5, zf.gd, zi.b)
+            cam.$j.m = if(zi.g > 0.5, 1, 0)
+        }
+        on change win.focus while zf and fscreen == j and cam.$j.m > 0.5 and zf.w > 0.001 {
+            zi.g = if(cam.$j.m < 1.5 and zf.g, 1, 0)
+            cam.$j.x = if(zi.g > 0.5, zf.gx, zf.x)
+            cam.$j.y = if(zi.g > 0.5, zf.gy, zf.y)
+            cam.$j.w = if(zi.g > 0.5, zf.gd, zf.w)
+            cam.$j.h = if(zi.g > 0.5, zf.gd, zf.h)
+            cam.$j.m = if(zi.g > 0.5, 1, 2)
+        }
+        // Super and the wheel: closer or further, keeping the point under the
+        // pointer where it is.
+        on change zw.n while zw.k == j and lay.$j == 7 and free.$j < 0.5 {
+            zi.b = clamp(max(cam.$j.w, cam.$j.h) * if(zw.d > 0, 1 / (1 + 0.2 * zw.d), 1 - 0.2 * zw.d), 0.04, 1)
+            zi.w = if(zi.b > 0.999, 1, min(1, cam.$j.w * zi.b / max(cam.$j.w, cam.$j.h)))
+            zi.h = if(zi.b > 0.999, 1, min(1, cam.$j.h * zi.b / max(cam.$j.w, cam.$j.h)))
+            cam.$j.x = clamp(zw.x - (zw.x - cam.$j.x) * zi.w / max(cam.$j.w, 0.0001), 0, 1 - zi.w)
+            cam.$j.y = clamp(zw.y - (zw.y - cam.$j.y) * zi.h / max(cam.$j.h, 0.0001), 0, 1 - zi.h)
+            cam.$j.w = zi.w
+            cam.$j.h = zi.h
+            cam.$j.m = 0
+        }
+        on still cam.$j.w for 250ms {
+            camr.$j.w = cam.$j.w
+            camr.$j.h = cam.$j.h
+        }
+        on still cam.$j.h for 250ms {
+            camr.$j.w = cam.$j.w
+            camr.$j.h = cam.$j.h
+        }
     }
     // On a canvas (the monitor under the mouse): its camera, about its middle.
     let zc = cv[mon] > 0.5 and free[mon] > 0.5
@@ -1187,39 +984,14 @@ scene Session {
         fact use.$k = 0
     }
     on change win.focus while win.focus >= 0 {
-        use.0 = min(2, use.0 * 0.9 + 0.35 * (win.focus == 0))
-        use.1 = min(2, use.1 * 0.9 + 0.35 * (win.focus == 1))
-        use.2 = min(2, use.2 * 0.9 + 0.35 * (win.focus == 2))
-        use.3 = min(2, use.3 * 0.9 + 0.35 * (win.focus == 3))
-        use.4 = min(2, use.4 * 0.9 + 0.35 * (win.focus == 4))
-        use.5 = min(2, use.5 * 0.9 + 0.35 * (win.focus == 5))
-        use.6 = min(2, use.6 * 0.9 + 0.35 * (win.focus == 6))
-        use.7 = min(2, use.7 * 0.9 + 0.35 * (win.focus == 7))
-        use.8 = min(2, use.8 * 0.9 + 0.35 * (win.focus == 8))
-        use.9 = min(2, use.9 * 0.9 + 0.35 * (win.focus == 9))
-        use.10 = min(2, use.10 * 0.9 + 0.35 * (win.focus == 10))
-        use.11 = min(2, use.11 * 0.9 + 0.35 * (win.focus == 11))
-        use.12 = min(2, use.12 * 0.9 + 0.35 * (win.focus == 12))
-        use.13 = min(2, use.13 * 0.9 + 0.35 * (win.focus == 13))
-        use.14 = min(2, use.14 * 0.9 + 0.35 * (win.focus == 14))
-        use.15 = min(2, use.15 * 0.9 + 0.35 * (win.focus == 15))
+        repeat j in 0..16 {
+            use.$j = min(2, use.$j * 0.9 + 0.35 * (win.focus == j))
+        }
     }
-    let mw.0 = 1 + use.0 + 1.6 * (win.focus == 0)
-    let mw.1 = 1 + use.1 + 1.6 * (win.focus == 1)
-    let mw.2 = 1 + use.2 + 1.6 * (win.focus == 2)
-    let mw.3 = 1 + use.3 + 1.6 * (win.focus == 3)
-    let mw.4 = 1 + use.4 + 1.6 * (win.focus == 4)
-    let mw.5 = 1 + use.5 + 1.6 * (win.focus == 5)
-    let mw.6 = 1 + use.6 + 1.6 * (win.focus == 6)
-    let mw.7 = 1 + use.7 + 1.6 * (win.focus == 7)
-    let mw.8 = 1 + use.8 + 1.6 * (win.focus == 8)
-    let mw.9 = 1 + use.9 + 1.6 * (win.focus == 9)
-    let mw.10 = 1 + use.10 + 1.6 * (win.focus == 10)
-    let mw.11 = 1 + use.11 + 1.6 * (win.focus == 11)
-    let mw.12 = 1 + use.12 + 1.6 * (win.focus == 12)
-    let mw.13 = 1 + use.13 + 1.6 * (win.focus == 13)
-    let mw.14 = 1 + use.14 + 1.6 * (win.focus == 14)
-    let mw.15 = 1 + use.15 + 1.6 * (win.focus == 15)
+    let mw[16]
+    repeat j in 0..16 {
+        mw[j] = 1 + use.$j + 1.6 * (win.focus == j)
+    }
     on change mag {
         magnet = mag
     }
@@ -1380,26 +1152,10 @@ scene Session {
                 shadow: 0, 8, 24, 45%
                 box { at: W - 28, H / 2; size: 24, nd * 18 + 14; corner: 12 }
             }
-            ellipse { at: W - 28, dy0 + 0; radius: 3; color: ink; opacity: 45%; show: 1 <= nd and not (1 == nd and win.used.$s < 1 or 1 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 0; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 1 <= nd and (1 == nd and win.used.$s < 1 or 1 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 18; radius: 3; color: ink; opacity: 45%; show: 2 <= nd and not (2 == nd and win.used.$s < 2 or 2 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 18; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 2 <= nd and (2 == nd and win.used.$s < 2 or 2 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 36; radius: 3; color: ink; opacity: 45%; show: 3 <= nd and not (3 == nd and win.used.$s < 3 or 3 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 36; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 3 <= nd and (3 == nd and win.used.$s < 3 or 3 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 54; radius: 3; color: ink; opacity: 45%; show: 4 <= nd and not (4 == nd and win.used.$s < 4 or 4 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 54; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 4 <= nd and (4 == nd and win.used.$s < 4 or 4 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 72; radius: 3; color: ink; opacity: 45%; show: 5 <= nd and not (5 == nd and win.used.$s < 5 or 5 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 72; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 5 <= nd and (5 == nd and win.used.$s < 5 or 5 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 90; radius: 3; color: ink; opacity: 45%; show: 6 <= nd and not (6 == nd and win.used.$s < 6 or 6 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 90; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 6 <= nd and (6 == nd and win.used.$s < 6 or 6 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 108; radius: 3; color: ink; opacity: 45%; show: 7 <= nd and not (7 == nd and win.used.$s < 7 or 7 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 108; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 7 <= nd and (7 == nd and win.used.$s < 7 or 7 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 126; radius: 3; color: ink; opacity: 45%; show: 8 <= nd and not (8 == nd and win.used.$s < 8 or 8 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 126; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 8 <= nd and (8 == nd and win.used.$s < 8 or 8 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 144; radius: 3; color: ink; opacity: 45%; show: 9 <= nd and not (9 == nd and win.used.$s < 9 or 9 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 144; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 9 <= nd and (9 == nd and win.used.$s < 9 or 9 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 162; radius: 3; color: ink; opacity: 45%; show: 10 <= nd and not (10 == nd and win.used.$s < 10 or 10 == cur and win.used.$s < win.pools.$s) }
-            ellipse { at: W - 28, dy0 + 162; radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: 10 <= nd and (10 == nd and win.used.$s < 10 or 10 == cur and win.used.$s < win.pools.$s) }
+            repeat j in 0..10 {
+                ellipse { at: W - 28, dy0 + (18 * j); radius: 3; color: ink; opacity: 45%; show: (j + 1) <= nd and not ((j + 1) == nd and win.used.$s < (j + 1) or (j + 1) == cur and win.used.$s < win.pools.$s) }
+                ellipse { at: W - 28, dy0 + (18 * j); radius: 3; stroke: 1.2; color: ink; opacity: 45%; show: (j + 1) <= nd and ((j + 1) == nd and win.used.$s < (j + 1) or (j + 1) == cur and win.used.$s < win.pools.$s) }
+            }
             box { at: W - 28, dy0 + (at.$s - 1) * 18; size: 6, 15; corner: 3; color: mint }
         }
     }
@@ -1897,470 +1653,49 @@ scene Session {
         // between press and release, and the click that opens the program was
         // taken for a drag. Pressed with nothing open, it hops while its program
         // starts (three times at most, until a window comes).
-        on press dockz.0.$s { impulse buoy.$s.0 -9 }
-        on drag dockz.0.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 0
-            pv.$s = -1
+        repeat j in 0..12 {
+            on press dockz.$j.$s { impulse buoy.$s.$j -9 }
+            on drag dockz.$j.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
+                dkdrag.$s = j
+                pv.$s = -1
+            }
+            on release dockz.$j.$s while dkdrag.$s < 0 {
+                dock j on s
+                pv.$s = -1
+                ring.$s.$j: 0 ~0ms
+                ring.$s.$j: 1 ~760ms after 16ms
+            }
+            on release dockz.$j.$s while dkdrag.$s < 0 and win.dock.$s.$j.windows == 0 {
+                hops.$s.$j = 3
+                hop.$s.$j: 1 ~0ms
+            }
+            on change hop.$s.$j while hop.$s.$j < 0.02 and hops.$s.$j > 1 and win.dock.$s.$j.windows == 0 {
+                hops.$s.$j = hops.$s.$j - 1
+                hop.$s.$j: 1 ~0ms
+            }
+            on release dockz.$j.$s while dkdrag.$s == j and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.$j.pinned > 0.5 {
+                dock j on s unpin
+                poofx.$s = mouse.x
+                poofy.$s = mouse.y
+                poof.$s: 0 ~0ms
+                poof.$s: 1 ~700ms after 16ms
+            }
+            on release dockz.$j.$s { dkdrag.$s = -1 }
+            on drop dockz.$j.$s {
+                dock j on s with drop
+                ring.$s.$j: 0 ~0ms
+                ring.$s.$j: 1 ~760ms after 16ms
+            }
+            on press right dockz.$j.$s {
+                dmenu.$s = j
+                dmk.$s = j
+                pv.$s = -1
+            }
+            on hover dockz.$j.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.$j.windows > 0 { pv.$s = j }
+        }
+        repeat j in 0..8 {
+            on press dkpool.$j.$s { workspace (j + 1) on s }
         }
-        on release dockz.0.$s while dkdrag.$s < 0 {
-            dock 0 on s
-            pv.$s = -1
-            ring.$s.0: 0 ~0ms
-            ring.$s.0: 1 ~760ms after 16ms
-        }
-        on release dockz.0.$s while dkdrag.$s < 0 and win.dock.$s.0.windows == 0 {
-            hops.$s.0 = 3
-            hop.$s.0: 1 ~0ms
-        }
-        on change hop.$s.0 while hop.$s.0 < 0.02 and hops.$s.0 > 1 and win.dock.$s.0.windows == 0 {
-            hops.$s.0 = hops.$s.0 - 1
-            hop.$s.0: 1 ~0ms
-        }
-        on release dockz.0.$s while dkdrag.$s == 0 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.0.pinned > 0.5 {
-            dock 0 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.0.$s { dkdrag.$s = -1 }
-        on drop dockz.0.$s {
-            dock 0 on s with drop
-            ring.$s.0: 0 ~0ms
-            ring.$s.0: 1 ~760ms after 16ms
-        }
-        on press right dockz.0.$s {
-            dmenu.$s = 0
-            dmk.$s = 0
-            pv.$s = -1
-        }
-        on hover dockz.0.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.0.windows > 0 { pv.$s = 0 }
-        on press dockz.1.$s { impulse buoy.$s.1 -9 }
-        on drag dockz.1.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 1
-            pv.$s = -1
-        }
-        on release dockz.1.$s while dkdrag.$s < 0 {
-            dock 1 on s
-            pv.$s = -1
-            ring.$s.1: 0 ~0ms
-            ring.$s.1: 1 ~760ms after 16ms
-        }
-        on release dockz.1.$s while dkdrag.$s < 0 and win.dock.$s.1.windows == 0 {
-            hops.$s.1 = 3
-            hop.$s.1: 1 ~0ms
-        }
-        on change hop.$s.1 while hop.$s.1 < 0.02 and hops.$s.1 > 1 and win.dock.$s.1.windows == 0 {
-            hops.$s.1 = hops.$s.1 - 1
-            hop.$s.1: 1 ~0ms
-        }
-        on release dockz.1.$s while dkdrag.$s == 1 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.1.pinned > 0.5 {
-            dock 1 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.1.$s { dkdrag.$s = -1 }
-        on drop dockz.1.$s {
-            dock 1 on s with drop
-            ring.$s.1: 0 ~0ms
-            ring.$s.1: 1 ~760ms after 16ms
-        }
-        on press right dockz.1.$s {
-            dmenu.$s = 1
-            dmk.$s = 1
-            pv.$s = -1
-        }
-        on hover dockz.1.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.1.windows > 0 { pv.$s = 1 }
-        on press dockz.2.$s { impulse buoy.$s.2 -9 }
-        on drag dockz.2.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 2
-            pv.$s = -1
-        }
-        on release dockz.2.$s while dkdrag.$s < 0 {
-            dock 2 on s
-            pv.$s = -1
-            ring.$s.2: 0 ~0ms
-            ring.$s.2: 1 ~760ms after 16ms
-        }
-        on release dockz.2.$s while dkdrag.$s < 0 and win.dock.$s.2.windows == 0 {
-            hops.$s.2 = 3
-            hop.$s.2: 1 ~0ms
-        }
-        on change hop.$s.2 while hop.$s.2 < 0.02 and hops.$s.2 > 1 and win.dock.$s.2.windows == 0 {
-            hops.$s.2 = hops.$s.2 - 1
-            hop.$s.2: 1 ~0ms
-        }
-        on release dockz.2.$s while dkdrag.$s == 2 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.2.pinned > 0.5 {
-            dock 2 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.2.$s { dkdrag.$s = -1 }
-        on drop dockz.2.$s {
-            dock 2 on s with drop
-            ring.$s.2: 0 ~0ms
-            ring.$s.2: 1 ~760ms after 16ms
-        }
-        on press right dockz.2.$s {
-            dmenu.$s = 2
-            dmk.$s = 2
-            pv.$s = -1
-        }
-        on hover dockz.2.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.2.windows > 0 { pv.$s = 2 }
-        on press dockz.3.$s { impulse buoy.$s.3 -9 }
-        on drag dockz.3.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 3
-            pv.$s = -1
-        }
-        on release dockz.3.$s while dkdrag.$s < 0 {
-            dock 3 on s
-            pv.$s = -1
-            ring.$s.3: 0 ~0ms
-            ring.$s.3: 1 ~760ms after 16ms
-        }
-        on release dockz.3.$s while dkdrag.$s < 0 and win.dock.$s.3.windows == 0 {
-            hops.$s.3 = 3
-            hop.$s.3: 1 ~0ms
-        }
-        on change hop.$s.3 while hop.$s.3 < 0.02 and hops.$s.3 > 1 and win.dock.$s.3.windows == 0 {
-            hops.$s.3 = hops.$s.3 - 1
-            hop.$s.3: 1 ~0ms
-        }
-        on release dockz.3.$s while dkdrag.$s == 3 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.3.pinned > 0.5 {
-            dock 3 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.3.$s { dkdrag.$s = -1 }
-        on drop dockz.3.$s {
-            dock 3 on s with drop
-            ring.$s.3: 0 ~0ms
-            ring.$s.3: 1 ~760ms after 16ms
-        }
-        on press right dockz.3.$s {
-            dmenu.$s = 3
-            dmk.$s = 3
-            pv.$s = -1
-        }
-        on hover dockz.3.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.3.windows > 0 { pv.$s = 3 }
-        on press dockz.4.$s { impulse buoy.$s.4 -9 }
-        on drag dockz.4.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 4
-            pv.$s = -1
-        }
-        on release dockz.4.$s while dkdrag.$s < 0 {
-            dock 4 on s
-            pv.$s = -1
-            ring.$s.4: 0 ~0ms
-            ring.$s.4: 1 ~760ms after 16ms
-        }
-        on release dockz.4.$s while dkdrag.$s < 0 and win.dock.$s.4.windows == 0 {
-            hops.$s.4 = 3
-            hop.$s.4: 1 ~0ms
-        }
-        on change hop.$s.4 while hop.$s.4 < 0.02 and hops.$s.4 > 1 and win.dock.$s.4.windows == 0 {
-            hops.$s.4 = hops.$s.4 - 1
-            hop.$s.4: 1 ~0ms
-        }
-        on release dockz.4.$s while dkdrag.$s == 4 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.4.pinned > 0.5 {
-            dock 4 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.4.$s { dkdrag.$s = -1 }
-        on drop dockz.4.$s {
-            dock 4 on s with drop
-            ring.$s.4: 0 ~0ms
-            ring.$s.4: 1 ~760ms after 16ms
-        }
-        on press right dockz.4.$s {
-            dmenu.$s = 4
-            dmk.$s = 4
-            pv.$s = -1
-        }
-        on hover dockz.4.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.4.windows > 0 { pv.$s = 4 }
-        on press dockz.5.$s { impulse buoy.$s.5 -9 }
-        on drag dockz.5.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 5
-            pv.$s = -1
-        }
-        on release dockz.5.$s while dkdrag.$s < 0 {
-            dock 5 on s
-            pv.$s = -1
-            ring.$s.5: 0 ~0ms
-            ring.$s.5: 1 ~760ms after 16ms
-        }
-        on release dockz.5.$s while dkdrag.$s < 0 and win.dock.$s.5.windows == 0 {
-            hops.$s.5 = 3
-            hop.$s.5: 1 ~0ms
-        }
-        on change hop.$s.5 while hop.$s.5 < 0.02 and hops.$s.5 > 1 and win.dock.$s.5.windows == 0 {
-            hops.$s.5 = hops.$s.5 - 1
-            hop.$s.5: 1 ~0ms
-        }
-        on release dockz.5.$s while dkdrag.$s == 5 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.5.pinned > 0.5 {
-            dock 5 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.5.$s { dkdrag.$s = -1 }
-        on drop dockz.5.$s {
-            dock 5 on s with drop
-            ring.$s.5: 0 ~0ms
-            ring.$s.5: 1 ~760ms after 16ms
-        }
-        on press right dockz.5.$s {
-            dmenu.$s = 5
-            dmk.$s = 5
-            pv.$s = -1
-        }
-        on hover dockz.5.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.5.windows > 0 { pv.$s = 5 }
-        on press dockz.6.$s { impulse buoy.$s.6 -9 }
-        on drag dockz.6.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 6
-            pv.$s = -1
-        }
-        on release dockz.6.$s while dkdrag.$s < 0 {
-            dock 6 on s
-            pv.$s = -1
-            ring.$s.6: 0 ~0ms
-            ring.$s.6: 1 ~760ms after 16ms
-        }
-        on release dockz.6.$s while dkdrag.$s < 0 and win.dock.$s.6.windows == 0 {
-            hops.$s.6 = 3
-            hop.$s.6: 1 ~0ms
-        }
-        on change hop.$s.6 while hop.$s.6 < 0.02 and hops.$s.6 > 1 and win.dock.$s.6.windows == 0 {
-            hops.$s.6 = hops.$s.6 - 1
-            hop.$s.6: 1 ~0ms
-        }
-        on release dockz.6.$s while dkdrag.$s == 6 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.6.pinned > 0.5 {
-            dock 6 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.6.$s { dkdrag.$s = -1 }
-        on drop dockz.6.$s {
-            dock 6 on s with drop
-            ring.$s.6: 0 ~0ms
-            ring.$s.6: 1 ~760ms after 16ms
-        }
-        on press right dockz.6.$s {
-            dmenu.$s = 6
-            dmk.$s = 6
-            pv.$s = -1
-        }
-        on hover dockz.6.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.6.windows > 0 { pv.$s = 6 }
-        on press dockz.7.$s { impulse buoy.$s.7 -9 }
-        on drag dockz.7.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 7
-            pv.$s = -1
-        }
-        on release dockz.7.$s while dkdrag.$s < 0 {
-            dock 7 on s
-            pv.$s = -1
-            ring.$s.7: 0 ~0ms
-            ring.$s.7: 1 ~760ms after 16ms
-        }
-        on release dockz.7.$s while dkdrag.$s < 0 and win.dock.$s.7.windows == 0 {
-            hops.$s.7 = 3
-            hop.$s.7: 1 ~0ms
-        }
-        on change hop.$s.7 while hop.$s.7 < 0.02 and hops.$s.7 > 1 and win.dock.$s.7.windows == 0 {
-            hops.$s.7 = hops.$s.7 - 1
-            hop.$s.7: 1 ~0ms
-        }
-        on release dockz.7.$s while dkdrag.$s == 7 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.7.pinned > 0.5 {
-            dock 7 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.7.$s { dkdrag.$s = -1 }
-        on drop dockz.7.$s {
-            dock 7 on s with drop
-            ring.$s.7: 0 ~0ms
-            ring.$s.7: 1 ~760ms after 16ms
-        }
-        on press right dockz.7.$s {
-            dmenu.$s = 7
-            dmk.$s = 7
-            pv.$s = -1
-        }
-        on hover dockz.7.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.7.windows > 0 { pv.$s = 7 }
-        on press dockz.8.$s { impulse buoy.$s.8 -9 }
-        on drag dockz.8.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 8
-            pv.$s = -1
-        }
-        on release dockz.8.$s while dkdrag.$s < 0 {
-            dock 8 on s
-            pv.$s = -1
-            ring.$s.8: 0 ~0ms
-            ring.$s.8: 1 ~760ms after 16ms
-        }
-        on release dockz.8.$s while dkdrag.$s < 0 and win.dock.$s.8.windows == 0 {
-            hops.$s.8 = 3
-            hop.$s.8: 1 ~0ms
-        }
-        on change hop.$s.8 while hop.$s.8 < 0.02 and hops.$s.8 > 1 and win.dock.$s.8.windows == 0 {
-            hops.$s.8 = hops.$s.8 - 1
-            hop.$s.8: 1 ~0ms
-        }
-        on release dockz.8.$s while dkdrag.$s == 8 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.8.pinned > 0.5 {
-            dock 8 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.8.$s { dkdrag.$s = -1 }
-        on drop dockz.8.$s {
-            dock 8 on s with drop
-            ring.$s.8: 0 ~0ms
-            ring.$s.8: 1 ~760ms after 16ms
-        }
-        on press right dockz.8.$s {
-            dmenu.$s = 8
-            dmk.$s = 8
-            pv.$s = -1
-        }
-        on hover dockz.8.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.8.windows > 0 { pv.$s = 8 }
-        on press dockz.9.$s { impulse buoy.$s.9 -9 }
-        on drag dockz.9.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 9
-            pv.$s = -1
-        }
-        on release dockz.9.$s while dkdrag.$s < 0 {
-            dock 9 on s
-            pv.$s = -1
-            ring.$s.9: 0 ~0ms
-            ring.$s.9: 1 ~760ms after 16ms
-        }
-        on release dockz.9.$s while dkdrag.$s < 0 and win.dock.$s.9.windows == 0 {
-            hops.$s.9 = 3
-            hop.$s.9: 1 ~0ms
-        }
-        on change hop.$s.9 while hop.$s.9 < 0.02 and hops.$s.9 > 1 and win.dock.$s.9.windows == 0 {
-            hops.$s.9 = hops.$s.9 - 1
-            hop.$s.9: 1 ~0ms
-        }
-        on release dockz.9.$s while dkdrag.$s == 9 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.9.pinned > 0.5 {
-            dock 9 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.9.$s { dkdrag.$s = -1 }
-        on drop dockz.9.$s {
-            dock 9 on s with drop
-            ring.$s.9: 0 ~0ms
-            ring.$s.9: 1 ~760ms after 16ms
-        }
-        on press right dockz.9.$s {
-            dmenu.$s = 9
-            dmk.$s = 9
-            pv.$s = -1
-        }
-        on hover dockz.9.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.9.windows > 0 { pv.$s = 9 }
-        on press dockz.10.$s { impulse buoy.$s.10 -9 }
-        on drag dockz.10.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 10
-            pv.$s = -1
-        }
-        on release dockz.10.$s while dkdrag.$s < 0 {
-            dock 10 on s
-            pv.$s = -1
-            ring.$s.10: 0 ~0ms
-            ring.$s.10: 1 ~760ms after 16ms
-        }
-        on release dockz.10.$s while dkdrag.$s < 0 and win.dock.$s.10.windows == 0 {
-            hops.$s.10 = 3
-            hop.$s.10: 1 ~0ms
-        }
-        on change hop.$s.10 while hop.$s.10 < 0.02 and hops.$s.10 > 1 and win.dock.$s.10.windows == 0 {
-            hops.$s.10 = hops.$s.10 - 1
-            hop.$s.10: 1 ~0ms
-        }
-        on release dockz.10.$s while dkdrag.$s == 10 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.10.pinned > 0.5 {
-            dock 10 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.10.$s { dkdrag.$s = -1 }
-        on drop dockz.10.$s {
-            dock 10 on s with drop
-            ring.$s.10: 0 ~0ms
-            ring.$s.10: 1 ~760ms after 16ms
-        }
-        on press right dockz.10.$s {
-            dmenu.$s = 10
-            dmk.$s = 10
-            pv.$s = -1
-        }
-        on hover dockz.10.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.10.windows > 0 { pv.$s = 10 }
-        on press dockz.11.$s { impulse buoy.$s.11 -9 }
-        on drag dockz.11.$s while dkdrag.$s < 0 and (abs(drag.dx) > 6 or abs(drag.dy) > 6) {
-            dkdrag.$s = 11
-            pv.$s = -1
-        }
-        on release dockz.11.$s while dkdrag.$s < 0 {
-            dock 11 on s
-            pv.$s = -1
-            ring.$s.11: 0 ~0ms
-            ring.$s.11: 1 ~760ms after 16ms
-        }
-        on release dockz.11.$s while dkdrag.$s < 0 and win.dock.$s.11.windows == 0 {
-            hops.$s.11 = 3
-            hop.$s.11: 1 ~0ms
-        }
-        on change hop.$s.11 while hop.$s.11 < 0.02 and hops.$s.11 > 1 and win.dock.$s.11.windows == 0 {
-            hops.$s.11 = hops.$s.11 - 1
-            hop.$s.11: 1 ~0ms
-        }
-        on release dockz.11.$s while dkdrag.$s == 11 and dk.mq.$s > dk.q.$s + dkpl / 2 + 78 and win.dock.$s.11.pinned > 0.5 {
-            dock 11 on s unpin
-            poofx.$s = mouse.x
-            poofy.$s = mouse.y
-            poof.$s: 0 ~0ms
-            poof.$s: 1 ~700ms after 16ms
-        }
-        on release dockz.11.$s { dkdrag.$s = -1 }
-        on drop dockz.11.$s {
-            dock 11 on s with drop
-            ring.$s.11: 0 ~0ms
-            ring.$s.11: 1 ~760ms after 16ms
-        }
-        on press right dockz.11.$s {
-            dmenu.$s = 11
-            dmk.$s = 11
-            pv.$s = -1
-        }
-        on hover dockz.11.$s for 450ms while dkdrag.$s < 0 and dmenu.$s < 0 and win.dock.$s.11.windows > 0 { pv.$s = 11 }
-        on press dkpool.0.$s { workspace 1 on s }
-        on press dkpool.1.$s { workspace 2 on s }
-        on press dkpool.2.$s { workspace 3 on s }
-        on press dkpool.3.$s { workspace 4 on s }
-        on press dkpool.4.$s { workspace 5 on s }
-        on press dkpool.5.$s { workspace 6 on s }
-        on press dkpool.6.$s { workspace 7 on s }
-        on press dkpool.7.$s { workspace 8 on s }
         // Its previews, as many as it has windows: over its icon at the bottom,
         // beside it on a side (window.plm's per window: pv.bx + pv.sx · turn).
         pv.n[s] = pick(max(pv.$s, 0), win.dock.$s.0.windows, win.dock.$s.1.windows, win.dock.$s.2.windows, win.dock.$s.3.windows, win.dock.$s.4.windows, win.dock.$s.5.windows, win.dock.$s.6.windows, win.dock.$s.7.windows, win.dock.$s.8.windows, win.dock.$s.9.windows, win.dock.$s.10.windows, win.dock.$s.11.windows)
@@ -2668,18 +2003,9 @@ scene Session {
             group {
                 show: dkdrag.$s >= 0 and mon == s
                 opacity: if(dk.mq.$s > dk.q.$s + dkpl / 2 + 78, 55%, 90%)
-                image dockicon.$s.0 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 0 }
-                image dockicon.$s.1 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 1 }
-                image dockicon.$s.2 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 2 }
-                image dockicon.$s.3 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 3 }
-                image dockicon.$s.4 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 4 }
-                image dockicon.$s.5 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 5 }
-                image dockicon.$s.6 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 6 }
-                image dockicon.$s.7 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 7 }
-                image dockicon.$s.8 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 8 }
-                image dockicon.$s.9 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 9 }
-                image dockicon.$s.10 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 10 }
-                image dockicon.$s.11 { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == 11 }
+                repeat j in 0..12 {
+                    image dockicon.$s.$j { at: mouse.x - 24, mouse.y - 24; size: 48, 48; show: dkdrag.$s == j }
+                }
             }
             // Unpinned, it bursts into drops where it was let go.
             group {
@@ -4427,29 +3753,16 @@ scene Session {
     // Scrolling: its monitor's strip glides just enough for the one with the
     // keyboard to be whole in sight, and never past either end.
     let f.among = max(win[max(win.focus, 0)].among, 1)
-    let sws.0 = screen.0.width - win.reserved.0.left - win.reserved.0.right
-    let scw.0 = if(f.among < 1.5, sws.0 - 2 * gap, (sws.0 - 3 * gap) * ratio)
-    let sl.0 = gap + max(fplace, 0) * (scw.0 + gap)
-    on change sl.0 + f.among * 7919 + win.focus * 131 + lay.0 * 17 + ratio * 1000 while win.focus >= 0 and fscreen == 0 and lay.0 == 5 {
-        sco.0 = max(0, min(min(max(sco.0, sl.0 + scw.0 + gap - sws.0), sl.0 - gap), gap + f.among * (scw.0 + gap) - sws.0))
-    }
-    let sws.1 = screen.1.width - win.reserved.1.left - win.reserved.1.right
-    let scw.1 = if(f.among < 1.5, sws.1 - 2 * gap, (sws.1 - 3 * gap) * ratio)
-    let sl.1 = gap + max(fplace, 0) * (scw.1 + gap)
-    on change sl.1 + f.among * 7919 + win.focus * 131 + lay.1 * 17 + ratio * 1000 while win.focus >= 0 and fscreen == 1 and lay.1 == 5 {
-        sco.1 = max(0, min(min(max(sco.1, sl.1 + scw.1 + gap - sws.1), sl.1 - gap), gap + f.among * (scw.1 + gap) - sws.1))
-    }
-    let sws.2 = screen.2.width - win.reserved.2.left - win.reserved.2.right
-    let scw.2 = if(f.among < 1.5, sws.2 - 2 * gap, (sws.2 - 3 * gap) * ratio)
-    let sl.2 = gap + max(fplace, 0) * (scw.2 + gap)
-    on change sl.2 + f.among * 7919 + win.focus * 131 + lay.2 * 17 + ratio * 1000 while win.focus >= 0 and fscreen == 2 and lay.2 == 5 {
-        sco.2 = max(0, min(min(max(sco.2, sl.2 + scw.2 + gap - sws.2), sl.2 - gap), gap + f.among * (scw.2 + gap) - sws.2))
-    }
-    let sws.3 = screen.3.width - win.reserved.3.left - win.reserved.3.right
-    let scw.3 = if(f.among < 1.5, sws.3 - 2 * gap, (sws.3 - 3 * gap) * ratio)
-    let sl.3 = gap + max(fplace, 0) * (scw.3 + gap)
-    on change sl.3 + f.among * 7919 + win.focus * 131 + lay.3 * 17 + ratio * 1000 while win.focus >= 0 and fscreen == 3 and lay.3 == 5 {
-        sco.3 = max(0, min(min(max(sco.3, sl.3 + scw.3 + gap - sws.3), sl.3 - gap), gap + f.among * (scw.3 + gap) - sws.3))
+    let sws[4]
+    let scw[4]
+    let sl[4]
+    repeat j in 0..4 {
+        sws[j] = screen.$j.width - win.reserved.$j.left - win.reserved.$j.right
+        scw[j] = if(f.among < 1.5, sws.$j - 2 * gap, (sws.$j - 3 * gap) * ratio)
+        sl[j] = gap + max(fplace, 0) * (scw.$j + gap)
+        on change sl.$j + f.among * 7919 + win.focus * 131 + lay.$j * 17 + ratio * 1000 while win.focus >= 0 and fscreen == j and lay.$j == 5 {
+            sco.$j = max(0, min(min(max(sco.$j, sl.$j + scw.$j + gap - sws.$j), sl.$j - gap), gap + f.among * (scw.$j + gap) - sws.$j))
+        }
     }
     // ── the keyboard to the window that way (Super+arrows): the nearest one
     // whose middle is that way, by where the windows are drawn, across
@@ -4723,10 +4036,9 @@ scene Session {
         }
         on press dockpv.$i while not win.$i.minimized { focus win.$i }
         on press dockpv.$i {
-            pv.0 = -1
-            pv.1 = -1
-            pv.2 = -1
-            pv.3 = -1
+            repeat k in 0..4 {
+                pv.$k = -1
+            }
         }
         // Its row in its program's menu on the shore (the shore draws the
         // menu): pressed, it is the one, brought back if put away.
@@ -4746,10 +4058,9 @@ scene Session {
         on press dmw.$i while win.$i.minimized { restore win.$i }
         on press dmw.$i {
             focus win.$i
-            dmenu.0 = -1
-            dmenu.1 = -1
-            dmenu.2 = -1
-            dmenu.3 = -1
+            repeat k in 0..4 {
+                dmenu.$k = -1
+            }
         }
         // The ripple where it lands (or leaves from).
         prop splash.$i = 1 ~900ms
@@ -4891,69 +4202,15 @@ scene Session {
     repeat q in 0..1 {
         let wn.free = if(wire.0.a < 0, 0, if(wire.1.a < 0, 1, if(wire.2.a < 0, 2, if(wire.3.a < 0, 3, if(wire.4.a < 0, 4, if(wire.5.a < 0, 5, if(wire.6.a < 0, 6, if(wire.7.a < 0, 7, -1))))))))
         let wn.dup = (wire.0.a == wnew.a and wire.0.b == wnew.b) or (wire.0.a == wnew.b and wire.0.b == wnew.a) or (wire.1.a == wnew.a and wire.1.b == wnew.b) or (wire.1.a == wnew.b and wire.1.b == wnew.a) or (wire.2.a == wnew.a and wire.2.b == wnew.b) or (wire.2.a == wnew.b and wire.2.b == wnew.a) or (wire.3.a == wnew.a and wire.3.b == wnew.b) or (wire.3.a == wnew.b and wire.3.b == wnew.a) or (wire.4.a == wnew.a and wire.4.b == wnew.b) or (wire.4.a == wnew.b and wire.4.b == wnew.a) or (wire.5.a == wnew.a and wire.5.b == wnew.b) or (wire.5.a == wnew.b and wire.5.b == wnew.a) or (wire.6.a == wnew.a and wire.6.b == wnew.b) or (wire.6.a == wnew.b and wire.6.b == wnew.a) or (wire.7.a == wnew.a and wire.7.b == wnew.b) or (wire.7.a == wnew.b and wire.7.b == wnew.a)
-        on change wnew.go while wnew.go > 0.5 and wn.free == 0 and not wn.dup {
-            wire.0.a = wnew.a
-            wire.0.b = wnew.b
-            wire.0.flow = 0
-            wire.0.label = ""
-            wborn.0: 0 ~0ms
-            wborn.0: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 1 and not wn.dup {
-            wire.1.a = wnew.a
-            wire.1.b = wnew.b
-            wire.1.flow = 0
-            wire.1.label = ""
-            wborn.1: 0 ~0ms
-            wborn.1: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 2 and not wn.dup {
-            wire.2.a = wnew.a
-            wire.2.b = wnew.b
-            wire.2.flow = 0
-            wire.2.label = ""
-            wborn.2: 0 ~0ms
-            wborn.2: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 3 and not wn.dup {
-            wire.3.a = wnew.a
-            wire.3.b = wnew.b
-            wire.3.flow = 0
-            wire.3.label = ""
-            wborn.3: 0 ~0ms
-            wborn.3: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 4 and not wn.dup {
-            wire.4.a = wnew.a
-            wire.4.b = wnew.b
-            wire.4.flow = 0
-            wire.4.label = ""
-            wborn.4: 0 ~0ms
-            wborn.4: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 5 and not wn.dup {
-            wire.5.a = wnew.a
-            wire.5.b = wnew.b
-            wire.5.flow = 0
-            wire.5.label = ""
-            wborn.5: 0 ~0ms
-            wborn.5: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 6 and not wn.dup {
-            wire.6.a = wnew.a
-            wire.6.b = wnew.b
-            wire.6.flow = 0
-            wire.6.label = ""
-            wborn.6: 0 ~0ms
-            wborn.6: 1 after 16ms
-        }
-        on change wnew.go while wnew.go > 0.5 and wn.free == 7 and not wn.dup {
-            wire.7.a = wnew.a
-            wire.7.b = wnew.b
-            wire.7.flow = 0
-            wire.7.label = ""
-            wborn.7: 0 ~0ms
-            wborn.7: 1 after 16ms
+        repeat j in 0..8 {
+            on change wnew.go while wnew.go > 0.5 and wn.free == j and not wn.dup {
+                wire.$j.a = wnew.a
+                wire.$j.b = wnew.b
+                wire.$j.flow = 0
+                wire.$j.label = ""
+                wborn.$j: 0 ~0ms
+                wborn.$j: 1 after 16ms
+            }
         }
     }
     repeat k in 0..8 {
@@ -5173,29 +4430,13 @@ scene Session {
         cvf.go: 0 ~0ms
         cvf.go: 1 after 16ms
     }
-    on change cvf.go while cvf.go > 0.5 and cvf.k == 0 and cvf.r > cvf.l {
-        cvz.0 = clamp(min((mg.Ws - 2 * gap) / (cvf.r - cvf.l), (mg.ah - gap) / (cvf.b - cvf.t)), 0.1, 1)
-        cvx.0 = (cvf.l + cvf.r) / 2 - win.reserved.0.left - mg.Ws / 2 / cvz.0
-        cvy.0 = (cvf.t + cvf.b) / 2 - win.reserved.0.top - bar - mg.ah / 2 / cvz.0
-        cvf.k = -1
-    }
-    on change cvf.go while cvf.go > 0.5 and cvf.k == 1 and cvf.r > cvf.l {
-        cvz.1 = clamp(min((mg.Ws - 2 * gap) / (cvf.r - cvf.l), (mg.ah - gap) / (cvf.b - cvf.t)), 0.1, 1)
-        cvx.1 = (cvf.l + cvf.r) / 2 - win.reserved.1.left - mg.Ws / 2 / cvz.1
-        cvy.1 = (cvf.t + cvf.b) / 2 - win.reserved.1.top - bar - mg.ah / 2 / cvz.1
-        cvf.k = -1
-    }
-    on change cvf.go while cvf.go > 0.5 and cvf.k == 2 and cvf.r > cvf.l {
-        cvz.2 = clamp(min((mg.Ws - 2 * gap) / (cvf.r - cvf.l), (mg.ah - gap) / (cvf.b - cvf.t)), 0.1, 1)
-        cvx.2 = (cvf.l + cvf.r) / 2 - win.reserved.2.left - mg.Ws / 2 / cvz.2
-        cvy.2 = (cvf.t + cvf.b) / 2 - win.reserved.2.top - bar - mg.ah / 2 / cvz.2
-        cvf.k = -1
-    }
-    on change cvf.go while cvf.go > 0.5 and cvf.k == 3 and cvf.r > cvf.l {
-        cvz.3 = clamp(min((mg.Ws - 2 * gap) / (cvf.r - cvf.l), (mg.ah - gap) / (cvf.b - cvf.t)), 0.1, 1)
-        cvx.3 = (cvf.l + cvf.r) / 2 - win.reserved.3.left - mg.Ws / 2 / cvz.3
-        cvy.3 = (cvf.t + cvf.b) / 2 - win.reserved.3.top - bar - mg.ah / 2 / cvz.3
-        cvf.k = -1
+    repeat j in 0..4 {
+        on change cvf.go while cvf.go > 0.5 and cvf.k == j and cvf.r > cvf.l {
+            cvz.$j = clamp(min((mg.Ws - 2 * gap) / (cvf.r - cvf.l), (mg.ah - gap) / (cvf.b - cvf.t)), 0.1, 1)
+            cvx.$j = (cvf.l + cvf.r) / 2 - win.reserved.$j.left - mg.Ws / 2 / cvz.$j
+            cvy.$j = (cvf.t + cvf.b) / 2 - win.reserved.$j.top - bar - mg.ah / 2 / cvz.$j
+            cvf.k = -1
+        }
     }
     event ride
     event unride
@@ -5716,125 +4957,14 @@ scene Session {
             zone ellipse phapp.3.5 { at: ax, ay; radius: 29; cursor: pointer; active: is.ph and ph.home and pc > 0.9; label: "{win.dock.3.5.name}"; role: button }
         }
     }
-    on release phapp.0.0 {
-        dock 0 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.0.1 {
-        dock 1 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.0.2 {
-        dock 2 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.0.3 {
-        dock 3 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.0.4 {
-        dock 4 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.0.5 {
-        dock 5 on 0
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.0 {
-        dock 0 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.1 {
-        dock 1 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.2 {
-        dock 2 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.3 {
-        dock 3 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.4 {
-        dock 4 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.1.5 {
-        dock 5 on 1
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.0 {
-        dock 0 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.1 {
-        dock 1 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.2 {
-        dock 2 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.3 {
-        dock 3 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.4 {
-        dock 4 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.2.5 {
-        dock 5 on 2
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.0 {
-        dock 0 on 3
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.1 {
-        dock 1 on 3
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.2 {
-        dock 2 on 3
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.3 {
-        dock 3 on 3
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.4 {
-        dock 4 on 3
-        ph.cards = 0
-        ph.front = -1
-    }
-    on release phapp.3.5 {
-        dock 5 on 3
-        ph.cards = 0
-        ph.front = -1
+    repeat j in 0..4 {
+        repeat q in 0..6 {
+            on release phapp.$j.$q {
+                dock q on j
+                ph.cards = 0
+                ph.front = -1
+            }
+        }
     }
     // The status line and the bar at the bottom, over everything.
     group {
@@ -6102,16 +5232,13 @@ scene Session {
     // Who it is (`PLEAMAR_AGENT_NAME`: Marea says hers), for its label.
     text agent.name = "agent"
     // Where each cursor is, as pleamar-wm says (on its monitor, in units).
-    fact agent.0.x = 0
-    fact agent.0.y = 0
-    fact agent.0.screen = 0
-    fact agent.0.down = 0
-    fact agent.0.seen = 0
-    fact agent.1.x = 0
-    fact agent.1.y = 0
-    fact agent.1.screen = 0
-    fact agent.1.down = 0
-    fact agent.1.seen = 0
+    repeat k in 0..2 {
+        fact agent.$k.x = 0
+        fact agent.$k.y = 0
+        fact agent.$k.screen = 0
+        fact agent.$k.down = 0
+        fact agent.$k.seen = 0
+    }
     // The cursors on a surface of their own, over everything on the monitor:
     // over the programs' menus too (a browser's right-click menu hid it).
     // Only drawn: clicks go through.
