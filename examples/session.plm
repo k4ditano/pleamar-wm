@@ -6496,6 +6496,31 @@ scene Session {
     let focus.pool = win[max(win.focus, 0)].pool
     let focus.dialog = win[max(win.focus, 0)].dialog
     let focus.floats = win[max(win.focus, 0)].floating
+    // («marea»: each tiled window's share of its monitor's pool. The windows
+    // in order of their group —monitor and pool— and their place in it;
+    // going forward, what the ones before each take; going back, the whole
+    // group's.)
+    let td.g[16]
+    repeat i in 0..16 {
+        td.g[i] = if(win[i].place >= 0 and not win[i].minimized, win[i].screen * 100000 + win[i].pool, -2 - i)
+    }
+    let td.ord[16] = sort(i in win by td.g[i], win[i].place)
+    let td.run = 0
+    let td.before[16]
+    repeat p in 0..16 {
+        let s = td.ord[p]
+        td.run = if(td.g[s] == td.g[td.ord[p - 1]], td.run, 0)
+        td.before[p] = td.run
+        td.run += (td.g[s] >= 0) * mw[s]
+    }
+    let td.left = 0
+    let td.all[16]
+    repeat r in 0..16 {
+        let q = 15 - r
+        let s = td.ord[q]
+        td.left = if(td.g[s] == td.g[td.ord[q + 1]], td.left, td.before[q] + (td.g[s] >= 0) * mw[s])
+        td.all[q] = td.left
+    }
     // (Super+arrows: each window's middle on the whole desktop, and how
     // near it is the way asked; see the actions.)
     let dir.cx[16]
@@ -6537,8 +6562,8 @@ scene Session {
         // (Scrolling: how far its monitor's strip has glided.)
         let glided = scr[sc]
         // («marea»: the share of the width of those before it, and its own.)
-        let tide.all = max((win.0.place >= 0 and win.0.screen == sc and win.0.pool == win.$i.pool and not win.0.minimized) * mw.0 + (win.1.place >= 0 and win.1.screen == sc and win.1.pool == win.$i.pool and not win.1.minimized) * mw.1 + (win.2.place >= 0 and win.2.screen == sc and win.2.pool == win.$i.pool and not win.2.minimized) * mw.2 + (win.3.place >= 0 and win.3.screen == sc and win.3.pool == win.$i.pool and not win.3.minimized) * mw.3 + (win.4.place >= 0 and win.4.screen == sc and win.4.pool == win.$i.pool and not win.4.minimized) * mw.4 + (win.5.place >= 0 and win.5.screen == sc and win.5.pool == win.$i.pool and not win.5.minimized) * mw.5 + (win.6.place >= 0 and win.6.screen == sc and win.6.pool == win.$i.pool and not win.6.minimized) * mw.6 + (win.7.place >= 0 and win.7.screen == sc and win.7.pool == win.$i.pool and not win.7.minimized) * mw.7 + (win.8.place >= 0 and win.8.screen == sc and win.8.pool == win.$i.pool and not win.8.minimized) * mw.8 + (win.9.place >= 0 and win.9.screen == sc and win.9.pool == win.$i.pool and not win.9.minimized) * mw.9 + (win.10.place >= 0 and win.10.screen == sc and win.10.pool == win.$i.pool and not win.10.minimized) * mw.10 + (win.11.place >= 0 and win.11.screen == sc and win.11.pool == win.$i.pool and not win.11.minimized) * mw.11 + (win.12.place >= 0 and win.12.screen == sc and win.12.pool == win.$i.pool and not win.12.minimized) * mw.12 + (win.13.place >= 0 and win.13.screen == sc and win.13.pool == win.$i.pool and not win.13.minimized) * mw.13 + (win.14.place >= 0 and win.14.screen == sc and win.14.pool == win.$i.pool and not win.14.minimized) * mw.14 + (win.15.place >= 0 and win.15.screen == sc and win.15.pool == win.$i.pool and not win.15.minimized) * mw.15, 1)
-        let tide.before = ((win.0.place >= 0 and win.0.screen == sc and win.0.pool == win.$i.pool and not win.0.minimized) and win.0.place < win.$i.place) * mw.0 + ((win.1.place >= 0 and win.1.screen == sc and win.1.pool == win.$i.pool and not win.1.minimized) and win.1.place < win.$i.place) * mw.1 + ((win.2.place >= 0 and win.2.screen == sc and win.2.pool == win.$i.pool and not win.2.minimized) and win.2.place < win.$i.place) * mw.2 + ((win.3.place >= 0 and win.3.screen == sc and win.3.pool == win.$i.pool and not win.3.minimized) and win.3.place < win.$i.place) * mw.3 + ((win.4.place >= 0 and win.4.screen == sc and win.4.pool == win.$i.pool and not win.4.minimized) and win.4.place < win.$i.place) * mw.4 + ((win.5.place >= 0 and win.5.screen == sc and win.5.pool == win.$i.pool and not win.5.minimized) and win.5.place < win.$i.place) * mw.5 + ((win.6.place >= 0 and win.6.screen == sc and win.6.pool == win.$i.pool and not win.6.minimized) and win.6.place < win.$i.place) * mw.6 + ((win.7.place >= 0 and win.7.screen == sc and win.7.pool == win.$i.pool and not win.7.minimized) and win.7.place < win.$i.place) * mw.7 + ((win.8.place >= 0 and win.8.screen == sc and win.8.pool == win.$i.pool and not win.8.minimized) and win.8.place < win.$i.place) * mw.8 + ((win.9.place >= 0 and win.9.screen == sc and win.9.pool == win.$i.pool and not win.9.minimized) and win.9.place < win.$i.place) * mw.9 + ((win.10.place >= 0 and win.10.screen == sc and win.10.pool == win.$i.pool and not win.10.minimized) and win.10.place < win.$i.place) * mw.10 + ((win.11.place >= 0 and win.11.screen == sc and win.11.pool == win.$i.pool and not win.11.minimized) and win.11.place < win.$i.place) * mw.11 + ((win.12.place >= 0 and win.12.screen == sc and win.12.pool == win.$i.pool and not win.12.minimized) and win.12.place < win.$i.place) * mw.12 + ((win.13.place >= 0 and win.13.screen == sc and win.13.pool == win.$i.pool and not win.13.minimized) and win.13.place < win.$i.place) * mw.13 + ((win.14.place >= 0 and win.14.screen == sc and win.14.pool == win.$i.pool and not win.14.minimized) and win.14.place < win.$i.place) * mw.14 + ((win.15.place >= 0 and win.15.screen == sc and win.15.pool == win.$i.pool and not win.15.minimized) and win.15.place < win.$i.place) * mw.15
+        let tide.all = max(td.all[td.ord.pos[i]], 1)
+        let tide.before = td.before[td.ord.pos[i]]
         let tide.room = Ws - (n + 1) * gap
         let tide.x = gap + p * gap + tide.room * tide.before / tide.all
         let tide.w = tide.room * mw[i] / tide.all
