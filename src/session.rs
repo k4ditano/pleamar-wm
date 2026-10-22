@@ -1388,8 +1388,9 @@ impl State {
             self.queued = None;
             return;
         }
-        // A transition is let finish; the last shape asked for meanwhile comes after.
-        if self.playing.as_ref().is_some_and(|p| p.transition) {
+        // A transition is let finish; the last shape asked for meanwhile comes
+        // after. One that is not playing (the cursor was hidden) is not waited for.
+        if self.frame_timer.is_some() && self.playing.as_ref().is_some_and(|p| p.transition) {
             self.queued = Some(want);
             return;
         }
@@ -1479,14 +1480,18 @@ impl State {
                     state.frame += 1;
                     if state.playing.as_ref().is_some_and(|p| p.transition) && state.frame >= len {
                         // Played through: the shape it led to, or the one asked for since.
-                        match (state.queued.take(), state.shown) {
+                        let next = state.queued.take().or(state.shown);
+                        match (next, state.shown) {
                             (Some(q), Some(s)) if q != s => state.change_to(q),
-                            (_, Some(s)) => {
+                            (Some(n), _) => {
                                 state.shown = None;
                                 state.playing = None;
-                                state.change_to(s);
+                                state.change_to(n);
                             }
-                            _ => {}
+                            (None, _) => {
+                                state.playing = None;
+                                state.show_cursor();
+                            }
                         }
                         return smithay::reexports::calloop::timer::TimeoutAction::Drop;
                     }
