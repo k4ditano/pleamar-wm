@@ -2773,8 +2773,13 @@ scene Session {
             // ── on a canvas: its port, and its agent's state ──
             // The port: a drop, fuller over it, while wiring from it, and once
             // it has wires.
-            let wl.lit = ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) * (if(wire.0.a == i, wire.0.b, wire.0.a) == hovwin) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) * (if(wire.1.a == i, wire.1.b, wire.1.a) == hovwin) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i)) * (if(wire.2.a == i, wire.2.b, wire.2.a) == hovwin) + (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i)) * (if(wire.3.a == i, wire.3.b, wire.3.a) == hovwin) + (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i)) * (if(wire.4.a == i, wire.4.b, wire.4.a) == hovwin) + (wire.5.a >= 0 and (wire.5.a == i or wire.5.b == i)) * (if(wire.5.a == i, wire.5.b, wire.5.a) == hovwin) + (wire.6.a >= 0 and (wire.6.a == i or wire.6.b == i)) * (if(wire.6.a == i, wire.6.b, wire.6.a) == hovwin) + (wire.7.a >= 0 and (wire.7.a == i or wire.7.b == i)) * (if(wire.7.a == i, wire.7.b, wire.7.a) == hovwin)) > 0.5
-            let nwired = (wire.0.a == i or wire.0.b == i) + (wire.1.a == i or wire.1.b == i) + (wire.2.a == i or wire.2.b == i) + (wire.3.a == i or wire.3.b == i) + (wire.4.a == i or wire.4.b == i) + (wire.5.a == i or wire.5.b == i) + (wire.6.a == i or wire.6.b == i) + (wire.7.a == i or wire.7.b == i)
+            let wl.lit.n = 0
+            let nwired = 0
+            repeat q in 0..8 {
+                wl.lit.n += (wire.$q.a >= 0 and (wire.$q.a == i or wire.$q.b == i)) * (if(wire.$q.a == i, wire.$q.b, wire.$q.a) == hovwin)
+                nwired += wire.$q.a == i or wire.$q.b == i
+            }
+            let wl.lit = wl.lit.n > 0.5
             group {
                 show: hb.$i > 0.01 and cvpt.$i > 0.01
                 opacity: cvpt.$i * hb.$i
@@ -2819,109 +2824,23 @@ scene Session {
             // the gap above it —the wire's name, or the window at its other end—.
             group {
                 show: F < 0.5 and not overview and hb.$i < 0.5 and nwired > 0.5
-                group {
-                    show: (wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i))
-                    let pm.x = x + 14 + (0) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
+                // Each wire it has, one after the other.
+                let pm.n = 0
+                repeat q in 0..8 {
+                    group {
+                        show: wire.$q.a >= 0 and (wire.$q.a == i or wire.$q.b == i)
+                        let pm.x = x + 14 + pm.n * 106
+                        body {
+                            color: #0c0e10
+                            rim: 14%
+                            box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
+                        }
+                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
+                        text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
+                        text wire.$q.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.$q.width > 0.5 }
+                        text win[max(if(wire.$q.a == i, wire.$q.b, wire.$q.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.$q.width < 0.5 }
                     }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.0.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.0.width > 0.5 }
-                    text win[max(if(wire.0.a == i, wire.0.b, wire.0.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.0.width < 0.5 }
-                }
-                group {
-                    show: (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.1.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.1.width > 0.5 }
-                    text win[max(if(wire.1.a == i, wire.1.b, wire.1.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.1.width < 0.5 }
-                }
-                group {
-                    show: (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.2.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.2.width > 0.5 }
-                    text win[max(if(wire.2.a == i, wire.2.b, wire.2.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.2.width < 0.5 }
-                }
-                group {
-                    show: (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.3.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.3.width > 0.5 }
-                    text win[max(if(wire.3.a == i, wire.3.b, wire.3.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.3.width < 0.5 }
-                }
-                group {
-                    show: (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i)) + (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.4.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.4.width > 0.5 }
-                    text win[max(if(wire.4.a == i, wire.4.b, wire.4.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.4.width < 0.5 }
-                }
-                group {
-                    show: (wire.5.a >= 0 and (wire.5.a == i or wire.5.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i)) + (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i)) + (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.5.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.5.width > 0.5 }
-                    text win[max(if(wire.5.a == i, wire.5.b, wire.5.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.5.width < 0.5 }
-                }
-                group {
-                    show: (wire.6.a >= 0 and (wire.6.a == i or wire.6.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i)) + (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i)) + (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i)) + (wire.5.a >= 0 and (wire.5.a == i or wire.5.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.6.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.6.width > 0.5 }
-                    text win[max(if(wire.6.a == i, wire.6.b, wire.6.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.6.width < 0.5 }
-                }
-                group {
-                    show: (wire.7.a >= 0 and (wire.7.a == i or wire.7.b == i))
-                    let pm.x = x + 14 + ((wire.0.a >= 0 and (wire.0.a == i or wire.0.b == i)) + (wire.1.a >= 0 and (wire.1.a == i or wire.1.b == i)) + (wire.2.a >= 0 and (wire.2.a == i or wire.2.b == i)) + (wire.3.a >= 0 and (wire.3.a == i or wire.3.b == i)) + (wire.4.a >= 0 and (wire.4.a == i or wire.4.b == i)) + (wire.5.a >= 0 and (wire.5.a == i or wire.5.b == i)) + (wire.6.a >= 0 and (wire.6.a == i or wire.6.b == i))) * 106
-                    body {
-                        color: #0c0e10
-                        rim: 14%
-                        box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5 }
-                    }
-                    box { from: pm.x, y - gap + 1; size: 100, gap - 2; corner: 5; stroke: 1; color: mint; opacity: 50% }
-                    text "↔" { at: pm.x + 9, y - gap / 2; anchor: center; size: 8; color: mint }
-                    text wire.7.label { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; weight: 600; color: ink; width: 78; lines: 1; show: wlm.7.width > 0.5 }
-                    text win[max(if(wire.7.a == i, wire.7.b, wire.7.a), 0)].title { at: pm.x + 17, y - gap / 2; anchor: left center; size: 8.5; color: ink; opacity: 70%; width: 78; lines: 1; show: wlm.7.width < 0.5 }
+                    pm.n += wire.$q.a >= 0 and (wire.$q.a == i or wire.$q.b == i)
                 }
             }
             // The mouse over a window wired to this one: this one lights up, a moment.
