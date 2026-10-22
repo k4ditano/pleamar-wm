@@ -2198,6 +2198,13 @@ scene Session {
         td.left = if(td.g[s] == td.g[td.ord[q + 1]], td.left, td.before[q] + (td.g[s] >= 0) * mw[s])
         td.all[q] = td.left
     }
+    // The mouse over a window floating over the tiles: the tiles under it
+    // do not take the keyboard from it.
+    let on.float.n = 0
+    repeat k in 0..16 {
+        on.float.n += win.$k.floating and win.$k.open and not win.$k.minimized and win.$k.screen == mon and win.$k.workspace == win.shown[mon] and mouse.x >= x.$k and mouse.x < x.$k + w.$k and mouse.y >= y.$k and mouse.y < y.$k + h.$k
+    }
+    let on.float = on.float.n > 0.5
     // (Super+arrows: each window's middle on the whole desktop, and how
     // near it is the way asked; see the actions.)
     let dir.cx[16]
@@ -3452,9 +3459,6 @@ scene Session {
         }
         let sc = win.$i.screen
         let ws.here = win.$i.pool == win.pool[sc]
-        // The mouse over a window floating over the tiles: the tiles under it
-        // do not take the keyboard from it.
-        let on.float = (win.0.floating and win.0.open and not win.0.minimized and win.0.screen == mon and win.0.workspace == win.shown[mon] and mouse.x >= x.0 and mouse.x < x.0 + w.0 and mouse.y >= y.0 and mouse.y < y.0 + h.0) + (win.1.floating and win.1.open and not win.1.minimized and win.1.screen == mon and win.1.workspace == win.shown[mon] and mouse.x >= x.1 and mouse.x < x.1 + w.1 and mouse.y >= y.1 and mouse.y < y.1 + h.1) + (win.2.floating and win.2.open and not win.2.minimized and win.2.screen == mon and win.2.workspace == win.shown[mon] and mouse.x >= x.2 and mouse.x < x.2 + w.2 and mouse.y >= y.2 and mouse.y < y.2 + h.2) + (win.3.floating and win.3.open and not win.3.minimized and win.3.screen == mon and win.3.workspace == win.shown[mon] and mouse.x >= x.3 and mouse.x < x.3 + w.3 and mouse.y >= y.3 and mouse.y < y.3 + h.3) + (win.4.floating and win.4.open and not win.4.minimized and win.4.screen == mon and win.4.workspace == win.shown[mon] and mouse.x >= x.4 and mouse.x < x.4 + w.4 and mouse.y >= y.4 and mouse.y < y.4 + h.4) + (win.5.floating and win.5.open and not win.5.minimized and win.5.screen == mon and win.5.workspace == win.shown[mon] and mouse.x >= x.5 and mouse.x < x.5 + w.5 and mouse.y >= y.5 and mouse.y < y.5 + h.5) + (win.6.floating and win.6.open and not win.6.minimized and win.6.screen == mon and win.6.workspace == win.shown[mon] and mouse.x >= x.6 and mouse.x < x.6 + w.6 and mouse.y >= y.6 and mouse.y < y.6 + h.6) + (win.7.floating and win.7.open and not win.7.minimized and win.7.screen == mon and win.7.workspace == win.shown[mon] and mouse.x >= x.7 and mouse.x < x.7 + w.7 and mouse.y >= y.7 and mouse.y < y.7 + h.7) + (win.8.floating and win.8.open and not win.8.minimized and win.8.screen == mon and win.8.workspace == win.shown[mon] and mouse.x >= x.8 and mouse.x < x.8 + w.8 and mouse.y >= y.8 and mouse.y < y.8 + h.8) + (win.9.floating and win.9.open and not win.9.minimized and win.9.screen == mon and win.9.workspace == win.shown[mon] and mouse.x >= x.9 and mouse.x < x.9 + w.9 and mouse.y >= y.9 and mouse.y < y.9 + h.9) + (win.10.floating and win.10.open and not win.10.minimized and win.10.screen == mon and win.10.workspace == win.shown[mon] and mouse.x >= x.10 and mouse.x < x.10 + w.10 and mouse.y >= y.10 and mouse.y < y.10 + h.10) + (win.11.floating and win.11.open and not win.11.minimized and win.11.screen == mon and win.11.workspace == win.shown[mon] and mouse.x >= x.11 and mouse.x < x.11 + w.11 and mouse.y >= y.11 and mouse.y < y.11 + h.11) + (win.12.floating and win.12.open and not win.12.minimized and win.12.screen == mon and win.12.workspace == win.shown[mon] and mouse.x >= x.12 and mouse.x < x.12 + w.12 and mouse.y >= y.12 and mouse.y < y.12 + h.12) + (win.13.floating and win.13.open and not win.13.minimized and win.13.screen == mon and win.13.workspace == win.shown[mon] and mouse.x >= x.13 and mouse.x < x.13 + w.13 and mouse.y >= y.13 and mouse.y < y.13 + h.13) + (win.14.floating and win.14.open and not win.14.minimized and win.14.screen == mon and win.14.workspace == win.shown[mon] and mouse.x >= x.14 and mouse.x < x.14 + w.14 and mouse.y >= y.14 and mouse.y < y.14 + h.14) + (win.15.floating and win.15.open and not win.15.minimized and win.15.screen == mon and win.15.workspace == win.shown[mon] and mouse.x >= x.15 and mouse.x < x.15 + w.15 and mouse.y >= y.15 and mouse.y < y.15 + h.15) > 0.5
         // The window under the mouse (the ones wired to it light up).
         let hv.over = win.$i.open and sc == mon and ws.here and not win.$i.minimized and mouse.x >= x.$i and mouse.x < x.$i + w.$i and mouse.y >= y.$i and mouse.y < y.$i + h.$i
         on change hv.over { hovwin = if(hv.over, i, if(hovwin == i, -1, hovwin)) }
