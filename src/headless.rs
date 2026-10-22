@@ -10,10 +10,12 @@
 //! What starts with it is only what `PLEAMAR_WM_AUTOSTART` names: never the
 //! user's own autostart, which belongs to their real session.
 
-use crate::screen::{self, LayerFrames, LayerWindow, Output, Screen};
+use crate::cursor_theme::{self, Playing, Theme};
+use crate::screen::{self, Hit, LayerFrames, LayerWindow, Output, Screen};
 use pleamar::scene::{Cursor, Screens, Surface, ToRender};
 use pleamar::wgpu;
 use pleamar::{NewSheet, Target, View};
+use smithay::reexports::calloop::{channel, timer::{TimeoutAction, Timer}, EventLoop, LoopHandle, RegistrationToken};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -380,25 +382,17 @@ impl pleamar::Platform for Headless {
         let script = std::env::var("PLEAMAR_HEADLESS_INPUT").ok();
         let fifo = std::env::var("PLEAMAR_HEADLESS_INPUT_FIFO").ok();
         if script.is_some() || fifo.is_some() {
-            // A pointer to be seen where one is drawn into a picture (sharing
-            // the screen): an arrow, white with a dark edge, its tip at 0, 0.
-            let mut arrow = vec![0u8; 64 * 64 * 4];
-            for y in 0..20usize {
-                for x in 0..=(y * 3 / 5) {
-                    let edge = x == 0 || x == y * 3 / 5 || y == 19;
-                    let v = if edge { [20, 20, 20, 255] } else { [255, 255, 255, 255] };
-                    arrow[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4].copy_from_slice(&v);
-                }
-            }
-            crate::layers::set_pointer_picture(Some(std::sync::Arc::new((arrow, (0, 0)))));
             let route = Arc::new(Mutex::new(crate::route::Route::new(to_render.clone())));
+            // A pointer to be seen where one is drawn into a picture (sharing
+            // the screen), as the cursor theme draws it.
+            let look = Look::start(route.clone(), scale);
             // A phone's fingers, as the session's own would take them.
             let theirs = route.clone();
             crate::layers::set_fingers_sink(Box::new(move |f| {
                 theirs.lock().unwrap().fingers(f);
                 true
             }));
-            let hand = Hand { route, screens: screens.clone(), phone: phone.clone(), unit_w, scale };
+            let hand = Hand { route, screens: screens.clone(), phone: phone.clone(), unit_w, scale, look };
             if let Some(script) = script {
                 let hand = hand.clone();
                 std::thread::spawn(move || {
@@ -453,6 +447,8 @@ struct Hand {
     phone: Arc<Mutex<Option<(Screen, Vec<u32>, i32, f64)>>>,
     unit_w: i32,
     scale: f64,
+    /// Told when what is under the pointer changes, for its shape.
+    look: channel::Sender<()>,
 }
 
 impl Hand {
@@ -535,16 +531,216 @@ impl Hand {
             _ => {
                 let Some((x, y)) = what.split_once(',').and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?))) else { return };
                 // On the phone's monitor, far to the right of the others.
-                if let Some((sc, _, px, pscale)) = phone.as_ref().filter(|p| x >= p.2 as f64) {
-                    route.pointer(sc, ((x - *px as f64) * pscale, y * pscale));
+                let crossed = if let Some((sc, _, px, pscale)) = phone.as_ref().filter(|p| x >= p.2 as f64) {
+                    route.pointer(sc, ((x - *px as f64) * pscale, y * pscale))
                 } else {
                     let m = ((x / self.unit_w as f64).floor().max(0.0) as usize).min(self.screens.len() - 1);
                     let (mx, my) = ((x - (m as i32 * self.unit_w) as f64) * self.scale, y * self.scale);
-                    route.pointer(&self.screens[m], (mx, my));
+                    route.pointer(&self.screens[m], (mx, my))
+                };
+                if crossed {
+                    let _ = self.look.send(());
                 }
                 crate::layers::set_pointer_at((x, y));
                 println!("headless · pointer {x},{y} → {:?}", route.hit);
             }
         }
+    }
+}
+
+/// One frame of a picture of the theme, as pictures of the screen take it,
+/// and how long it shows (ms).
+type LookFrame = (Arc<(Vec<u8>, (i32, i32))>, u32);
+
+/// The pointer as pictures of the screen show it, the only place a screenless
+/// session has one: the theme's shape for what the scene or the program under
+/// it asks (as the route says), frame by frame and through the theme's
+/// transitions, as the session's cursor plane plays it; none while a program
+/// hides it, and a program's own while it draws one. On a thread of its own,
+/// with a loop for the frames' timers.
+struct Look {
+    theme: Theme,
+    size: u32,
+    /// Each picture read so far, by name: its frames.
+    pictures: Vec<(String, Vec<LookFrame>)>,
+    route: Arc<Mutex<crate::route::Route>>,
+    scene: Cursor,
+    program: Cursor,
+    hidden: bool,
+    custom: Option<Arc<(Vec<u8>, (i32, i32))>>,
+    /// The shape asked for, what plays on the way to it, and what was asked
+    /// for while a transition played.
+    shown: Option<Cursor>,
+    playing: Option<Playing>,
+    queued: Option<Cursor>,
+    frame: usize,
+    timer: Option<RegistrationToken>,
+    handle: LoopHandle<'static, Look>,
+}
+
+impl Look {
+    /// Starts it, listening for the cursors asked for: what is given back is
+    /// to be told when what is under the pointer changes.
+    fn start(route: Arc<Mutex<crate::route::Route>>, scale: f64) -> channel::Sender<()> {
+        let (crossed_tx, crossed_rx) = channel::channel::<()>();
+        let (cursor_tx, cursor_rx) = channel::channel::<(bool, Cursor)>();
+        let (hidden_tx, hidden_rx) = channel::channel::<bool>();
+        let (custom_tx, custom_rx) = channel::channel::<Option<crate::layers::CursorPicture>>();
+        crate::layers::set_cursor_sink(cursor_tx);
+        crate::layers::set_cursor_hidden_sink(hidden_tx);
+        crate::layers::set_custom_cursor_sink(custom_tx);
+        let spawned = std::thread::Builder::new().name("headless·cursor".into()).spawn(move || {
+            let Ok(mut lp) = EventLoop::<Look>::try_new() else { return };
+            let handle = lp.handle();
+            let mut look = Look { theme: Theme::load(), size: cursor_theme::size_at(scale), pictures: Vec::new(), route, scene: Cursor::Normal, program: Cursor::Normal, hidden: false, custom: None, shown: None, playing: None, queued: None, frame: 0, timer: None, handle: handle.clone() };
+            let _ = handle.insert_source(cursor_rx, |e, _, look: &mut Look| {
+                if let channel::Event::Msg((from_program, c)) = e {
+                    if from_program { look.program = c } else { look.scene = c }
+                    look.show();
+                }
+            });
+            let _ = handle.insert_source(hidden_rx, |e, _, look: &mut Look| {
+                if let channel::Event::Msg(hidden) = e {
+                    look.hidden = hidden;
+                    look.shown = None;
+                    look.show();
+                }
+            });
+            let _ = handle.insert_source(custom_rx, |e, _, look: &mut Look| {
+                if let channel::Event::Msg(picture) = e {
+                    look.custom = picture.and_then(|p| cursor_theme::program_picture(&p)).map(Arc::new);
+                    look.shown = None;
+                    look.show();
+                }
+            });
+            let _ = handle.insert_source(crossed_rx, |e, _, look: &mut Look| {
+                if let channel::Event::Msg(()) = e {
+                    look.show();
+                }
+            });
+            for c in cursor_theme::KINDS {
+                look.picture(c.name());
+            }
+            if !look.picture("default") {
+                look.theme.has("default");
+                look.pictures.push(("default".into(), vec![(Arc::new((cursor_theme::arrow(), (0, 0))), 0)]));
+            }
+            println!("headless · cursor: {} at {} px", look.theme.name.as_deref().unwrap_or("its own arrow"), look.size);
+            look.show();
+            let _ = lp.run(None, &mut look, |_| {});
+        });
+        if let Err(e) = spawned {
+            eprintln!("headless · no cursor: {e}");
+        }
+        crossed_tx
+    }
+
+    /// A picture of the theme by its name, read once: whether it is there.
+    fn picture(&mut self, name: &str) -> bool {
+        if self.pictures.iter().any(|p| p.0 == name) {
+            return true;
+        }
+        let Some((_, frames)) = self.theme.frames(name, &[self.size]).and_then(|mut each| each.pop()).filter(|(_, f)| !f.is_empty()) else { return false };
+        self.pictures.push((name.to_owned(), frames.into_iter().map(|(px, hot, delay)| (Arc::new((px, hot)), delay)).collect()));
+        true
+    }
+
+    fn frames(&self) -> Option<&[LookFrame]> {
+        let p = self.playing.as_ref()?;
+        self.pictures.iter().find(|c| c.0 == p.asset).map(|c| c.1.as_slice())
+    }
+
+    /// The cursor of whoever has the pointer, if it is not the one shown.
+    fn show(&mut self) {
+        if let Some(picture) = &self.custom {
+            crate::layers::set_pointer_picture((!self.hidden).then(|| picture.clone()));
+            self.stop();
+            self.playing = None;
+            self.queued = None;
+            return;
+        }
+        let want = if matches!(self.route.lock().unwrap().hit, Hit::Client(..)) { self.program } else { self.scene };
+        // A shape the theme lacks is shown as the arrow.
+        let want = if self.picture(want.name()) { want } else { Cursor::Normal };
+        if !self.picture(want.name()) || self.shown == Some(want) {
+            self.queued = None;
+            return;
+        }
+        // A transition is let finish; the last shape asked for meanwhile comes after.
+        if self.timer.is_some() && self.playing.as_ref().is_some_and(|p| p.transition) {
+            self.queued = Some(want);
+            return;
+        }
+        self.change_to(want);
+    }
+
+    /// From the shape shown to another: through the theme's transition
+    /// between the two if it has one, then the shape itself.
+    fn change_to(&mut self, want: Cursor) {
+        let from = self.shown.replace(want);
+        self.queued = None;
+        self.playing = Some(Playing { asset: want.name().to_owned(), reverse: false, transition: false });
+        if let Some(from) = from.filter(|f| *f != want) {
+            if let Some((asset, reverse)) = cursor_theme::transition_between(from.name(), want.name(), |n| self.picture(n)) {
+                self.playing = Some(Playing { asset, reverse, transition: true });
+            }
+        }
+        self.frame = 0;
+        self.stop();
+        self.show_frame();
+        self.next_frame_later();
+    }
+
+    fn show_frame(&self) {
+        let (Some(p), Some(frames)) = (&self.playing, self.frames()) else { return };
+        let Some(f) = frames.get(p.index(self.frame, frames.len())) else { return };
+        crate::layers::set_pointer_picture((!self.hidden).then(|| f.0.clone()));
+    }
+
+    fn stop(&mut self) {
+        if let Some(t) = self.timer.take() {
+            self.handle.remove(t);
+        }
+    }
+
+    /// The next frame when this one's time is up: round and round for a shape
+    /// of several, once through for a transition. None while it is hidden.
+    fn next_frame_later(&mut self) {
+        if self.hidden {
+            return;
+        }
+        let (Some(p), Some(frames)) = (&self.playing, self.frames()) else { return };
+        let len = frames.len();
+        if len < 2 && !p.transition {
+            return;
+        }
+        let delay = frames.get(p.index(self.frame, len)).map_or(1, |f| f.1.max(1));
+        self.timer = self
+            .handle
+            .insert_source(Timer::from_duration(Duration::from_millis(delay as u64)), move |_, _, look: &mut Look| {
+                look.timer = None;
+                look.frame += 1;
+                if look.playing.as_ref().is_some_and(|p| p.transition) && look.frame >= len {
+                    // Played through: the shape it led to, or the one asked for since.
+                    let next = look.queued.take().or(look.shown);
+                    match (next, look.shown) {
+                        (Some(q), Some(s)) if q != s => look.change_to(q),
+                        (Some(n), _) => {
+                            look.shown = None;
+                            look.playing = None;
+                            look.change_to(n);
+                        }
+                        (None, _) => {
+                            look.playing = None;
+                            look.show();
+                        }
+                    }
+                    return TimeoutAction::Drop;
+                }
+                look.show_frame();
+                look.next_frame_later();
+                TimeoutAction::Drop
+            })
+            .ok();
     }
 }

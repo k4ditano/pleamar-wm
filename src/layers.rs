@@ -113,11 +113,15 @@ pub fn set_pointer_picture(picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>
 
 /// A picture for whoever does not say which monitor, and each monitor's own.
 pub fn set_pointer_pictures(picture: Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>, each: Vec<Option<std::sync::Arc<(Vec<u8>, (i32, i32))>>>) {
-    let mut p = POINTER_SEEN.lock().unwrap();
-    let seen = p.get_or_insert_with(PointerSeen::default);
-    seen.picture = picture;
-    seen.each = each;
-    seen.moves += 1;
+    {
+        let mut p = POINTER_SEEN.lock().unwrap();
+        let seen = p.get_or_insert_with(PointerSeen::default);
+        seen.picture = picture;
+        seen.each = each;
+        seen.moves += 1;
+    }
+    // A new shape, or the next frame of one, changes the pictures it is in.
+    pointer_moved();
 }
 
 pub fn set_pointer_at(at: (f64, f64)) {
