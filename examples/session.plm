@@ -142,118 +142,15 @@ scene Session {
     fact ph.front = -1
     // Each window going to the phone: the monitor and the place it left, and
     // how far it has poured into the phone on the curtain (1: all of it).
-    fact sc.last.0 = 0
-    fact gx.0 = 0
-    fact gy.0 = 0
-    fact gw.0 = 0
-    fact gh.0 = 0
-    fact was.ph.0 = 0
-    prop pour.0 = 1 ~0ms
-    fact sc.last.1 = 0
-    fact gx.1 = 0
-    fact gy.1 = 0
-    fact gw.1 = 0
-    fact gh.1 = 0
-    fact was.ph.1 = 0
-    prop pour.1 = 1 ~0ms
-    fact sc.last.2 = 0
-    fact gx.2 = 0
-    fact gy.2 = 0
-    fact gw.2 = 0
-    fact gh.2 = 0
-    fact was.ph.2 = 0
-    prop pour.2 = 1 ~0ms
-    fact sc.last.3 = 0
-    fact gx.3 = 0
-    fact gy.3 = 0
-    fact gw.3 = 0
-    fact gh.3 = 0
-    fact was.ph.3 = 0
-    prop pour.3 = 1 ~0ms
-    fact sc.last.4 = 0
-    fact gx.4 = 0
-    fact gy.4 = 0
-    fact gw.4 = 0
-    fact gh.4 = 0
-    fact was.ph.4 = 0
-    prop pour.4 = 1 ~0ms
-    fact sc.last.5 = 0
-    fact gx.5 = 0
-    fact gy.5 = 0
-    fact gw.5 = 0
-    fact gh.5 = 0
-    fact was.ph.5 = 0
-    prop pour.5 = 1 ~0ms
-    fact sc.last.6 = 0
-    fact gx.6 = 0
-    fact gy.6 = 0
-    fact gw.6 = 0
-    fact gh.6 = 0
-    fact was.ph.6 = 0
-    prop pour.6 = 1 ~0ms
-    fact sc.last.7 = 0
-    fact gx.7 = 0
-    fact gy.7 = 0
-    fact gw.7 = 0
-    fact gh.7 = 0
-    fact was.ph.7 = 0
-    prop pour.7 = 1 ~0ms
-    fact sc.last.8 = 0
-    fact gx.8 = 0
-    fact gy.8 = 0
-    fact gw.8 = 0
-    fact gh.8 = 0
-    fact was.ph.8 = 0
-    prop pour.8 = 1 ~0ms
-    fact sc.last.9 = 0
-    fact gx.9 = 0
-    fact gy.9 = 0
-    fact gw.9 = 0
-    fact gh.9 = 0
-    fact was.ph.9 = 0
-    prop pour.9 = 1 ~0ms
-    fact sc.last.10 = 0
-    fact gx.10 = 0
-    fact gy.10 = 0
-    fact gw.10 = 0
-    fact gh.10 = 0
-    fact was.ph.10 = 0
-    prop pour.10 = 1 ~0ms
-    fact sc.last.11 = 0
-    fact gx.11 = 0
-    fact gy.11 = 0
-    fact gw.11 = 0
-    fact gh.11 = 0
-    fact was.ph.11 = 0
-    prop pour.11 = 1 ~0ms
-    fact sc.last.12 = 0
-    fact gx.12 = 0
-    fact gy.12 = 0
-    fact gw.12 = 0
-    fact gh.12 = 0
-    fact was.ph.12 = 0
-    prop pour.12 = 1 ~0ms
-    fact sc.last.13 = 0
-    fact gx.13 = 0
-    fact gy.13 = 0
-    fact gw.13 = 0
-    fact gh.13 = 0
-    fact was.ph.13 = 0
-    prop pour.13 = 1 ~0ms
-    fact sc.last.14 = 0
-    fact gx.14 = 0
-    fact gy.14 = 0
-    fact gw.14 = 0
-    fact gh.14 = 0
-    fact was.ph.14 = 0
-    prop pour.14 = 1 ~0ms
-    fact sc.last.15 = 0
-    fact gx.15 = 0
-    fact gy.15 = 0
-    fact gw.15 = 0
-    fact gh.15 = 0
-    fact was.ph.15 = 0
-    prop pour.15 = 1 ~0ms
+    repeat k in 0..16 {
+        fact sc.last.$k = 0
+        fact gx.$k = 0
+        fact gy.$k = 0
+        fact gw.$k = 0
+        fact gh.$k = 0
+        fact was.ph.$k = 0
+        prop pour.$k = 1 ~0ms
+    }
     // The cards, and which one is in the middle.
     fact ph.cards = 0
     fact ph.at = 0
@@ -429,38 +326,16 @@ scene Session {
     // moves and comes closer with the camera; and the empty plane, dragged
     // with Super held, moves about, Super and the wheel zooms
     // where the pointer is ──
-    prop cvgx.0 = 0 ~glide
-    prop cvgy.0 = 0 ~glide
-    prop cvgz.0 = 1 ~glide
-    follow cvgx.0 = cvx.0
-    follow cvgy.0 = cvy.0
-    follow cvgz.0 = cvz.0
-    prop cvin.0 = 0 ~260ms
-    follow cvin.0 = if(cv.0 > 0.5 and free.0 > 0.5, 1, 0)
-    prop cvgx.1 = 0 ~glide
-    prop cvgy.1 = 0 ~glide
-    prop cvgz.1 = 1 ~glide
-    follow cvgx.1 = cvx.1
-    follow cvgy.1 = cvy.1
-    follow cvgz.1 = cvz.1
-    prop cvin.1 = 0 ~260ms
-    follow cvin.1 = if(cv.1 > 0.5 and free.1 > 0.5, 1, 0)
-    prop cvgx.2 = 0 ~glide
-    prop cvgy.2 = 0 ~glide
-    prop cvgz.2 = 1 ~glide
-    follow cvgx.2 = cvx.2
-    follow cvgy.2 = cvy.2
-    follow cvgz.2 = cvz.2
-    prop cvin.2 = 0 ~260ms
-    follow cvin.2 = if(cv.2 > 0.5 and free.2 > 0.5, 1, 0)
-    prop cvgx.3 = 0 ~glide
-    prop cvgy.3 = 0 ~glide
-    prop cvgz.3 = 1 ~glide
-    follow cvgx.3 = cvx.3
-    follow cvgy.3 = cvy.3
-    follow cvgz.3 = cvz.3
-    prop cvin.3 = 0 ~260ms
-    follow cvin.3 = if(cv.3 > 0.5 and free.3 > 0.5, 1, 0)
+    repeat k in 0..4 {
+        prop cvgx.$k = 0 ~glide
+        prop cvgy.$k = 0 ~glide
+        prop cvgz.$k = 1 ~glide
+        follow cvgx.$k = cvx.$k
+        follow cvgy.$k = cvy.$k
+        follow cvgz.$k = cvz.$k
+        prop cvin.$k = 0 ~260ms
+        follow cvin.$k = if(cv.$k > 0.5 and free.$k > 0.5, 1, 0)
+    }
     let cvh = cv[screen.index] > 0.5 and free[screen.index] > 0.5
     let cvh.z = cvgz[screen.index]
     let cvh.x0 = win.reserved[screen.index].left
@@ -569,10 +444,9 @@ scene Session {
     // zooms into any of them and out to see them all). Carrying a window, a strip of them appears at the top of
     // the monitor under the mouse: over one, everything shows how it would
     // be; let go there, and it is so (with a leader, the one carried leads).
-    fact lay.0 = 0
-    fact lay.1 = 0
-    fact lay.2 = 0
-    fact lay.3 = 0
+    repeat k in 0..4 {
+        fact lay.$k = 0
+    }
     // Each monitor's name (the session says it at startup): for the control
     // centre, which picks a monitor's layout by its name.
     text monname.0 = ""
@@ -580,25 +454,21 @@ scene Session {
     text monname.2 = ""
     text monname.3 = ""
     // How far each monitor's strip has glided (scrolling), and where it is shown.
-    fact sco.0 = 0
-    fact sco.1 = 0
-    fact sco.2 = 0
-    fact sco.3 = 0
-    prop scr.0 = 0 ~glide
-    prop scr.1 = 0 ~glide
-    prop scr.2 = 0 ~glide
-    prop scr.3 = 0 ~glide
-    follow scr.0 = sco.0
-    follow scr.1 = sco.1
-    follow scr.2 = sco.2
-    follow scr.3 = sco.3
+    repeat k in 0..4 {
+        fact sco.$k = 0
+    }
+    repeat k in 0..4 {
+        prop scr.$k = 0 ~glide
+    }
+    repeat k in 0..4 {
+        follow scr.$k = sco.$k
+    }
     // ── or free, as on Windows or KDE: each window where it is left and as big
     // as it is made, the one touched on top. Per monitor; Super+W or the
     // Marea's menu. Each window remembers where it was free.
-    fact free.0 = 0
-    fact free.1 = 0
-    fact free.2 = 0
-    fact free.3 = 0
+    repeat k in 0..4 {
+        fact free.$k = 0
+    }
     // ── or a canvas (Super+Shift+W, or the last of the strip): free, on a
     // plane with no edges that the monitor looks at through a camera. Each
     // window keeps its place on the plane (`fx`… are the plane's then, not
@@ -606,24 +476,16 @@ scene Session {
     // it as the camera sees it, smaller the further away. The empty plane,
     // dragged with Super held, moves the camera; Super and the wheel —over the plane or a
     // window— brings it closer or further where the pointer is. ──
-    fact cv.0 = 0
-    fact cv.1 = 0
-    fact cv.2 = 0
-    fact cv.3 = 0
+    repeat k in 0..4 {
+        fact cv.$k = 0
+    }
     // The camera: where it looks on the plane (0, 0 is where the monitor's
     // own windows are) and how close, from 0.1 to 1 (as they are).
-    fact cvx.0 = 0
-    fact cvy.0 = 0
-    fact cvz.0 = 1
-    fact cvx.1 = 0
-    fact cvy.1 = 0
-    fact cvz.1 = 1
-    fact cvx.2 = 0
-    fact cvy.2 = 0
-    fact cvz.2 = 1
-    fact cvx.3 = 0
-    fact cvy.3 = 0
-    fact cvz.3 = 1
+    repeat k in 0..4 {
+        fact cvx.$k = 0
+        fact cvy.$k = 0
+        fact cvz.$k = 1
+    }
     // Free is a canvas, and a canvas is free: one follows the other. A canvas
     // starts where the monitor's windows are, as they are.
     on change free.0 while free.0 < 0.5 { cv.0 = 0 }
@@ -707,135 +569,22 @@ scene Session {
     let mag = if(not mg.free or on.strip, 0, if(mg.l, if(mg.hi, 4, if(mg.lo, 5, 1)), if(mg.r, if(mg.hi, 6, if(mg.lo, 7, 2)), if(mg.t, 3, 0))))
     // ── fractal (7): each window's box in its monitor's square, 0 to 1, and
     // which monitor and pool that square is (a pool keeps its own) ──
-    fact tre.x.0 = 0
-    fact tre.y.0 = 0
-    fact tre.w.0 = 0
-    fact tre.h.0 = 0
-    fact tre.s.0 = -1
-    fact tre.p.0 = -1
-    fact tre.bye.0 = 0
-    fact tre.x.1 = 0
-    fact tre.y.1 = 0
-    fact tre.w.1 = 0
-    fact tre.h.1 = 0
-    fact tre.s.1 = -1
-    fact tre.p.1 = -1
-    fact tre.bye.1 = 0
-    fact tre.x.2 = 0
-    fact tre.y.2 = 0
-    fact tre.w.2 = 0
-    fact tre.h.2 = 0
-    fact tre.s.2 = -1
-    fact tre.p.2 = -1
-    fact tre.bye.2 = 0
-    fact tre.x.3 = 0
-    fact tre.y.3 = 0
-    fact tre.w.3 = 0
-    fact tre.h.3 = 0
-    fact tre.s.3 = -1
-    fact tre.p.3 = -1
-    fact tre.bye.3 = 0
-    fact tre.x.4 = 0
-    fact tre.y.4 = 0
-    fact tre.w.4 = 0
-    fact tre.h.4 = 0
-    fact tre.s.4 = -1
-    fact tre.p.4 = -1
-    fact tre.bye.4 = 0
-    fact tre.x.5 = 0
-    fact tre.y.5 = 0
-    fact tre.w.5 = 0
-    fact tre.h.5 = 0
-    fact tre.s.5 = -1
-    fact tre.p.5 = -1
-    fact tre.bye.5 = 0
-    fact tre.x.6 = 0
-    fact tre.y.6 = 0
-    fact tre.w.6 = 0
-    fact tre.h.6 = 0
-    fact tre.s.6 = -1
-    fact tre.p.6 = -1
-    fact tre.bye.6 = 0
-    fact tre.x.7 = 0
-    fact tre.y.7 = 0
-    fact tre.w.7 = 0
-    fact tre.h.7 = 0
-    fact tre.s.7 = -1
-    fact tre.p.7 = -1
-    fact tre.bye.7 = 0
-    fact tre.x.8 = 0
-    fact tre.y.8 = 0
-    fact tre.w.8 = 0
-    fact tre.h.8 = 0
-    fact tre.s.8 = -1
-    fact tre.p.8 = -1
-    fact tre.bye.8 = 0
-    fact tre.x.9 = 0
-    fact tre.y.9 = 0
-    fact tre.w.9 = 0
-    fact tre.h.9 = 0
-    fact tre.s.9 = -1
-    fact tre.p.9 = -1
-    fact tre.bye.9 = 0
-    fact tre.x.10 = 0
-    fact tre.y.10 = 0
-    fact tre.w.10 = 0
-    fact tre.h.10 = 0
-    fact tre.s.10 = -1
-    fact tre.p.10 = -1
-    fact tre.bye.10 = 0
-    fact tre.x.11 = 0
-    fact tre.y.11 = 0
-    fact tre.w.11 = 0
-    fact tre.h.11 = 0
-    fact tre.s.11 = -1
-    fact tre.p.11 = -1
-    fact tre.bye.11 = 0
-    fact tre.x.12 = 0
-    fact tre.y.12 = 0
-    fact tre.w.12 = 0
-    fact tre.h.12 = 0
-    fact tre.s.12 = -1
-    fact tre.p.12 = -1
-    fact tre.bye.12 = 0
-    fact tre.x.13 = 0
-    fact tre.y.13 = 0
-    fact tre.w.13 = 0
-    fact tre.h.13 = 0
-    fact tre.s.13 = -1
-    fact tre.p.13 = -1
-    fact tre.bye.13 = 0
-    fact tre.x.14 = 0
-    fact tre.y.14 = 0
-    fact tre.w.14 = 0
-    fact tre.h.14 = 0
-    fact tre.s.14 = -1
-    fact tre.p.14 = -1
-    fact tre.bye.14 = 0
-    fact tre.x.15 = 0
-    fact tre.y.15 = 0
-    fact tre.w.15 = 0
-    fact tre.h.15 = 0
-    fact tre.s.15 = -1
-    fact tre.p.15 = -1
-    fact tre.bye.15 = 0
+    repeat k in 0..16 {
+        fact tre.x.$k = 0
+        fact tre.y.$k = 0
+        fact tre.w.$k = 0
+        fact tre.h.$k = 0
+        fact tre.s.$k = -1
+        fact tre.p.$k = -1
+        fact tre.bye.$k = 0
+    }
     // The camera of each monitor: the piece of the square its screen shows.
-    fact cam.0.x = 0
-    fact cam.0.y = 0
-    fact cam.0.w = 1
-    fact cam.0.h = 1
-    fact cam.1.x = 0
-    fact cam.1.y = 0
-    fact cam.1.w = 1
-    fact cam.1.h = 1
-    fact cam.2.x = 0
-    fact cam.2.y = 0
-    fact cam.2.w = 1
-    fact cam.2.h = 1
-    fact cam.3.x = 0
-    fact cam.3.y = 0
-    fact cam.3.w = 1
-    fact cam.3.h = 1
+    repeat k in 0..4 {
+        fact cam.$k.x = 0
+        fact cam.$k.y = 0
+        fact cam.$k.w = 1
+        fact cam.$k.h = 1
+    }
     // One change to the boxes at a time: the one leaving (and its turn), the
     // one arriving, where it docks if it was let go on another one's edge,
     // and what is kept while a change is made (a rule sees each fact it
@@ -864,150 +613,17 @@ scene Session {
     // its group is the box (`tre.f…`) its fellows share as a screen of their
     // own, `d` of the square across. Outside any group, the lens is none and
     // the group is the whole square.
-    fact tre.ox.0 = 0
-    fact tre.oy.0 = 0
-    fact tre.sx.0 = 1
-    fact tre.sy.0 = 1
-    fact tre.d.0 = 1
-    fact tre.fx.0 = 0
-    fact tre.fy.0 = 0
-    fact tre.fw.0 = 1
-    fact tre.fh.0 = 1
-    fact tre.ox.1 = 0
-    fact tre.oy.1 = 0
-    fact tre.sx.1 = 1
-    fact tre.sy.1 = 1
-    fact tre.d.1 = 1
-    fact tre.fx.1 = 0
-    fact tre.fy.1 = 0
-    fact tre.fw.1 = 1
-    fact tre.fh.1 = 1
-    fact tre.ox.2 = 0
-    fact tre.oy.2 = 0
-    fact tre.sx.2 = 1
-    fact tre.sy.2 = 1
-    fact tre.d.2 = 1
-    fact tre.fx.2 = 0
-    fact tre.fy.2 = 0
-    fact tre.fw.2 = 1
-    fact tre.fh.2 = 1
-    fact tre.ox.3 = 0
-    fact tre.oy.3 = 0
-    fact tre.sx.3 = 1
-    fact tre.sy.3 = 1
-    fact tre.d.3 = 1
-    fact tre.fx.3 = 0
-    fact tre.fy.3 = 0
-    fact tre.fw.3 = 1
-    fact tre.fh.3 = 1
-    fact tre.ox.4 = 0
-    fact tre.oy.4 = 0
-    fact tre.sx.4 = 1
-    fact tre.sy.4 = 1
-    fact tre.d.4 = 1
-    fact tre.fx.4 = 0
-    fact tre.fy.4 = 0
-    fact tre.fw.4 = 1
-    fact tre.fh.4 = 1
-    fact tre.ox.5 = 0
-    fact tre.oy.5 = 0
-    fact tre.sx.5 = 1
-    fact tre.sy.5 = 1
-    fact tre.d.5 = 1
-    fact tre.fx.5 = 0
-    fact tre.fy.5 = 0
-    fact tre.fw.5 = 1
-    fact tre.fh.5 = 1
-    fact tre.ox.6 = 0
-    fact tre.oy.6 = 0
-    fact tre.sx.6 = 1
-    fact tre.sy.6 = 1
-    fact tre.d.6 = 1
-    fact tre.fx.6 = 0
-    fact tre.fy.6 = 0
-    fact tre.fw.6 = 1
-    fact tre.fh.6 = 1
-    fact tre.ox.7 = 0
-    fact tre.oy.7 = 0
-    fact tre.sx.7 = 1
-    fact tre.sy.7 = 1
-    fact tre.d.7 = 1
-    fact tre.fx.7 = 0
-    fact tre.fy.7 = 0
-    fact tre.fw.7 = 1
-    fact tre.fh.7 = 1
-    fact tre.ox.8 = 0
-    fact tre.oy.8 = 0
-    fact tre.sx.8 = 1
-    fact tre.sy.8 = 1
-    fact tre.d.8 = 1
-    fact tre.fx.8 = 0
-    fact tre.fy.8 = 0
-    fact tre.fw.8 = 1
-    fact tre.fh.8 = 1
-    fact tre.ox.9 = 0
-    fact tre.oy.9 = 0
-    fact tre.sx.9 = 1
-    fact tre.sy.9 = 1
-    fact tre.d.9 = 1
-    fact tre.fx.9 = 0
-    fact tre.fy.9 = 0
-    fact tre.fw.9 = 1
-    fact tre.fh.9 = 1
-    fact tre.ox.10 = 0
-    fact tre.oy.10 = 0
-    fact tre.sx.10 = 1
-    fact tre.sy.10 = 1
-    fact tre.d.10 = 1
-    fact tre.fx.10 = 0
-    fact tre.fy.10 = 0
-    fact tre.fw.10 = 1
-    fact tre.fh.10 = 1
-    fact tre.ox.11 = 0
-    fact tre.oy.11 = 0
-    fact tre.sx.11 = 1
-    fact tre.sy.11 = 1
-    fact tre.d.11 = 1
-    fact tre.fx.11 = 0
-    fact tre.fy.11 = 0
-    fact tre.fw.11 = 1
-    fact tre.fh.11 = 1
-    fact tre.ox.12 = 0
-    fact tre.oy.12 = 0
-    fact tre.sx.12 = 1
-    fact tre.sy.12 = 1
-    fact tre.d.12 = 1
-    fact tre.fx.12 = 0
-    fact tre.fy.12 = 0
-    fact tre.fw.12 = 1
-    fact tre.fh.12 = 1
-    fact tre.ox.13 = 0
-    fact tre.oy.13 = 0
-    fact tre.sx.13 = 1
-    fact tre.sy.13 = 1
-    fact tre.d.13 = 1
-    fact tre.fx.13 = 0
-    fact tre.fy.13 = 0
-    fact tre.fw.13 = 1
-    fact tre.fh.13 = 1
-    fact tre.ox.14 = 0
-    fact tre.oy.14 = 0
-    fact tre.sx.14 = 1
-    fact tre.sy.14 = 1
-    fact tre.d.14 = 1
-    fact tre.fx.14 = 0
-    fact tre.fy.14 = 0
-    fact tre.fw.14 = 1
-    fact tre.fh.14 = 1
-    fact tre.ox.15 = 0
-    fact tre.oy.15 = 0
-    fact tre.sx.15 = 1
-    fact tre.sy.15 = 1
-    fact tre.d.15 = 1
-    fact tre.fx.15 = 0
-    fact tre.fy.15 = 0
-    fact tre.fw.15 = 1
-    fact tre.fh.15 = 1
+    repeat k in 0..16 {
+        fact tre.ox.$k = 0
+        fact tre.oy.$k = 0
+        fact tre.sx.$k = 1
+        fact tre.sy.$k = 1
+        fact tre.d.$k = 1
+        fact tre.fx.$k = 0
+        fact tre.fy.$k = 0
+        fact tre.fw.$k = 1
+        fact tre.fh.$k = 1
+    }
     // A group being made (let go in another's middle), and the lens and
     // box a window that comes takes.
     fact tre.dk.grp = 0
@@ -1025,18 +641,11 @@ scene Session {
     // What each camera is on: 0 anywhere (the wheel), 1 a group, 2 a window;
     // and where it rests (what the programs are asked their size by, so a
     // wheel turning does not have them redraw at each notch).
-    fact cam.0.m = 0
-    fact camr.0.w = 1
-    fact camr.0.h = 1
-    fact cam.1.m = 0
-    fact camr.1.w = 1
-    fact camr.1.h = 1
-    fact cam.2.m = 0
-    fact camr.2.w = 1
-    fact camr.2.h = 1
-    fact cam.3.m = 0
-    fact camr.3.w = 1
-    fact camr.3.h = 1
+    repeat k in 0..4 {
+        fact cam.$k.m = 0
+        fact camr.$k.w = 1
+        fact camr.$k.h = 1
+    }
     // Super and the wheel over a window: how much, on which monitor, and the
     // point under the pointer (in the square, as seen).
     // Super and the wheel on a scrolling monitor: the column it asks for, the
@@ -4194,22 +3803,9 @@ scene Session {
     prop cvs.go = 0 ~0ms
     // «marea»: how much each window has been used lately, 0 to 2: each time
     // the keyboard goes to one, it grows and the rest ebb a little.
-    fact use.0 = 0
-    fact use.1 = 0
-    fact use.2 = 0
-    fact use.3 = 0
-    fact use.4 = 0
-    fact use.5 = 0
-    fact use.6 = 0
-    fact use.7 = 0
-    fact use.8 = 0
-    fact use.9 = 0
-    fact use.10 = 0
-    fact use.11 = 0
-    fact use.12 = 0
-    fact use.13 = 0
-    fact use.14 = 0
-    fact use.15 = 0
+    repeat k in 0..16 {
+        fact use.$k = 0
+    }
     on change win.focus while win.focus >= 0 {
         use.0 = min(2, use.0 * 0.9 + 0.35 * (win.focus == 0))
         use.1 = min(2, use.1 * 0.9 + 0.35 * (win.focus == 1))
@@ -4280,22 +3876,9 @@ scene Session {
     // A window fullscreen on the monitor under the mouse: the ones below it keep off the keyboard.
     let fs.on = (win.0.fullscreen and win.0.screen == mon and win.0.rank >= 0) + (win.1.fullscreen and win.1.screen == mon and win.1.rank >= 0) + (win.2.fullscreen and win.2.screen == mon and win.2.rank >= 0) + (win.3.fullscreen and win.3.screen == mon and win.3.rank >= 0) + (win.4.fullscreen and win.4.screen == mon and win.4.rank >= 0) + (win.5.fullscreen and win.5.screen == mon and win.5.rank >= 0) + (win.6.fullscreen and win.6.screen == mon and win.6.rank >= 0) + (win.7.fullscreen and win.7.screen == mon and win.7.rank >= 0) + (win.8.fullscreen and win.8.screen == mon and win.8.rank >= 0) + (win.9.fullscreen and win.9.screen == mon and win.9.rank >= 0) + (win.10.fullscreen and win.10.screen == mon and win.10.rank >= 0) + (win.11.fullscreen and win.11.screen == mon and win.11.rank >= 0) + (win.12.fullscreen and win.12.screen == mon and win.12.rank >= 0) + (win.13.fullscreen and win.13.screen == mon and win.13.rank >= 0) + (win.14.fullscreen and win.14.screen == mon and win.14.rank >= 0) + (win.15.fullscreen and win.15.screen == mon and win.15.rank >= 0)
     // Whether each window is maximized while tiled (see `maximize`, further down).
-    fact tmax.0 = 0
-    fact tmax.1 = 0
-    fact tmax.2 = 0
-    fact tmax.3 = 0
-    fact tmax.4 = 0
-    fact tmax.5 = 0
-    fact tmax.6 = 0
-    fact tmax.7 = 0
-    fact tmax.8 = 0
-    fact tmax.9 = 0
-    fact tmax.10 = 0
-    fact tmax.11 = 0
-    fact tmax.12 = 0
-    fact tmax.13 = 0
-    fact tmax.14 = 0
-    fact tmax.15 = 0
+    repeat k in 0..16 {
+        fact tmax.$k = 0
+    }
     // And one maximized (`maximize`) over its monitor: the ones beneath it are
     // covered, and the mouse going over where they are is not going to them
     // (it took the keyboard, and the maximized one went back to its tile).
@@ -8931,16 +8514,14 @@ scene Session {
         }
     }
     // Marea follows the mouse from monitor to monitor: she is told which.
-    on change mon while mon == 0 { launch "pleamar-wm --say marea 'emit pointer_monitor 0'" }
-    on change mon while mon == 1 { launch "pleamar-wm --say marea 'emit pointer_monitor 1'" }
-    on change mon while mon == 2 { launch "pleamar-wm --say marea 'emit pointer_monitor 2'" }
-    on change mon while mon == 3 { launch "pleamar-wm --say marea 'emit pointer_monitor 3'" }
+    repeat k in 0..4 {
+        on change mon while mon == k { launch "pleamar-wm --say marea 'emit pointer_monitor k'" }
+    }
     // Tiled or free, on the monitor under the mouse (Super+W; Marea's menu too).
     event toggle_free
-    on toggle_free while mon == 0 { free.0 = 1 - free.0 }
-    on toggle_free while mon == 1 { free.1 = 1 - free.1 }
-    on toggle_free while mon == 2 { free.2 = 1 - free.2 }
-    on toggle_free while mon == 3 { free.3 = 1 - free.3 }
+    repeat k in 0..4 {
+        on toggle_free while mon == k { free.$k = 1 - free.$k }
+    }
 
     // ── Marea rides a window ──
     // Marea asks (`emit ride`): she leaves her island by the top edge, and here
@@ -9206,10 +8787,9 @@ scene Session {
     }
     // (Super+Shift+W, from before free was a canvas: the same as Super+W.)
     event toggle_canvas
-    on toggle_canvas while mon == 0 { free.0 = 1 - free.0 }
-    on toggle_canvas while mon == 1 { free.1 = 1 - free.1 }
-    on toggle_canvas while mon == 2 { free.2 = 1 - free.2 }
-    on toggle_canvas while mon == 3 { free.3 = 1 - free.3 }
+    repeat k in 0..4 {
+        on toggle_canvas while mon == k { free.$k = 1 - free.$k }
+    }
     // Super+0 on a canvas: the camera takes in all of its windows (on the
     // pool it shows), as close as they fit, never closer than as they are.
     // Each one there says its box on the plane (`cvf`), then the camera goes.
