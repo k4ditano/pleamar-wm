@@ -162,26 +162,13 @@ scene Session {
     service clock as now { time: text; hour: number }
     // Each window's turn on the phone, left to right as they opened, and how many there are.
     let ph.on[16]
+    let ph.k[16]
+    let ph.n = 0
     repeat k in 0..16 {
         ph.on[k] = phone >= 0 and win.$k.open and win.$k.screen == phone and not win.$k.dialog
+        ph.k[k] = ph.n
+        ph.n += ph.on[k]
     }
-    let ph.n = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11 + ph.on.12 + ph.on.13 + ph.on.14 + ph.on.15
-    let ph.k.0 = 0
-    let ph.k.1 = ph.on.0
-    let ph.k.2 = ph.on.0 + ph.on.1
-    let ph.k.3 = ph.on.0 + ph.on.1 + ph.on.2
-    let ph.k.4 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3
-    let ph.k.5 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4
-    let ph.k.6 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5
-    let ph.k.7 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6
-    let ph.k.8 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7
-    let ph.k.9 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8
-    let ph.k.10 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9
-    let ph.k.11 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10
-    let ph.k.12 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11
-    let ph.k.13 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11 + ph.on.12
-    let ph.k.14 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11 + ph.on.12 + ph.on.13
-    let ph.k.15 = ph.on.0 + ph.on.1 + ph.on.2 + ph.on.3 + ph.on.4 + ph.on.5 + ph.on.6 + ph.on.7 + ph.on.8 + ph.on.9 + ph.on.10 + ph.on.11 + ph.on.12 + ph.on.13 + ph.on.14
     let ph.kf = ph.k[max(ph.front, 0)]
     // The cards (and what to open) instead of an app: asked for, or nothing in front.
     let ph.home = phone >= 0 and (ph.cards > 0.5 or ph.n < 1 or ph.front < 0)
@@ -201,10 +188,11 @@ scene Session {
     fact ph.solo = 0
     let ph.ka = if(ph.kf > 0, ph.kf - 1, 1)
     let ph.adj[16]
+    let ph.auto = -1
     repeat j in 0..16 {
         ph.adj[j] = ph.on.$j and ph.front != j and ph.k.$j == ph.ka
+        ph.auto += (j + 1) * ph.adj[j]
     }
-    let ph.auto = -1 + 1 * ph.adj.0 + 2 * ph.adj.1 + 3 * ph.adj.2 + 4 * ph.adj.3 + 5 * ph.adj.4 + 6 * ph.adj.5 + 7 * ph.adj.6 + 8 * ph.adj.7 + 9 * ph.adj.8 + 10 * ph.adj.9 + 11 * ph.adj.10 + 12 * ph.adj.11 + 13 * ph.adj.12 + 14 * ph.adj.13 + 15 * ph.adj.14 + 16 * ph.adj.15
     let ph.sok = ph.side >= 0 and ph.side != ph.front and ph.on[max(ph.side, 0)]
     let ph.sd = if(ph.sok, ph.side, ph.auto)
     let ph.split = phone >= 0 and ph.wide and ph.solo < 0.5 and ph.front >= 0 and ph.sd >= 0
@@ -1032,11 +1020,18 @@ scene Session {
     // and on its own the rest close up. Its turn there is its turn in the
     // order; first, if it is let go on a layout with a leader.
     let crossing = dragging >= 0 and mon != dsc and not dfl
-    let landing.place = if(leads, 0, (win.0.open and win.0.screen == mon and win.0.rank >= 0 and win.0.rank < ordD) + (win.1.open and win.1.screen == mon and win.1.rank >= 0 and win.1.rank < ordD) + (win.2.open and win.2.screen == mon and win.2.rank >= 0 and win.2.rank < ordD) + (win.3.open and win.3.screen == mon and win.3.rank >= 0 and win.3.rank < ordD) + (win.4.open and win.4.screen == mon and win.4.rank >= 0 and win.4.rank < ordD) + (win.5.open and win.5.screen == mon and win.5.rank >= 0 and win.5.rank < ordD) + (win.6.open and win.6.screen == mon and win.6.rank >= 0 and win.6.rank < ordD) + (win.7.open and win.7.screen == mon and win.7.rank >= 0 and win.7.rank < ordD) + (win.8.open and win.8.screen == mon and win.8.rank >= 0 and win.8.rank < ordD) + (win.9.open and win.9.screen == mon and win.9.rank >= 0 and win.9.rank < ordD) + (win.10.open and win.10.screen == mon and win.10.rank >= 0 and win.10.rank < ordD) + (win.11.open and win.11.screen == mon and win.11.rank >= 0 and win.11.rank < ordD) + (win.12.open and win.12.screen == mon and win.12.rank >= 0 and win.12.rank < ordD) + (win.13.open and win.13.screen == mon and win.13.rank >= 0 and win.13.rank < ordD) + (win.14.open and win.14.screen == mon and win.14.rank >= 0 and win.14.rank < ordD) + (win.15.open and win.15.screen == mon and win.15.rank >= 0 and win.15.rank < ordD))
+    let landing.place.n = 0
+    repeat k in 0..16 {
+        landing.place.n += win.$k.open and win.$k.screen == mon and win.$k.rank >= 0 and win.$k.rank < ordD
+    }
+    let landing.place = if(leads, 0, landing.place.n)
     let landing.n = win.on[mon] + 1
     let landing.lay = if(picked >= 0 and picked < 8, picked, lay.here)
     // A window fullscreen on the monitor under the mouse: the ones below it keep off the keyboard.
-    let fs.on = (win.0.fullscreen and win.0.screen == mon and win.0.rank >= 0) + (win.1.fullscreen and win.1.screen == mon and win.1.rank >= 0) + (win.2.fullscreen and win.2.screen == mon and win.2.rank >= 0) + (win.3.fullscreen and win.3.screen == mon and win.3.rank >= 0) + (win.4.fullscreen and win.4.screen == mon and win.4.rank >= 0) + (win.5.fullscreen and win.5.screen == mon and win.5.rank >= 0) + (win.6.fullscreen and win.6.screen == mon and win.6.rank >= 0) + (win.7.fullscreen and win.7.screen == mon and win.7.rank >= 0) + (win.8.fullscreen and win.8.screen == mon and win.8.rank >= 0) + (win.9.fullscreen and win.9.screen == mon and win.9.rank >= 0) + (win.10.fullscreen and win.10.screen == mon and win.10.rank >= 0) + (win.11.fullscreen and win.11.screen == mon and win.11.rank >= 0) + (win.12.fullscreen and win.12.screen == mon and win.12.rank >= 0) + (win.13.fullscreen and win.13.screen == mon and win.13.rank >= 0) + (win.14.fullscreen and win.14.screen == mon and win.14.rank >= 0) + (win.15.fullscreen and win.15.screen == mon and win.15.rank >= 0)
+    let fs.on = 0
+    repeat k in 0..16 {
+        fs.on += win.$k.fullscreen and win.$k.screen == mon and win.$k.rank >= 0
+    }
     // Whether each window is maximized while tiled (see `maximize`, further down).
     repeat k in 0..16 {
         fact tmax.$k = 0
@@ -1044,7 +1039,10 @@ scene Session {
     // And one maximized (`maximize`) over its monitor: the ones beneath it are
     // covered, and the mouse going over where they are is not going to them
     // (it took the keyboard, and the maximized one went back to its tile).
-    let max.on = (tmax.0 > 0.5 and win.0.screen == mon and win.0.rank >= 0 and not win.0.fullscreen and not win.0.minimized) + (tmax.1 > 0.5 and win.1.screen == mon and win.1.rank >= 0 and not win.1.fullscreen and not win.1.minimized) + (tmax.2 > 0.5 and win.2.screen == mon and win.2.rank >= 0 and not win.2.fullscreen and not win.2.minimized) + (tmax.3 > 0.5 and win.3.screen == mon and win.3.rank >= 0 and not win.3.fullscreen and not win.3.minimized) + (tmax.4 > 0.5 and win.4.screen == mon and win.4.rank >= 0 and not win.4.fullscreen and not win.4.minimized) + (tmax.5 > 0.5 and win.5.screen == mon and win.5.rank >= 0 and not win.5.fullscreen and not win.5.minimized) + (tmax.6 > 0.5 and win.6.screen == mon and win.6.rank >= 0 and not win.6.fullscreen and not win.6.minimized) + (tmax.7 > 0.5 and win.7.screen == mon and win.7.rank >= 0 and not win.7.fullscreen and not win.7.minimized) + (tmax.8 > 0.5 and win.8.screen == mon and win.8.rank >= 0 and not win.8.fullscreen and not win.8.minimized) + (tmax.9 > 0.5 and win.9.screen == mon and win.9.rank >= 0 and not win.9.fullscreen and not win.9.minimized) + (tmax.10 > 0.5 and win.10.screen == mon and win.10.rank >= 0 and not win.10.fullscreen and not win.10.minimized) + (tmax.11 > 0.5 and win.11.screen == mon and win.11.rank >= 0 and not win.11.fullscreen and not win.11.minimized) + (tmax.12 > 0.5 and win.12.screen == mon and win.12.rank >= 0 and not win.12.fullscreen and not win.12.minimized) + (tmax.13 > 0.5 and win.13.screen == mon and win.13.rank >= 0 and not win.13.fullscreen and not win.13.minimized) + (tmax.14 > 0.5 and win.14.screen == mon and win.14.rank >= 0 and not win.14.fullscreen and not win.14.minimized) + (tmax.15 > 0.5 and win.15.screen == mon and win.15.rank >= 0 and not win.15.fullscreen and not win.15.minimized)
+    let max.on = 0
+    repeat k in 0..16 {
+        max.on += tmax.$k > 0.5 and win.$k.screen == mon and win.$k.rank >= 0 and not win.$k.fullscreen and not win.$k.minimized
+    }
 
     // ── pools: each monitor has its own, one below the other, as tide
     // pools are left along a shore. There are as many as hold windows, and
@@ -2163,7 +2161,11 @@ scene Session {
     // beneath it.
     let Wmon = screen[mon].width
     let Hmon = screen[mon].height
-    let on.dialog = (win.0.dialog and win.0.open and win.0.screen == mon and win.0.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.0.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.0.height, 40) + tb) / 2) + (win.1.dialog and win.1.open and win.1.screen == mon and win.1.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.1.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.1.height, 40) + tb) / 2) + (win.2.dialog and win.2.open and win.2.screen == mon and win.2.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.2.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.2.height, 40) + tb) / 2) + (win.3.dialog and win.3.open and win.3.screen == mon and win.3.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.3.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.3.height, 40) + tb) / 2) + (win.4.dialog and win.4.open and win.4.screen == mon and win.4.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.4.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.4.height, 40) + tb) / 2) + (win.5.dialog and win.5.open and win.5.screen == mon and win.5.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.5.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.5.height, 40) + tb) / 2) + (win.6.dialog and win.6.open and win.6.screen == mon and win.6.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.6.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.6.height, 40) + tb) / 2) + (win.7.dialog and win.7.open and win.7.screen == mon and win.7.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.7.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.7.height, 40) + tb) / 2) + (win.8.dialog and win.8.open and win.8.screen == mon and win.8.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.8.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.8.height, 40) + tb) / 2) + (win.9.dialog and win.9.open and win.9.screen == mon and win.9.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.9.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.9.height, 40) + tb) / 2) + (win.10.dialog and win.10.open and win.10.screen == mon and win.10.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.10.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.10.height, 40) + tb) / 2) + (win.11.dialog and win.11.open and win.11.screen == mon and win.11.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.11.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.11.height, 40) + tb) / 2) + (win.12.dialog and win.12.open and win.12.screen == mon and win.12.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.12.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.12.height, 40) + tb) / 2) + (win.13.dialog and win.13.open and win.13.screen == mon and win.13.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.13.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.13.height, 40) + tb) / 2) + (win.14.dialog and win.14.open and win.14.screen == mon and win.14.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.14.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.14.height, 40) + tb) / 2) + (win.15.dialog and win.15.open and win.15.screen == mon and win.15.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.15.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.15.height, 40) + tb) / 2) > 0.5
+    let on.dialog.n = 0
+    repeat k in 0..16 {
+        on.dialog.n += win.$k.dialog and win.$k.open and win.$k.screen == mon and win.$k.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.$k.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.$k.height, 40) + tb) / 2
+    }
+    let on.dialog = on.dialog.n > 0.5
 
     // The workspace of the window with the keyboard, and whether it is a
     // dialog or floats: another one taking the keyboard there puts a
