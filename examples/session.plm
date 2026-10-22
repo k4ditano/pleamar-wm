@@ -638,9 +638,9 @@ scene Session {
         tv.t += tT[k] * tre.w.$k
     }
     let tv.R = abs(tv.r - tl.h) < 0.003
-    let tv.L = abs(tL.0 * tre.h.0 + tL.1 * tre.h.1 + tL.2 * tre.h.2 + tL.3 * tre.h.3 + tL.4 * tre.h.4 + tL.5 * tre.h.5 + tL.6 * tre.h.6 + tL.7 * tre.h.7 + tL.8 * tre.h.8 + tL.9 * tre.h.9 + tL.10 * tre.h.10 + tL.11 * tre.h.11 + tL.12 * tre.h.12 + tL.13 * tre.h.13 + tL.14 * tre.h.14 + tL.15 * tre.h.15 - tl.h) < 0.003
-    let tv.B = abs(tB.0 * tre.w.0 + tB.1 * tre.w.1 + tB.2 * tre.w.2 + tB.3 * tre.w.3 + tB.4 * tre.w.4 + tB.5 * tre.w.5 + tB.6 * tre.w.6 + tB.7 * tre.w.7 + tB.8 * tre.w.8 + tB.9 * tre.w.9 + tB.10 * tre.w.10 + tB.11 * tre.w.11 + tB.12 * tre.w.12 + tB.13 * tre.w.13 + tB.14 * tre.w.14 + tB.15 * tre.w.15 - tl.w) < 0.003
-    let tv.T = abs(tT.0 * tre.w.0 + tT.1 * tre.w.1 + tT.2 * tre.w.2 + tT.3 * tre.w.3 + tT.4 * tre.w.4 + tT.5 * tre.w.5 + tT.6 * tre.w.6 + tT.7 * tre.w.7 + tT.8 * tre.w.8 + tT.9 * tre.w.9 + tT.10 * tre.w.10 + tT.11 * tre.w.11 + tT.12 * tre.w.12 + tT.13 * tre.w.13 + tT.14 * tre.w.14 + tT.15 * tre.w.15 - tl.w) < 0.003
+    let tv.L = abs(tv.l - tl.h) < 0.003
+    let tv.B = abs(tv.b - tl.w) < 0.003
+    let tv.T = abs(tv.t - tl.w) < 0.003
     let tl.ox = tre.ox[max(tre.lv, 0)]
     let tl.oy = tre.oy[max(tre.lv, 0)]
     let tl.sx = tre.sx[max(tre.lv, 0)]
@@ -681,9 +681,9 @@ scene Session {
         tp.i = if(tp.i < 0 and tpc[k] and tpa[k] == tp.min, k, tp.i)
     }
     let tvs.R = abs(tvs.r - tl.h) < 0.003
-    let tvs.L = abs(tL.0 * tsm.0 * tre.h.0 + tL.1 * tsm.1 * tre.h.1 + tL.2 * tsm.2 * tre.h.2 + tL.3 * tsm.3 * tre.h.3 + tL.4 * tsm.4 * tre.h.4 + tL.5 * tsm.5 * tre.h.5 + tL.6 * tsm.6 * tre.h.6 + tL.7 * tsm.7 * tre.h.7 + tL.8 * tsm.8 * tre.h.8 + tL.9 * tsm.9 * tre.h.9 + tL.10 * tsm.10 * tre.h.10 + tL.11 * tsm.11 * tre.h.11 + tL.12 * tsm.12 * tre.h.12 + tL.13 * tsm.13 * tre.h.13 + tL.14 * tsm.14 * tre.h.14 + tL.15 * tsm.15 * tre.h.15 - tl.h) < 0.003
-    let tvs.B = abs(tB.0 * tsm.0 * tre.w.0 + tB.1 * tsm.1 * tre.w.1 + tB.2 * tsm.2 * tre.w.2 + tB.3 * tsm.3 * tre.w.3 + tB.4 * tsm.4 * tre.w.4 + tB.5 * tsm.5 * tre.w.5 + tB.6 * tsm.6 * tre.w.6 + tB.7 * tsm.7 * tre.w.7 + tB.8 * tsm.8 * tre.w.8 + tB.9 * tsm.9 * tre.w.9 + tB.10 * tsm.10 * tre.w.10 + tB.11 * tsm.11 * tre.w.11 + tB.12 * tsm.12 * tre.w.12 + tB.13 * tsm.13 * tre.w.13 + tB.14 * tsm.14 * tre.w.14 + tB.15 * tsm.15 * tre.w.15 - tl.w) < 0.003
-    let tvs.T = abs(tT.0 * tsm.0 * tre.w.0 + tT.1 * tsm.1 * tre.w.1 + tT.2 * tsm.2 * tre.w.2 + tT.3 * tsm.3 * tre.w.3 + tT.4 * tsm.4 * tre.w.4 + tT.5 * tsm.5 * tre.w.5 + tT.6 * tsm.6 * tre.w.6 + tT.7 * tsm.7 * tre.w.7 + tT.8 * tsm.8 * tre.w.8 + tT.9 * tsm.9 * tre.w.9 + tT.10 * tsm.10 * tre.w.10 + tT.11 * tsm.11 * tre.w.11 + tT.12 * tsm.12 * tre.w.12 + tT.13 * tsm.13 * tre.w.13 + tT.14 * tsm.14 * tre.w.14 + tT.15 * tsm.15 * tre.w.15 - tl.w) < 0.003
+    let tvs.L = abs(tvs.l - tl.h) < 0.003
+    let tvs.B = abs(tvs.b - tl.w) < 0.003
+    let tvs.T = abs(tvs.t - tl.w) < 0.003
     let tside = if(tvs.R, 1, if(tvs.L, 2, if(tvs.B, 3, if(tvs.T, 4, if(tv.R, 1, if(tv.L, 2, if(tv.B, 3, if(tv.T, 4, 0))))))))
     on change tre.n while tre.lv >= 0 {
         tre.side = tside
