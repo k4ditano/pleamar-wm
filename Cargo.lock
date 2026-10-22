@@ -2122,7 +2122,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pleamar"
-version = "0.4.28"
+version = "0.4.29"
 dependencies = [
  "arboard",
  "ash",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "pleamar-wm"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "async-channel",
  "async-io",
@@ -2178,7 +2178,7 @@ dependencies = [
 
 [[package]]
 name = "pleamar-wm-stream"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "ffmpeg-sys-next",
  "libc",
@@ -2521,12 +2521,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67e3803f97b999e80cbf7c6ecdd07a8102204d92e1633cf48783720c521196bd"
 dependencies = [
  "bytemuck",
+ "gif",
+ "image-webp",
  "log",
  "pico-args",
  "rgb",
  "svgtypes",
  "tiny-skia",
  "usvg",
+ "zune-jpeg",
 ]
 
 [[package]]
