@@ -62,7 +62,9 @@ language 0.1
 scene Session {
     // One copy per monitor: each lays out its own windows (`win.$i.screen`).
     surface { size: full, full; screens: each max 4 }
-    windows win max 16
+    // A new window waits out of the layout until it is given its place: at
+    // once, or on a fractal monitor once its box is cut (`accept`).
+    windows win max 16 placement manual
 
     let ink = #f5f7f5
     let mint = #9ed6bd
@@ -799,12 +801,9 @@ scene Session {
     // let go on, on that side; alone, it has all of the square.
     let tre.need[16]
     repeat k in 0..16 {
-        tre.need[k] = win.$k.open and win.$k.place >= 0 and lay[max(win.$k.screen, 0)] == 7 and tre.w.$k < 0.001 and tre.bye.$k < 0.5
-        on change tre.need.$k while tre.need.$k and tre.nw < 0 and tre.lv < 0 {
-            tre.nw = k
-            tre.m = tre.m + 1
-        }
-        on still tre.need.$k for 250ms while tre.need.$k and tre.nw < 0 and tre.lv < 0 {
+        tre.need[k] = win.$k.open and (win.$k.place >= 0 or win.$k.pending) and lay[max(win.$k.screen, 0)] == 7 and tre.w.$k < 0.001 and tre.bye.$k < 0.5
+        // (One that came while another change was being made: when that one ends.)
+        on change tre.need.$k + 100 * (tre.nw + 100 * tre.lv) while tre.need.$k and tre.nw < 0 and tre.lv < 0 {
             tre.nw = k
             tre.m = tre.m + 1
         }
@@ -880,6 +879,7 @@ scene Session {
         }
         tre.dk.grp = if(tre.dk.src == tre.nw, 0, tre.dk.grp)
         tre.dk.src = if(tre.dk.src == tre.nw, -1, tre.dk.src)
+        accept win(tre.nw)
         tre.nw = -1
     }
     // A monitor that becomes fractal starts as columns, in their order; and so
@@ -4104,6 +4104,12 @@ scene Session {
         // they were before it changed. The keyboard going to a window on the
         // other monitor looked like one on this one, and the maximized window
         // went back to its tile.)
+        // A new window takes its place at once, except on a fractal monitor
+        // (it does once its box is cut); a dialog or a floating one at once
+        // there too. Never left waiting.
+        on change win.$i.open while win.$i.pending and lay[max(win.$i.screen, 0)] != 7 { accept win(i) }
+        on change win.$i.dialog + win.$i.floating while win.$i.pending and (win.$i.dialog or win.$i.floating) { accept win(i) }
+        on still win.$i.pending for 1s while win.$i.pending { accept win(i) }
         on change win.focus while tmax.$i > 0.5 and win.focus >= 0 and win.focus != i and win[max(win.focus, 0)].screen == sc and win[max(win.focus, 0)].pool == win.$i.pool and not win[max(win.focus, 0)].dialog and not win[max(win.focus, 0)].floating { tmax.$i = 0 }
         on change dragging while dragging == i { tmax.$i = 0 }
         // Put away, it stays where it was (the others close up without it),
