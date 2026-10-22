@@ -710,20 +710,16 @@ scene Session {
         tre.g.fy = if(tp.i >= 0, tre.fy[max(tp.i, 0)], 0)
         tre.g.fw = if(tp.i >= 0, tre.fw[max(tp.i, 0)], 1)
         tre.g.fh = if(tp.i >= 0, tre.fh[max(tp.i, 0)], 1)
-        repeat k in 0..16 {
-            tre.ox.$k = if(tre.g.i == k, tre.g.ox, tre.ox.$k)
-            tre.oy.$k = if(tre.g.i == k, tre.g.oy, tre.oy.$k)
-            tre.sx.$k = if(tre.g.i == k, tre.g.sx, tre.sx.$k)
-            tre.sy.$k = if(tre.g.i == k, tre.g.sy, tre.sy.$k)
-            tre.d.$k = if(tre.g.i == k, tre.g.d, tre.d.$k)
-            tre.fx.$k = if(tre.g.i == k, tre.g.fx, tre.fx.$k)
-            tre.fy.$k = if(tre.g.i == k, tre.g.fy, tre.fy.$k)
-            tre.fw.$k = if(tre.g.i == k, tre.g.fw, tre.fw.$k)
-            tre.fh.$k = if(tre.g.i == k, tre.g.fh, tre.fh.$k)
-        }
-        repeat k in 0..16 {
-            tre.w.$k = if(tre.lv == k, 0, tre.w.$k)
-        }
+        tre.ox[tre.g.i] = tre.g.ox
+        tre.oy[tre.g.i] = tre.g.oy
+        tre.sx[tre.g.i] = tre.g.sx
+        tre.sy[tre.g.i] = tre.g.sy
+        tre.d[tre.g.i] = tre.g.d
+        tre.fx[tre.g.i] = tre.g.fx
+        tre.fy[tre.g.i] = tre.g.fy
+        tre.fw[tre.g.i] = tre.g.fw
+        tre.fh[tre.g.i] = tre.g.fh
+        tre.w[tre.lv] = 0
         tre.lv = -1
     }
     // A window that comes to a fractal monitor without a box: it halves the
@@ -790,23 +786,36 @@ scene Session {
         tre.by = if(tre.side == 2, tn.y + tn.h / 2, tn.y)
         tre.bw = if(tre.side < 1.5, tn.w / 2, tn.w)
         tre.bh = if(tre.side > 1.5, tn.h / 2, tn.h)
-        repeat k in 0..16 {
-            tre.x.$k = if(tre.nw == k, tre.ax, if(tre.t == k, tre.bx, tre.x.$k))
-            tre.y.$k = if(tre.nw == k, tre.ay, if(tre.t == k, tre.by, tre.y.$k))
-            tre.w.$k = if(tre.nw == k, tre.aw, if(tre.t == k, tre.bw, tre.w.$k))
-            tre.h.$k = if(tre.nw == k, tre.ah, if(tre.t == k, tre.bh, tre.h.$k))
-            tre.s.$k = if(tre.nw == k, tre.as, tre.s.$k)
-            tre.p.$k = if(tre.nw == k, tre.ap, tre.p.$k)
-            tre.ox.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.ox, tre.ox.$k)
-            tre.oy.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.oy, tre.oy.$k)
-            tre.sx.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.sx, tre.sx.$k)
-            tre.sy.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.sy, tre.sy.$k)
-            tre.d.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.d, tre.d.$k)
-            tre.fx.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.fx, tre.fx.$k)
-            tre.fy.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.fy, tre.fy.$k)
-            tre.fw.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.fw, tre.fw.$k)
-            tre.fh.$k = if(tre.nw == k or (tre.grp > 0.5 and tre.t == k), tre.g.fh, tre.fh.$k)
-        }
+        // The one it halves keeps the other half; the new one takes its half.
+        tre.x[tre.t] = tre.bx
+        tre.y[tre.t] = tre.by
+        tre.w[tre.t] = tre.bw
+        tre.h[tre.t] = tre.bh
+        tre.x[tre.nw] = tre.ax
+        tre.y[tre.nw] = tre.ay
+        tre.w[tre.nw] = tre.aw
+        tre.h[tre.nw] = tre.ah
+        tre.s[tre.nw] = tre.as
+        tre.p[tre.nw] = tre.ap
+        // Both through the new group's lens if they make one; the new one always.
+        tre.ox[if(tre.grp > 0.5, tre.t, -1)] = tre.g.ox
+        tre.ox[tre.nw] = tre.g.ox
+        tre.oy[if(tre.grp > 0.5, tre.t, -1)] = tre.g.oy
+        tre.oy[tre.nw] = tre.g.oy
+        tre.sx[if(tre.grp > 0.5, tre.t, -1)] = tre.g.sx
+        tre.sx[tre.nw] = tre.g.sx
+        tre.sy[if(tre.grp > 0.5, tre.t, -1)] = tre.g.sy
+        tre.sy[tre.nw] = tre.g.sy
+        tre.d[if(tre.grp > 0.5, tre.t, -1)] = tre.g.d
+        tre.d[tre.nw] = tre.g.d
+        tre.fx[if(tre.grp > 0.5, tre.t, -1)] = tre.g.fx
+        tre.fx[tre.nw] = tre.g.fx
+        tre.fy[if(tre.grp > 0.5, tre.t, -1)] = tre.g.fy
+        tre.fy[tre.nw] = tre.g.fy
+        tre.fw[if(tre.grp > 0.5, tre.t, -1)] = tre.g.fw
+        tre.fw[tre.nw] = tre.g.fw
+        tre.fh[if(tre.grp > 0.5, tre.t, -1)] = tre.g.fh
+        tre.fh[tre.nw] = tre.g.fh
         tre.dk.grp = if(tre.dk.src == tre.nw, 0, tre.dk.grp)
         tre.dk.src = if(tre.dk.src == tre.nw, -1, tre.dk.src)
         accept win(tre.nw)
@@ -3360,10 +3369,8 @@ scene Session {
         // The one that gets the keyboard, mostly out of sight on a canvas:
         // the camera goes to it.
         on change win.$i.focused while win.$i.focused and C and fr and dragging < 0 and (fgx + fgw / 2 < x0 or fgx + fgw / 2 > x0 + Ws or fgy + fgh / 2 < y0 or fgy + fgh / 2 > y0 + ah) {
-            repeat k in 0..4 {
-                cvx.$k = if(sc == k, fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz, cvx.$k)
-                cvy.$k = if(sc == k, fy.$i + fh.$i / 2 - y0 - ah / 2 / cz, cvy.$k)
-            }
+            cvx[sc] = fx.$i + fw.$i / 2 - x0 - Ws / 2 / cz
+            cvy[sc] = fy.$i + fh.$i / 2 - y0 - ah / 2 / cz
         }
         // Super+0: its box, for the camera to take them all in.
         on change cvf.n while cvf.k == sc and (cvf.only < 0 or cvf.only == i) and C and fr and win.$i.open and not win.$i.minimized and ws.here {
