@@ -895,15 +895,16 @@ scene Session {
     event zoom_in
     event zoom_out
     let zf = win.focus >= 0 and lay[max(fscreen, 0)] == 7 and free[max(fscreen, 0)] < 0.5
-    let zf.x = pick(max(win.focus, 0), tre.ox.0 + tre.sx.0 * tre.x.0, tre.ox.1 + tre.sx.1 * tre.x.1, tre.ox.2 + tre.sx.2 * tre.x.2, tre.ox.3 + tre.sx.3 * tre.x.3, tre.ox.4 + tre.sx.4 * tre.x.4, tre.ox.5 + tre.sx.5 * tre.x.5, tre.ox.6 + tre.sx.6 * tre.x.6, tre.ox.7 + tre.sx.7 * tre.x.7, tre.ox.8 + tre.sx.8 * tre.x.8, tre.ox.9 + tre.sx.9 * tre.x.9, tre.ox.10 + tre.sx.10 * tre.x.10, tre.ox.11 + tre.sx.11 * tre.x.11, tre.ox.12 + tre.sx.12 * tre.x.12, tre.ox.13 + tre.sx.13 * tre.x.13, tre.ox.14 + tre.sx.14 * tre.x.14, tre.ox.15 + tre.sx.15 * tre.x.15)
-    let zf.y = pick(max(win.focus, 0), tre.oy.0 + tre.sy.0 * tre.y.0, tre.oy.1 + tre.sy.1 * tre.y.1, tre.oy.2 + tre.sy.2 * tre.y.2, tre.oy.3 + tre.sy.3 * tre.y.3, tre.oy.4 + tre.sy.4 * tre.y.4, tre.oy.5 + tre.sy.5 * tre.y.5, tre.oy.6 + tre.sy.6 * tre.y.6, tre.oy.7 + tre.sy.7 * tre.y.7, tre.oy.8 + tre.sy.8 * tre.y.8, tre.oy.9 + tre.sy.9 * tre.y.9, tre.oy.10 + tre.sy.10 * tre.y.10, tre.oy.11 + tre.sy.11 * tre.y.11, tre.oy.12 + tre.sy.12 * tre.y.12, tre.oy.13 + tre.sy.13 * tre.y.13, tre.oy.14 + tre.sy.14 * tre.y.14, tre.oy.15 + tre.sy.15 * tre.y.15)
-    let zf.w = pick(max(win.focus, 0), tre.sx.0 * tre.w.0, tre.sx.1 * tre.w.1, tre.sx.2 * tre.w.2, tre.sx.3 * tre.w.3, tre.sx.4 * tre.w.4, tre.sx.5 * tre.w.5, tre.sx.6 * tre.w.6, tre.sx.7 * tre.w.7, tre.sx.8 * tre.w.8, tre.sx.9 * tre.w.9, tre.sx.10 * tre.w.10, tre.sx.11 * tre.w.11, tre.sx.12 * tre.w.12, tre.sx.13 * tre.w.13, tre.sx.14 * tre.w.14, tre.sx.15 * tre.w.15)
-    let zf.h = pick(max(win.focus, 0), tre.sy.0 * tre.h.0, tre.sy.1 * tre.h.1, tre.sy.2 * tre.h.2, tre.sy.3 * tre.h.3, tre.sy.4 * tre.h.4, tre.sy.5 * tre.h.5, tre.sy.6 * tre.h.6, tre.sy.7 * tre.h.7, tre.sy.8 * tre.h.8, tre.sy.9 * tre.h.9, tre.sy.10 * tre.h.10, tre.sy.11 * tre.h.11, tre.sy.12 * tre.h.12, tre.sy.13 * tre.h.13, tre.sy.14 * tre.h.14, tre.sy.15 * tre.h.15)
+    let zf.i = max(win.focus, 0)
+    let zf.x = tre.ox[zf.i] + tre.sx[zf.i] * tre.x[zf.i]
+    let zf.y = tre.oy[zf.i] + tre.sy[zf.i] * tre.y[zf.i]
+    let zf.w = tre.sx[zf.i] * tre.w[zf.i]
+    let zf.h = tre.sy[zf.i] * tre.h[zf.i]
     // (Its group, as seen: a small screen `d` across.)
-    let zf.gd = tre.d[max(win.focus, 0)]
+    let zf.gd = tre.d[zf.i]
     let zf.g = zf.gd < 0.999
-    let zf.gx = pick(max(win.focus, 0), tre.ox.0 + tre.sx.0 * tre.fx.0, tre.ox.1 + tre.sx.1 * tre.fx.1, tre.ox.2 + tre.sx.2 * tre.fx.2, tre.ox.3 + tre.sx.3 * tre.fx.3, tre.ox.4 + tre.sx.4 * tre.fx.4, tre.ox.5 + tre.sx.5 * tre.fx.5, tre.ox.6 + tre.sx.6 * tre.fx.6, tre.ox.7 + tre.sx.7 * tre.fx.7, tre.ox.8 + tre.sx.8 * tre.fx.8, tre.ox.9 + tre.sx.9 * tre.fx.9, tre.ox.10 + tre.sx.10 * tre.fx.10, tre.ox.11 + tre.sx.11 * tre.fx.11, tre.ox.12 + tre.sx.12 * tre.fx.12, tre.ox.13 + tre.sx.13 * tre.fx.13, tre.ox.14 + tre.sx.14 * tre.fx.14, tre.ox.15 + tre.sx.15 * tre.fx.15)
-    let zf.gy = pick(max(win.focus, 0), tre.oy.0 + tre.sy.0 * tre.fy.0, tre.oy.1 + tre.sy.1 * tre.fy.1, tre.oy.2 + tre.sy.2 * tre.fy.2, tre.oy.3 + tre.sy.3 * tre.fy.3, tre.oy.4 + tre.sy.4 * tre.fy.4, tre.oy.5 + tre.sy.5 * tre.fy.5, tre.oy.6 + tre.sy.6 * tre.fy.6, tre.oy.7 + tre.sy.7 * tre.fy.7, tre.oy.8 + tre.sy.8 * tre.fy.8, tre.oy.9 + tre.sy.9 * tre.fy.9, tre.oy.10 + tre.sy.10 * tre.fy.10, tre.oy.11 + tre.sy.11 * tre.fy.11, tre.oy.12 + tre.sy.12 * tre.fy.12, tre.oy.13 + tre.sy.13 * tre.fy.13, tre.oy.14 + tre.sy.14 * tre.fy.14, tre.oy.15 + tre.sy.15 * tre.fy.15)
+    let zf.gx = tre.ox[zf.i] + tre.sx[zf.i] * tre.fx[zf.i]
+    let zf.gy = tre.oy[zf.i] + tre.sy[zf.i] * tre.fy[zf.i]
     // In: into its group first (if it is in one and the camera sees more),
     // then into it alone. Out: from it to its group, then twice as far each
     // time. The camera follows the keyboard while on a group or a window.
@@ -1707,7 +1708,7 @@ scene Session {
         }
         // Its previews, as many as it has windows: over its icon at the bottom,
         // beside it on a side (window.plm's per window: pv.bx + pv.sx · turn).
-        pv.n[s] = pick(max(pv.$s, 0), win.dock.$s.0.windows, win.dock.$s.1.windows, win.dock.$s.2.windows, win.dock.$s.3.windows, win.dock.$s.4.windows, win.dock.$s.5.windows, win.dock.$s.6.windows, win.dock.$s.7.windows, win.dock.$s.8.windows, win.dock.$s.9.windows, win.dock.$s.10.windows, win.dock.$s.11.windows)
+        pv.n[s] = (win.dock.$s[max(pv.$s, 0)].windows)
         let pv.ia.$s = pick(max(pv.$s, 0), dka0.$s, dka1.$s, dka2.$s, dka3.$s, dka4.$s, dka5.$s, dka6.$s, dka7.$s, dka8.$s, dka9.$s, dka10.$s, dka11.$s)
         pv.bx[s] = if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s + dkpl / 2 + 127), clamp(pv.ia.$s, pv.n.$s * 116 + 20, screen.$s.width - pv.n.$s * 116 - 20) - (pv.n.$s - 1) * 116)
         pv.sx[s] = if(dkvert, dk.cs.$s * 232, 232)
@@ -1722,9 +1723,9 @@ scene Session {
         // Its menu: the item's windows (window.plm's rows), then New window and
         // Hide while it has some, keep it on the shore or take it off, and close
         // them —or Open, with none—. Over its icon at the bottom, beside it on a side.
-        let mn.wn.$s = min(pick(max(dmenu.$s, 0), win.dock.$s.0.windows, win.dock.$s.1.windows, win.dock.$s.2.windows, win.dock.$s.3.windows, win.dock.$s.4.windows, win.dock.$s.5.windows, win.dock.$s.6.windows, win.dock.$s.7.windows, win.dock.$s.8.windows, win.dock.$s.9.windows, win.dock.$s.10.windows, win.dock.$s.11.windows), 6)
-        let mn.run.$s = pick(dmk.$s, win.dock.$s.0.windows, win.dock.$s.1.windows, win.dock.$s.2.windows, win.dock.$s.3.windows, win.dock.$s.4.windows, win.dock.$s.5.windows, win.dock.$s.6.windows, win.dock.$s.7.windows, win.dock.$s.8.windows, win.dock.$s.9.windows, win.dock.$s.10.windows, win.dock.$s.11.windows) > 0
-        let mn.pin.$s = pick(dmk.$s, win.dock.$s.0.pinned, win.dock.$s.1.pinned, win.dock.$s.2.pinned, win.dock.$s.3.pinned, win.dock.$s.4.pinned, win.dock.$s.5.pinned, win.dock.$s.6.pinned, win.dock.$s.7.pinned, win.dock.$s.8.pinned, win.dock.$s.9.pinned, win.dock.$s.10.pinned, win.dock.$s.11.pinned) > 0.5
+        let mn.wn.$s = min((win.dock.$s[max(dmenu.$s, 0)].windows), 6)
+        let mn.run.$s = (win.dock.$s[max(dmk.$s, 0)].windows) > 0
+        let mn.pin.$s = (win.dock.$s[max(dmk.$s, 0)].pinned) > 0.5
         let mn.base.$s = 6 + mn.wn.$s * 28 + if(mn.wn.$s > 0, 10, 0)
         let mn.h.$s = mn.base.$s + if(mn.run.$s, 4, 2) * 28 + 6
         let mn.ia.$s = pick(dmk.$s, dka0.$s, dka1.$s, dka2.$s, dka3.$s, dka4.$s, dka5.$s, dka6.$s, dka7.$s, dka8.$s, dka9.$s, dka10.$s, dka11.$s)
@@ -3389,8 +3390,8 @@ scene Session {
         let dk.ah = screen[mon].height - mg.top - win.reserved[mon].bottom - bar - gap
         let dk.wx = dk.cx + (mouse.x - mg.x0 - gap / 2) / max(mg.Ws - gap, 1) * dk.cw
         let dk.wy = dk.cy + (mouse.y - mg.y0 + gap / 2) / max(dk.ah + gap, 1) * dk.ch
-        let dk.u = (dk.wx - pick(max(over, 0), tre.ox.0 + tre.sx.0 * tre.x.0, tre.ox.1 + tre.sx.1 * tre.x.1, tre.ox.2 + tre.sx.2 * tre.x.2, tre.ox.3 + tre.sx.3 * tre.x.3, tre.ox.4 + tre.sx.4 * tre.x.4, tre.ox.5 + tre.sx.5 * tre.x.5, tre.ox.6 + tre.sx.6 * tre.x.6, tre.ox.7 + tre.sx.7 * tre.x.7, tre.ox.8 + tre.sx.8 * tre.x.8, tre.ox.9 + tre.sx.9 * tre.x.9, tre.ox.10 + tre.sx.10 * tre.x.10, tre.ox.11 + tre.sx.11 * tre.x.11, tre.ox.12 + tre.sx.12 * tre.x.12, tre.ox.13 + tre.sx.13 * tre.x.13, tre.ox.14 + tre.sx.14 * tre.x.14, tre.ox.15 + tre.sx.15 * tre.x.15)) / max(pick(max(over, 0), tre.sx.0 * tre.w.0, tre.sx.1 * tre.w.1, tre.sx.2 * tre.w.2, tre.sx.3 * tre.w.3, tre.sx.4 * tre.w.4, tre.sx.5 * tre.w.5, tre.sx.6 * tre.w.6, tre.sx.7 * tre.w.7, tre.sx.8 * tre.w.8, tre.sx.9 * tre.w.9, tre.sx.10 * tre.w.10, tre.sx.11 * tre.w.11, tre.sx.12 * tre.w.12, tre.sx.13 * tre.w.13, tre.sx.14 * tre.w.14, tre.sx.15 * tre.w.15), 0.001)
-        let dk.v = (dk.wy - pick(max(over, 0), tre.oy.0 + tre.sy.0 * tre.y.0, tre.oy.1 + tre.sy.1 * tre.y.1, tre.oy.2 + tre.sy.2 * tre.y.2, tre.oy.3 + tre.sy.3 * tre.y.3, tre.oy.4 + tre.sy.4 * tre.y.4, tre.oy.5 + tre.sy.5 * tre.y.5, tre.oy.6 + tre.sy.6 * tre.y.6, tre.oy.7 + tre.sy.7 * tre.y.7, tre.oy.8 + tre.sy.8 * tre.y.8, tre.oy.9 + tre.sy.9 * tre.y.9, tre.oy.10 + tre.sy.10 * tre.y.10, tre.oy.11 + tre.sy.11 * tre.y.11, tre.oy.12 + tre.sy.12 * tre.y.12, tre.oy.13 + tre.sy.13 * tre.y.13, tre.oy.14 + tre.sy.14 * tre.y.14, tre.oy.15 + tre.sy.15 * tre.y.15)) / max(pick(max(over, 0), tre.sy.0 * tre.h.0, tre.sy.1 * tre.h.1, tre.sy.2 * tre.h.2, tre.sy.3 * tre.h.3, tre.sy.4 * tre.h.4, tre.sy.5 * tre.h.5, tre.sy.6 * tre.h.6, tre.sy.7 * tre.h.7, tre.sy.8 * tre.h.8, tre.sy.9 * tre.h.9, tre.sy.10 * tre.h.10, tre.sy.11 * tre.h.11, tre.sy.12 * tre.h.12, tre.sy.13 * tre.h.13, tre.sy.14 * tre.h.14, tre.sy.15 * tre.h.15), 0.001)
+        let dk.u = (dk.wx - (tre.ox[max(over, 0)] + tre.sx[max(over, 0)] * tre.x[max(over, 0)])) / max((tre.sx[max(over, 0)] * tre.w[max(over, 0)]), 0.001)
+        let dk.v = (dk.wy - (tre.oy[max(over, 0)] + tre.sy[max(over, 0)] * tre.y[max(over, 0)])) / max((tre.sy[max(over, 0)] * tre.h[max(over, 0)]), 0.001)
         let dk.edge = min(min(dk.u, 1 - dk.u), min(dk.v, 1 - dk.v))
         let dk.side = if(dk.u == dk.edge, 0, if(1 - dk.u == dk.edge, 1, if(dk.v == dk.edge, 2, 3)))
         let dk.frac = over >= 0 and not crossing and lay[mon] == 7 and free[mon] < 0.5 and tre.w.$i > 0.001
@@ -3562,10 +3563,11 @@ scene Session {
     let dq.cw = max(cam[mon].w, 0.01)
     let dq.ch = max(cam[mon].h, 0.01)
     let dq.ah = screen[mon].height - mg.top - win.reserved[mon].bottom - bar - gap
-    let dq.tx = pick(max(over, 0), tre.ox.0 + tre.sx.0 * tre.x.0, tre.ox.1 + tre.sx.1 * tre.x.1, tre.ox.2 + tre.sx.2 * tre.x.2, tre.ox.3 + tre.sx.3 * tre.x.3, tre.ox.4 + tre.sx.4 * tre.x.4, tre.ox.5 + tre.sx.5 * tre.x.5, tre.ox.6 + tre.sx.6 * tre.x.6, tre.ox.7 + tre.sx.7 * tre.x.7, tre.ox.8 + tre.sx.8 * tre.x.8, tre.ox.9 + tre.sx.9 * tre.x.9, tre.ox.10 + tre.sx.10 * tre.x.10, tre.ox.11 + tre.sx.11 * tre.x.11, tre.ox.12 + tre.sx.12 * tre.x.12, tre.ox.13 + tre.sx.13 * tre.x.13, tre.ox.14 + tre.sx.14 * tre.x.14, tre.ox.15 + tre.sx.15 * tre.x.15)
-    let dq.ty = pick(max(over, 0), tre.oy.0 + tre.sy.0 * tre.y.0, tre.oy.1 + tre.sy.1 * tre.y.1, tre.oy.2 + tre.sy.2 * tre.y.2, tre.oy.3 + tre.sy.3 * tre.y.3, tre.oy.4 + tre.sy.4 * tre.y.4, tre.oy.5 + tre.sy.5 * tre.y.5, tre.oy.6 + tre.sy.6 * tre.y.6, tre.oy.7 + tre.sy.7 * tre.y.7, tre.oy.8 + tre.sy.8 * tre.y.8, tre.oy.9 + tre.sy.9 * tre.y.9, tre.oy.10 + tre.sy.10 * tre.y.10, tre.oy.11 + tre.sy.11 * tre.y.11, tre.oy.12 + tre.sy.12 * tre.y.12, tre.oy.13 + tre.sy.13 * tre.y.13, tre.oy.14 + tre.sy.14 * tre.y.14, tre.oy.15 + tre.sy.15 * tre.y.15)
-    let dq.tw = pick(max(over, 0), tre.sx.0 * tre.w.0, tre.sx.1 * tre.w.1, tre.sx.2 * tre.w.2, tre.sx.3 * tre.w.3, tre.sx.4 * tre.w.4, tre.sx.5 * tre.w.5, tre.sx.6 * tre.w.6, tre.sx.7 * tre.w.7, tre.sx.8 * tre.w.8, tre.sx.9 * tre.w.9, tre.sx.10 * tre.w.10, tre.sx.11 * tre.w.11, tre.sx.12 * tre.w.12, tre.sx.13 * tre.w.13, tre.sx.14 * tre.w.14, tre.sx.15 * tre.w.15)
-    let dq.th = pick(max(over, 0), tre.sy.0 * tre.h.0, tre.sy.1 * tre.h.1, tre.sy.2 * tre.h.2, tre.sy.3 * tre.h.3, tre.sy.4 * tre.h.4, tre.sy.5 * tre.h.5, tre.sy.6 * tre.h.6, tre.sy.7 * tre.h.7, tre.sy.8 * tre.h.8, tre.sy.9 * tre.h.9, tre.sy.10 * tre.h.10, tre.sy.11 * tre.h.11, tre.sy.12 * tre.h.12, tre.sy.13 * tre.h.13, tre.sy.14 * tre.h.14, tre.sy.15 * tre.h.15)
+    let dq.i = max(over, 0)
+    let dq.tx = tre.ox[dq.i] + tre.sx[dq.i] * tre.x[dq.i]
+    let dq.ty = tre.oy[dq.i] + tre.sy[dq.i] * tre.y[dq.i]
+    let dq.tw = tre.sx[dq.i] * tre.w[dq.i]
+    let dq.th = tre.sy[dq.i] * tre.h[dq.i]
     // Its box on the screen, and where the mouse is in it.
     let dq.X = mg.x0 + gap + (dq.tx - dq.cx) / dq.cw * (mg.Ws - gap)
     let dq.Y = mg.y0 + (dq.ty - dq.cy) / dq.ch * (dq.ah + gap)
@@ -4236,7 +4238,7 @@ scene Session {
         // drop of light runs along it and rings out where it arrives.
         let wv.a = max(wire.$k.a, 0)
         let wv.b = max(wire.$k.b, 0)
-        let wv.on = wire.$k.a >= 0 and wire.$k.b >= 0 and free[screen.index] > 0.5 and pick(wv.a, (win.0.open and not win.0.minimized and win.0.screen == screen.index and win.0.pool == win.pool[screen.index]), (win.1.open and not win.1.minimized and win.1.screen == screen.index and win.1.pool == win.pool[screen.index]), (win.2.open and not win.2.minimized and win.2.screen == screen.index and win.2.pool == win.pool[screen.index]), (win.3.open and not win.3.minimized and win.3.screen == screen.index and win.3.pool == win.pool[screen.index]), (win.4.open and not win.4.minimized and win.4.screen == screen.index and win.4.pool == win.pool[screen.index]), (win.5.open and not win.5.minimized and win.5.screen == screen.index and win.5.pool == win.pool[screen.index]), (win.6.open and not win.6.minimized and win.6.screen == screen.index and win.6.pool == win.pool[screen.index]), (win.7.open and not win.7.minimized and win.7.screen == screen.index and win.7.pool == win.pool[screen.index]), (win.8.open and not win.8.minimized and win.8.screen == screen.index and win.8.pool == win.pool[screen.index]), (win.9.open and not win.9.minimized and win.9.screen == screen.index and win.9.pool == win.pool[screen.index]), (win.10.open and not win.10.minimized and win.10.screen == screen.index and win.10.pool == win.pool[screen.index]), (win.11.open and not win.11.minimized and win.11.screen == screen.index and win.11.pool == win.pool[screen.index]), (win.12.open and not win.12.minimized and win.12.screen == screen.index and win.12.pool == win.pool[screen.index]), (win.13.open and not win.13.minimized and win.13.screen == screen.index and win.13.pool == win.pool[screen.index]), (win.14.open and not win.14.minimized and win.14.screen == screen.index and win.14.pool == win.pool[screen.index]), (win.15.open and not win.15.minimized and win.15.screen == screen.index and win.15.pool == win.pool[screen.index])) and pick(wv.b, (win.0.open and not win.0.minimized and win.0.screen == screen.index and win.0.pool == win.pool[screen.index]), (win.1.open and not win.1.minimized and win.1.screen == screen.index and win.1.pool == win.pool[screen.index]), (win.2.open and not win.2.minimized and win.2.screen == screen.index and win.2.pool == win.pool[screen.index]), (win.3.open and not win.3.minimized and win.3.screen == screen.index and win.3.pool == win.pool[screen.index]), (win.4.open and not win.4.minimized and win.4.screen == screen.index and win.4.pool == win.pool[screen.index]), (win.5.open and not win.5.minimized and win.5.screen == screen.index and win.5.pool == win.pool[screen.index]), (win.6.open and not win.6.minimized and win.6.screen == screen.index and win.6.pool == win.pool[screen.index]), (win.7.open and not win.7.minimized and win.7.screen == screen.index and win.7.pool == win.pool[screen.index]), (win.8.open and not win.8.minimized and win.8.screen == screen.index and win.8.pool == win.pool[screen.index]), (win.9.open and not win.9.minimized and win.9.screen == screen.index and win.9.pool == win.pool[screen.index]), (win.10.open and not win.10.minimized and win.10.screen == screen.index and win.10.pool == win.pool[screen.index]), (win.11.open and not win.11.minimized and win.11.screen == screen.index and win.11.pool == win.pool[screen.index]), (win.12.open and not win.12.minimized and win.12.screen == screen.index and win.12.pool == win.pool[screen.index]), (win.13.open and not win.13.minimized and win.13.screen == screen.index and win.13.pool == win.pool[screen.index]), (win.14.open and not win.14.minimized and win.14.screen == screen.index and win.14.pool == win.pool[screen.index]), (win.15.open and not win.15.minimized and win.15.screen == screen.index and win.15.pool == win.pool[screen.index]))
+        let wv.on = wire.$k.a >= 0 and wire.$k.b >= 0 and free[screen.index] > 0.5 and ((win[max(wv.a, 0)].open and not win[max(wv.a, 0)].minimized and win[max(wv.a, 0)].screen == screen.index and win[max(wv.a, 0)].pool == win.pool[screen.index])) and ((win[max(wv.b, 0)].open and not win[max(wv.b, 0)].minimized and win[max(wv.b, 0)].screen == screen.index and win[max(wv.b, 0)].pool == win.pool[screen.index]))
         // (One being carried is where it is drawn, under the mouse.)
         let wv.cx = mouse.x + mx[mon] - mx[screen.index] - grab.x
         let wv.cy = mouse.y - grab.y
@@ -4374,8 +4376,8 @@ scene Session {
     // window under it, lit.
     repeat q in 0..1 {
         let wg.w = max(wiring, 0)
-        let wg.x = pick(wg.w, x.0 + 18, x.1 + 18, x.2 + 18, x.3 + 18, x.4 + 18, x.5 + 18, x.6 + 18, x.7 + 18, x.8 + 18, x.9 + 18, x.10 + 18, x.11 + 18, x.12 + 18, x.13 + 18, x.14 + 18, x.15 + 18)
-        let wg.y = pick(wg.w, y.0 + tb / 2, y.1 + tb / 2, y.2 + tb / 2, y.3 + tb / 2, y.4 + tb / 2, y.5 + tb / 2, y.6 + tb / 2, y.7 + tb / 2, y.8 + tb / 2, y.9 + tb / 2, y.10 + tb / 2, y.11 + tb / 2, y.12 + tb / 2, y.13 + tb / 2, y.14 + tb / 2, y.15 + tb / 2)
+        let wg.x = (x[max(wg.w, 0)] + 18)
+        let wg.y = (y[max(wg.w, 0)] + tb / 2)
         let wg.on = wiring >= 0 and mon == screen.index and win[max(wg.w, 0)].screen == screen.index
         let wg.t = max(wtgt, 0)
         group {
@@ -4471,7 +4473,7 @@ scene Session {
         homing = false
         falling = false
         rider = win.focus
-        from.x = mx[max(if(island.screen >= 0, island.screen, pick(win.focus, win.0.screen, win.1.screen, win.2.screen, win.3.screen, win.4.screen, win.5.screen, win.6.screen, win.7.screen, win.8.screen, win.9.screen, win.10.screen, win.11.screen, win.12.screen, win.13.screen, win.14.screen, win.15.screen)), 0)] + screen[max(if(island.screen >= 0, island.screen, pick(win.focus, win.0.screen, win.1.screen, win.2.screen, win.3.screen, win.4.screen, win.5.screen, win.6.screen, win.7.screen, win.8.screen, win.9.screen, win.10.screen, win.11.screen, win.12.screen, win.13.screen, win.14.screen, win.15.screen)), 0)].width / 2
+        from.x = mx[max(if(island.screen >= 0, island.screen, win[max(win.focus, 0)].screen), 0)] + screen[max(if(island.screen >= 0, island.screen, win[max(win.focus, 0)].screen), 0)].width / 2
         from.y = -40
         hop: 0 ~0ms
         hop: 1 ~800ms after 16ms
