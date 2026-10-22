@@ -7115,15 +7115,15 @@ scene Session {
         on change dragging while dragging == i { tmax.$i = 0 }
         // Put away, it stays where it was (the others close up without it),
         // and flies from there into Marea's island.
-        fact mx.$i = 0
-        fact my.$i = 0
-        fact mw.$i = 0
-        fact mh.$i = 0
+        fact put.x.$i = 0
+        fact put.y.$i = 0
+        fact put.w.$i = 0
+        fact put.h.$i = 0
         on change win.$i.minimized while win.$i.minimized {
-            mx.$i = x.$i
-            my.$i = y.$i
-            mw.$i = w.$i
-            mh.$i = h.$i
+            put.x.$i = x.$i
+            put.y.$i = y.$i
+            put.w.$i = w.$i
+            put.h.$i = h.$i
             last_min = i
         }
         // Back to tiled, what was put away comes out of the island to its
@@ -7141,10 +7141,10 @@ scene Session {
         let ph.px = if(ph.lft, 0, ph.xr + 4)
         let ph.pw = if(ph.lft, ph.xr - 4, W.ph - ph.xr - 4)
         let ph.gx = if(ph.pair, ph.px, if(ph.front == i or ph.front < 0, 0, if(ph.rel > 0, W.ph + 40, 0 - W.ph - 40)))
-        let goal.x = if(onph, ph.gx, if(win.$i.minimized, mx.$i, if(fr, fgx, if(tm, x0 + gap, txv))))
-        let goal.y = if(onph, ph.sb, if(win.$i.minimized, my.$i, if(fr, fgy, if(tm, y0, tyv))))
-        let goal.w = if(onph, if(ph.pair, ph.pw, W.ph), if(win.$i.minimized, mw.$i, if(fr, fgw, if(tm, Ws - 2 * gap, twv))))
-        let goal.h = if(onph, H.ph - ph.sb - ph.hb, if(win.$i.minimized, mh.$i, if(fr, fgh, if(tm, ah, thv))))
+        let goal.x = if(onph, ph.gx, if(win.$i.minimized, put.x.$i, if(fr, fgx, if(tm, x0 + gap, txv))))
+        let goal.y = if(onph, ph.sb, if(win.$i.minimized, put.y.$i, if(fr, fgy, if(tm, y0, tyv))))
+        let goal.w = if(onph, if(ph.pair, ph.pw, W.ph), if(win.$i.minimized, put.w.$i, if(fr, fgw, if(tm, Ws - 2 * gap, twv))))
+        let goal.h = if(onph, H.ph - ph.sb - ph.hb, if(win.$i.minimized, put.h.$i, if(fr, fgh, if(tm, ah, thv))))
         // (Fractal: in a group it is drawn smaller than the size it is asked.)
         let fz.ask = L.shown == 7 and fz.has and not onph and not win.$i.minimized and not fr and not tm
         // (Canvas: the program is asked its size on the plane, and drawn as far away as it is.)
