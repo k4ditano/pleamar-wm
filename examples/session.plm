@@ -1391,7 +1391,7 @@ scene Session {
         // Its previews, as many as it has windows: over its icon at the bottom,
         // beside it on a side (window.plm's per window: pv.bx + pv.sx · turn).
         pv.n[s] = (win.dock.$s[max(pv.$s, 0)].windows)
-        let pv.ia.$s = pick(max(pv.$s, 0), dki.a[s][0], dki.a[s][1], dki.a[s][2], dki.a[s][3], dki.a[s][4], dki.a[s][5], dki.a[s][6], dki.a[s][7], dki.a[s][8], dki.a[s][9], dki.a[s][10], dki.a[s][11])
+        let pv.ia.$s = dki.a[s][clamp(pv.$s, 0, 11)]
         pv.bx[s] = if(dkvert, dk.cr.$s + dk.cs.$s * (dk.q.$s + dkpl / 2 + 127), clamp(pv.ia.$s, pv.n.$s * 116 + 20, screen.$s.width - pv.n.$s * 116 - 20) - (pv.n.$s - 1) * 116)
         pv.sx[s] = if(dkvert, dk.cs.$s * 232, 232)
         pv.by[s] = if(dkvert, clamp(pv.ia.$s, 110, screen.$s.height - 110) - 10, screen.$s.height - dk.q.$s - 140)
@@ -1410,7 +1410,7 @@ scene Session {
         let mn.pin.$s = (win.dock.$s[max(dmk.$s, 0)].pinned) > 0.5
         let mn.base.$s = 6 + mn.wn.$s * 28 + if(mn.wn.$s > 0, 10, 0)
         let mn.h.$s = mn.base.$s + if(mn.run.$s, 4, 2) * 28 + 6
-        let mn.ia.$s = pick(dmk.$s, dki.a[s][0], dki.a[s][1], dki.a[s][2], dki.a[s][3], dki.a[s][4], dki.a[s][5], dki.a[s][6], dki.a[s][7], dki.a[s][8], dki.a[s][9], dki.a[s][10], dki.a[s][11])
+        let mn.ia.$s = dki.a[s][clamp(dmk.$s, 0, 11)]
         mn.x[s] = if(dkvert, if(dock.side == 1, dk.q.$s + dkpl / 2 + 14, screen.$s.width - dk.q.$s - dkpl / 2 - 14 - 220), clamp(mn.ia.$s - 110, 8, screen.$s.width - 228))
         mn.y[s] = if(dkvert, clamp(mn.ia.$s - mn.h.$s / 2, 8, screen.$s.height - mn.h.$s - 8), screen.$s.height - dk.q.$s - dkpl / 2 - 14 - mn.h.$s)
         // Away from the shore, its previews and its menu, they sink.
