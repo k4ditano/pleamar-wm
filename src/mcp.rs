@@ -8,18 +8,11 @@
 //! with the cursor—. The tools are `link`'s verbs; the wire is still the
 //! permission, checked on every call.
 
+use crate::mcp_serve::{Reply, Tool};
 use serde_json::{json, Value};
-use std::io::{BufRead, Write};
 
-/// The tools: name, what it is for, its arguments (JSON Schema properties),
-/// which of them are needed, and the `link` words they become.
-struct Tool {
-    name: &'static str,
-    about: &'static str,
-    args: Value,
-    needed: &'static [&'static str],
-    words: fn(&Value) -> Vec<String>,
-}
+/// The `link` words a tool becomes.
+type Words = fn(&Value) -> Vec<String>;
 
 fn s(v: &Value, k: &str) -> String {
     match v.get(k) {
@@ -30,7 +23,7 @@ fn s(v: &Value, k: &str) -> String {
     }
 }
 
-fn tools() -> Vec<Tool> {
+fn tools() -> Vec<Tool<Words>> {
     let window = json!({ "type": "string", "description": "The window: its number from link_list, the name of its wire («tests»), or the agent that runs there («codex») if only one does." });
     vec![
         Tool {
@@ -38,21 +31,24 @@ fn tools() -> Vec<Tool> {
             about: "Which window of the desktop you are in, and which windows the person wired to yours (their number, the wire's name, the agent there and its folder).",
             args: json!({}),
             needed: &[],
-            words: |_| vec!["whoami".into()],
+            eager: false,
+            run: |_| vec!["whoami".into()],
         },
         Tool {
             name: "link_list",
             about: "The windows wired to yours: number, the wire's name, title, the agent that runs there (claude, codex…) and whether it works, is ready or waits for its person, and its folder.",
             args: json!({}),
             needed: &[],
-            words: |_| vec!["list".into()],
+            eager: true,
+            run: |_| vec!["list".into()],
         },
         Tool {
             name: "link_delegate",
             about: "Hand a task to the agent in a wired window (another Claude Code, Codex…): it is typed there as a pasted task saying it comes from you, and its answer comes back. With wait=false (the default) this returns at once and the answer —or a question it stops to ask on the way— is typed into your terminal when it is there; with wait=true this call returns the answer (or the question). This is how you talk to another agent the person wired to you: never start another agent of your own for it (codex exec, claude -p…), and never use the screen's cursor.",
             args: json!({ "window": window, "task": { "type": "string", "description": "What it has to do, as you would ask it." }, "wait": { "type": "boolean", "description": "Wait here for its answer (true), or have it typed into your terminal later (false, the default)." }, "timeout": { "type": "number", "description": "With wait=true, seconds to wait here (600). With wait=false its answer is brought however long it works; this many seconds without any sign of it working (6 hours if not said), and you are told it has not answered." } }),
             needed: &["window", "task"],
-            words: |a| {
+            eager: true,
+            run: |a| {
                 let mut w = vec!["delegate".into(), s(a, "window"), s(a, "task")];
                 if a.get("wait").and_then(Value::as_bool) == Some(true) {
                     w.push("--wait".into());
@@ -68,7 +64,8 @@ fn tools() -> Vec<Tool> {
             about: "Wait until the agent in a wired window is done with what it is doing, and get its answer; or what it stopped to ask its person.",
             args: json!({ "window": window, "timeout": { "type": "number", "description": "Seconds (600)." } }),
             needed: &["window"],
-            words: |a| {
+            eager: false,
+            run: |a| {
                 let mut w = vec!["wait".into(), s(a, "window")];
                 if !s(a, "timeout").is_empty() {
                     w.extend(["--timeout".into(), s(a, "timeout")]);
@@ -81,21 +78,24 @@ fn tools() -> Vec<Tool> {
             about: "What the agent in a wired window is asking its person now, if anything: a permission, a choice, a yes/no — the question and its options, the selected one marked.",
             args: json!({ "window": window }),
             needed: &["window"],
-            words: |a| vec!["ask".into(), s(a, "window")],
+            eager: false,
+            run: |a| vec!["ask".into(), s(a, "window")],
         },
         Tool {
             name: "link_answer",
             about: "Answer what the agent in a wired window asks: an option by its number or its words, free words where it lets you type them, or yes/no. The window shows who answered. The wire is the person's permission to do this.",
             args: json!({ "window": window, "answer": { "type": "string", "description": "An option's number (\"2\"), the words of an option, words to type, or yes/no." } }),
             needed: &["window", "answer"],
-            words: |a| vec!["answer".into(), s(a, "window"), s(a, "answer")],
+            eager: false,
+            run: |a| vec!["answer".into(), s(a, "window"), s(a, "answer")],
         },
         Tool {
             name: "link_read",
             about: "The last lines of a wired window's terminal, as its screen and history show them.",
             args: json!({ "window": window, "lines": { "type": "number", "description": "How many (200)." } }),
             needed: &["window"],
-            words: |a| {
+            eager: false,
+            run: |a| {
                 let mut w = vec!["read".into(), s(a, "window")];
                 if !s(a, "lines").is_empty() {
                     w.push(s(a, "lines"));
@@ -108,7 +108,8 @@ fn tools() -> Vec<Tool> {
             about: "Type text into a wired window's terminal as a paste (and Enter after it, with enter=true). For a shell or a program there; to hand a task to an agent, link_delegate.",
             args: json!({ "window": window, "text": { "type": "string" }, "enter": { "type": "boolean" } }),
             needed: &["window", "text"],
-            words: |a| {
+            eager: false,
+            run: |a| {
                 let mut w = vec!["send".into(), s(a, "window"), s(a, "text")];
                 if a.get("enter").and_then(Value::as_bool) == Some(true) {
                     w.push("--enter".into());
@@ -121,7 +122,8 @@ fn tools() -> Vec<Tool> {
             about: "Press keys in a wired window's terminal, in order: enter tab escape up down left right backspace delete home end page_up page_down space ctrl+c, or one character. Returns its screen after.",
             args: json!({ "window": window, "keys": { "type": "array", "items": { "type": "string" } } }),
             needed: &["window", "keys"],
-            words: |a| {
+            eager: false,
+            run: |a| {
                 let mut w = vec!["keys".into(), s(a, "window")];
                 w.extend(a.get("keys").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned));
                 w
@@ -132,14 +134,16 @@ fn tools() -> Vec<Tool> {
             about: "Give the wire to a window a name («tests», «frontend»): it is shown on the wire, and the window can be named by it.",
             args: json!({ "window": window, "name": { "type": "string" } }),
             needed: &["window", "name"],
-            words: |a| vec!["label".into(), s(a, "window"), s(a, "name")],
+            eager: false,
+            run: |a| vec!["label".into(), s(a, "window"), s(a, "name")],
         },
         Tool {
             name: "link_spawn",
             about: "Open a new terminal with an agent (claude, codex…) beside your window, already wired to it, and hand it a task. Returns its window number; its answer comes as with link_delegate. If the agent asks something before it is ready (whether to trust the folder), the question is returned for you to answer with link_answer (whether to trust a folder is the person's call), and the task is handed by itself once it is.",
             args: json!({ "agent": { "type": "string", "description": "claude, codex, gemini, opencode…" }, "task": { "type": "string" }, "folder": { "type": "string", "description": "Where it works (yours by default)." }, "name": { "type": "string", "description": "A name for the wire («tests»)." }, "model": { "type": "string", "description": "The model it starts on, as that agent names it (claude-sonnet-5-5, gpt-6-luna…); its own default if not said." } }),
             needed: &["agent", "task"],
-            words: |a| {
+            eager: false,
+            run: |a| {
                 let mut w = vec!["spawn".into(), s(a, "agent"), s(a, "task")];
                 for (k, flag) in [("folder", "--folder"), ("name", "--name"), ("model", "--model")] {
                     if !s(a, k).is_empty() {
@@ -162,66 +166,40 @@ fn instructions() -> String {
 }
 
 pub fn run() -> i32 {
-    let tools = tools();
-    let stdin = std::io::stdin();
-    let mut out = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-        // A notice (no id) asks for no answer.
-        let Some(id) = msg.get("id").cloned() else { continue };
-        let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        let result = match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "pleamar-link", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": instructions(),
-            })),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools.iter().map(|t| {
-                let mut v = json!({
-                    "name": t.name,
-                    "description": t.about,
-                    "inputSchema": { "type": "object", "properties": t.args, "required": t.needed },
-                });
-                // Claude Code lists these in full from the start.
-                if matches!(t.name, "link_delegate" | "link_list") {
-                    v["_meta"] = json!({ "anthropic/alwaysLoad": true });
-                }
-                v
-            }).collect::<Vec<_>>() })),
-            "tools/call" => {
-                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                match tools.iter().find(|t| t.name == name) {
-                    None => Err((-32602, format!("no tool called {name}"))),
-                    Some(t) => {
-                        let missing: Vec<&str> = t.needed.iter().copied().filter(|k| s(&args, k).is_empty() && args.get(*k).is_none()).collect();
-                        let (text, error) = if missing.is_empty() {
-                            match crate::link::go(&(t.words)(&args)) {
-                                Ok(text) => (text, false),
-                                Err(e) => (e, true),
-                            }
-                        } else {
-                            (format!("missing: {}", missing.join(", ")), true)
-                        };
-                        Ok(json!({ "content": [{ "type": "text", "text": if text.is_empty() { "done".to_owned() } else { text } }], "isError": error }))
-                    }
-                }
-            }
-            _ => Err((-32601, format!("no method {method}"))),
-        };
-        let reply = match result {
-            Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
-            Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
-        };
-        let _ = writeln!(out, "{reply}");
-        let _ = out.flush();
-    }
+    crate::mcp_serve::serve(
+        "pleamar-link",
+        env!("CARGO_PKG_VERSION"),
+        instructions,
+        &tools(),
+        |t, args| match crate::link::go(&(t.run)(args)) {
+            Ok(text) => Reply::text(text, false),
+            Err(e) => Reply::text(e, true),
+        },
+        std::io::stdin().lock(),
+        std::io::stdout(),
+    );
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tools_as_listed() {
+        let mut out = Vec::new();
+        let ask = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
+        crate::mcp_serve::serve("pleamar-link", "0", String::new, &tools(), |_, _| unreachable!(), ask.as_bytes(), &mut out);
+        let listed: Value = serde_json::from_slice(&out).unwrap();
+        let kept: Value = serde_json::from_str(include_str!("mcp_link_tools.json")).unwrap();
+        assert_eq!(listed["result"]["tools"], kept);
+    }
+
+    #[test]
+    fn the_words_a_call_becomes() {
+        let words = |name: &str, args: Value| (tools().iter().find(|t| t.name == name).unwrap().run)(&args);
+        assert_eq!(words("link_delegate", json!({ "window": 3, "task": "go", "wait": true, "timeout": 5 })), ["delegate", "3", "go", "--wait", "--timeout", "5"]);
+        assert_eq!(words("link_keys", json!({ "window": "tests", "keys": ["up", "enter"] })), ["keys", "tests", "up", "enter"]);
+        assert_eq!(words("link_spawn", json!({ "agent": "codex", "task": "t", "model": "m" })), ["spawn", "codex", "t", "--model", "m"]);
+    }
 }

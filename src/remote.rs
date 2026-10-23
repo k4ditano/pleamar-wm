@@ -2662,7 +2662,7 @@ fn unbase32(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn base64(b: &[u8]) -> String {
+pub(crate) fn base64(b: &[u8]) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for c in b.chunks(3) {

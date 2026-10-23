@@ -4,6 +4,7 @@
 //! pleamar's own.
 
 mod agent_cli;
+mod agent_mcp;
 mod build;
 mod remote;
 mod remote_rtc;
@@ -25,6 +26,7 @@ mod session;
 mod term;
 mod link;
 mod mcp;
+mod mcp_serve;
 mod keep;
 mod output;
 

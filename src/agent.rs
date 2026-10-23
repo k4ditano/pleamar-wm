@@ -23,6 +23,7 @@
 //! | `q PID` | `state FOCUSED_PID foreground|background_visible|background_occluded|not_found` |
 //! | `g PID` | `geometry AX AY SX SY`: where the window (AX, AY) and its root surface (SX, SY) are on the desktop |
 //! | `x` | the agent has finished: the monitor's light goes out now, not when it would have stopped waiting for its next step |
+//! | `C [PID]` | `can LOCKED` and, `|` between them, per window (every window without PID; with it, the one TARGET `root:PID` names) `PID SLOT PRIVATE POPUPS`: 1 or 0, it is private; POPUPS its menus open, `X,Y,W,H` from the root's corner, `;` between them, `-` with none. LOCKED: the screen is locked. `err unknown-root-pid` |
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
 //! | `r PID` | `rect X Y W H VISIBLE`: the root surface's box on the desktop, as the scene shows it, and whether it is seen (1) — what a screenshot of the window is cut from, and what `m`'s coordinates count in |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
@@ -33,6 +34,7 @@
 //! | `k TARGET KEY` | a named key: enter, tab, escape, backspace, space, arrows, f1–f12 |
 //! | `h TARGET MODS KEY` | a chord: `ctrl,shift` and a key |
 //! | `d X Y COUNT BUTTON` | a click at a point of the desktop |
+//! | `T`, `T PACE` | `pace PACE`: how fast the hands go, for every agent (`default`, `fast`, `instant`); `T PACE` sets it. The CLI moves at it, and Stop does not refuse it |
 //! | `M PID W H IDX X Y` | cursor IDX to X, Y of that process' surface of W × H that is no window (a panel: Marea, a bar) |
 //! | `B PID W H IDX BUTTON PRESSED` | a button there |
 //! | `R MONITOR HEX` · `R off` | `pleamar-wm remote`: someone uses this desktop from elsewhere, looking at that monitor, from that address (hex encoded) — said again every few seconds while it lasts, and forgotten 15 s after the last |
@@ -138,6 +140,9 @@ pub struct Agent {
     /// Typing for the person, not for an agent (the phone's keyboard, `U`):
     /// the same hands, without the agent's marks on the monitor.
     quiet: bool,
+    /// How fast the hands go (`T`), for every agent and shell: the CLI asks
+    /// it when it opens the socket.
+    pace: crate::config::Pace,
     pub path: String,
 }
 
@@ -212,7 +217,7 @@ pub fn start(state: &mut State) {
         return;
     }
     println!("agent · computer use: cua-inject v1 at {path}");
-    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pasting: None, quiet: false });
+    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pasting: None, quiet: false, pace: crate::config::get().pace });
     // Whether it is at work, looked at every second: between one action and
     // the next an agent thinks, and that is still working.
     let timer = Timer::from_duration(Duration::from_secs(1));
@@ -307,6 +312,8 @@ impl State {
             ["q", pid] => return self.agent_query(pid.parse().unwrap_or(0)),
             ["g", pid] => self.agent_geometry(pid),
             ["r", pid] => self.agent_rect(pid),
+            ["C"] => self.agent_can(None),
+            ["C", pid] => self.agent_can(Some(pid)),
             ["l"] => Ok(self.agent_list()),
             ["o"] => Ok(self.agent_monitors()),
             ["y"] => Ok(self.agent_layers()),
@@ -319,6 +326,17 @@ impl State {
                 Ok("ok".to_owned())
             }
             ["p", idx] => Ok(self.agent_where(idx.parse().unwrap_or(0))),
+            // The pace: how the hands move, not something they do, so the
+            // user's Stop does not refuse it.
+            ["T"] => Ok(format!("pace {}", self.agent.as_ref().map_or_else(Default::default, |a| a.pace).name())),
+            ["T", pace] => match (crate::config::Pace::parse(pace), self.agent.as_mut()) {
+                (Some(p), Some(a)) => {
+                    a.pace = p;
+                    let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.pace"), p as u8 as f32));
+                    Ok("ok".to_owned())
+                }
+                _ => Err("bad-args"),
+            },
             ["v", pid, monitor] => self.agent_send(pid, monitor.parse().unwrap_or(usize::MAX)).map(|_| "ok".to_owned()),
             ["x"] => {
                 self.agent_done();
@@ -379,8 +397,7 @@ impl State {
             // Files the remote page received, dropped on the window under
             // the pointer (a `text/uri-list`, in hex).
             ["D", uris] if uris.len() % 2 == 0 && uris.len() <= 60_000 => {
-                let bytes: Result<Vec<u8>, _> = (0..uris.len()).step_by(2).map(|k| u8::from_str_radix(&uris[k..k + 2], 16)).collect();
-                match bytes.ok().and_then(|b| String::from_utf8(b).ok()) {
+                match unhex_long(uris).ok().and_then(|b| String::from_utf8(b).ok()) {
                     Some(list) if list.starts_with("file://") => self.drop_files(list),
                     _ => Err("bad-args"),
                 }
@@ -652,6 +669,30 @@ impl State {
             out.push_str(&format!("{sep} {pid} {} {} {} {} {} {} {} {} {monitor} {parent} {slot}", rect.0, rect.1, rect.2, rect.3, u8::from(rect.4), u8::from(focused), hex(&w.app), hex(&w.title)));
         }
         out
+    }
+
+    /// `C [PID]`: what can be asked of a window, or of each: whether it is
+    /// private, and where its menus are, for a scene's boxes in them.
+    fn agent_can(&self, spec: Option<&str>) -> Result<String, &'static str> {
+        let slots: Vec<usize> = match spec {
+            Some(p) => vec![self.agent_pick(p)?],
+            None => self.slots_open().collect(),
+        };
+        let mut out = format!("can {}", u8::from(layers::locked()));
+        for slot in slots {
+            let Some(w) = self.slots[slot].as_ref() else { continue };
+            let pid = self.pid_of(slot);
+            let g = w.geometry;
+            let popups: Vec<String> = smithay::desktop::PopupManager::popups_for_surface(&w.surface)
+                .map(|(popup, at)| {
+                    let pg = popup.geometry();
+                    format!("{},{},{},{}", g[0] + at.x - pg.loc.x, g[1] + at.y - pg.loc.y, pg.size.w, pg.size.h)
+                })
+                .collect();
+            let popups = if popups.is_empty() { "-".to_owned() } else { popups.join(";") };
+            out.push_str(&format!(" | {pid} {slot} {} {popups}", u8::from(layers::private(slot))));
+        }
+        Ok(out)
     }
 
     /// Where a new window of this process goes while the agent works with
@@ -1008,6 +1049,8 @@ impl State {
         let working = idle < Duration::from_secs(90) || (alive && idle < Duration::from_secs(600));
         if working != agent.active {
             agent.active = working;
+            // The pill says the pace, from the session's start too.
+            let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.pace"), agent.pace as u8 as f32));
             let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.active"), if working { 1.0 } else { 0.0 }));
             if !working {
                 self.agent_keyboard_leave();
@@ -1533,10 +1576,20 @@ fn num(s: &str) -> Result<f64, &'static str> {
 }
 
 fn unhex(hex: &str) -> Result<Vec<u8>, &'static str> {
-    if hex.len() % 2 != 0 || hex.len() > 8192 {
+    if hex.len() > 8192 {
         return Err("bad-args");
     }
-    (0..hex.len()).step_by(2).map(|k| u8::from_str_radix(&hex[k..k + 2], 16).map_err(|_| "bad-args")).collect()
+    unhex_long(hex)
+}
+
+/// The same, of any length: two hex digits a byte, nothing else.
+fn unhex_long(hex: &str) -> Result<Vec<u8>, &'static str> {
+    let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8).ok_or("bad-args");
+    let b = hex.as_bytes();
+    if b.len() % 2 != 0 {
+        return Err("bad-args");
+    }
+    b.chunks_exact(2).map(|p| Ok(digit(p[0])? << 4 | digit(p[1])?)).collect()
 }
 
 /// Whether `pid` is `root` or one of its children: a browser's windows may
@@ -1744,5 +1797,20 @@ mod tests {
         assert!(!same("zen-browser", "brave-browser"));
         assert!(!same("code", "electron"));
         assert!(!same("kitty", "foot"));
+    }
+
+    #[test]
+    fn hex_is_two_digits_a_byte_and_nothing_else() {
+        use super::{unhex, unhex_long};
+        assert_eq!(unhex("4f6b"), Ok(b"Ok".to_vec()));
+        assert_eq!(unhex("4F6B"), Ok(b"Ok".to_vec()));
+        assert_eq!(unhex(""), Ok(Vec::new()));
+        // Not a character boundary, a sign, an odd length, too long.
+        assert_eq!(unhex("a\u{e9}b"), Err("bad-args"));
+        assert_eq!(unhex("\u{e9}\u{e9}"), Err("bad-args"));
+        assert_eq!(unhex("+a"), Err("bad-args"));
+        assert_eq!(unhex("abc"), Err("bad-args"));
+        assert_eq!(unhex(&"a".repeat(8194)), Err("bad-args"));
+        assert_eq!(unhex_long(&"61".repeat(5000)).map(|b| b.len()), Ok(5000));
     }
 }
