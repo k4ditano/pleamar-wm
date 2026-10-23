@@ -9,8 +9,8 @@ use super::*;
 
 const PRESS: Spec = Spec { element: true, flags: &["--first", "--no-wait"], values: &["--text", "--max"], ..PLAIN };
 const FOCUS: Spec = Spec { element: true, flags: &["--first", "--no-wait"], values: &["--text", "--max"], ..PLAIN };
-const TYPE: Spec = Spec { element: true, flags: &["--no-wait"], values: &["--max"], ..PLAIN };
-const KEY: Spec = Spec { flags: &["--no-wait"], values: &["--max"], ..PLAIN };
+const TYPE: Spec = Spec { element: true, flags: &["--no-wait"], values: &["--max"], ..SHELL };
+const KEY: Spec = Spec { flags: &["--no-wait"], values: &["--max"], ..SHELL };
 /// The pointer's: `click`, `drag`, `scroll`.
 pub(super) const POINTER: Spec = Spec { flags: &["--no-wait"], values: &["--max"], ..PLAIN };
 
@@ -31,6 +31,8 @@ pub(super) fn split_until(words: &[String]) -> (Vec<String>, Option<Vec<String>>
 enum Before {
     /// A scene's items.
     Scene(Vec<Rec>),
+    /// A terminal's mark.
+    Text(u64),
     /// Pictures only.
     Look,
     /// Not taken: `--no-wait`.
@@ -41,6 +43,7 @@ enum Before {
 /// many changes are answered, and what is waited for after it.
 pub(super) struct Acting {
     k: Kinds,
+    w: Window,
     pub(super) h: Hands,
     before: Before,
     max: usize,
@@ -48,10 +51,11 @@ pub(super) struct Acting {
 }
 
 impl Acting {
-    /// Before acting on that window: its version, unless `--no-wait`
-    /// without `--until`. A wrong `--until` is refused now, before
-    /// anything is done.
-    pub(super) fn take(k: &Kinds, a: &Args, until: Option<Vec<String>>, h: Hands) -> R<Acting> {
+    /// Before acting on that window: its version, of what the action
+    /// changes (`text`: a terminal's text, when it has one), unless
+    /// `--no-wait` without `--until`. A wrong `--until` is refused now,
+    /// before anything is done.
+    pub(super) fn take(k: &Kinds, w: &Window, a: &Args, until: Option<Vec<String>>, text: bool, h: Hands) -> R<Acting> {
         if let Some(c) = &until {
             wait::check(c, k)?;
         }
@@ -60,10 +64,12 @@ impl Acting {
             Before::Nothing
         } else if k.is_scene() {
             Before::Scene(described(k)?.recs)
+        } else if let Some(m) = text.then(|| Term::of(k, w, "tree", false).and_then(|t| t.mark()).ok()).flatten() {
+            Before::Text(m.0)
         } else {
             Before::Look
         };
-        Ok(Acting { k: k.clone(), h, before, max, until })
+        Ok(Acting { k: k.clone(), w: w.clone(), h, before, max, until })
     }
 
     /// The answer: what was done (`said`, then what the scene said of it),
@@ -82,9 +88,16 @@ impl Acting {
         println!("{said}");
         print!("{told}");
         if let Some(cond) = self.until.take() {
-            let held = wait::until(&[&[self.k.name.clone()][..], &cond].concat());
-            let changes = self.changes();
-            held.as_ref().map_or(Ok(()), |_| changes)?;
+            let mark = match self.before {
+                Before::Text(m) => Some(m),
+                _ => None,
+            };
+            let held = wait::until(&[&[self.k.name.clone()][..], &cond].concat(), mark);
+            // A terminal's wait answers what came after the mark itself.
+            if mark.is_none() {
+                let changes = self.changes();
+                held.as_ref().map_or(Ok(()), |_| changes)?;
+            }
             return held.map_err(|f| match f.code {
                 fail::TIMEOUT => Fail::new(f.code, f.msg.replacen("timeout: ", &format!("timeout: {said}, then "), 1)),
                 _ => f,
@@ -112,6 +125,13 @@ impl Acting {
                 let list = scene_changes(then, &now, false).into_iter().filter(|c| !matches!(c, Change::Came(r) if r.states.iter().any(|s| s == "offscreen"))).collect();
                 print_since(Since::Changes { version: v.to_string(), list, more: 0 }, &name, &self.said(None, ""));
             }
+            Before::Text(m) => {
+                let t = Term::of(&self.k, &self.w, "tree", false)?;
+                let reply = t.ask(&format!("lines {} {m}", crate::term::HISTORY))?;
+                let (mark, text) = tail(&reply, self.max, &name, *m);
+                keep(&name, mark);
+                print!("{text}");
+            }
             Before::Look => println!("done"),
             Before::Nothing => {}
         }
@@ -137,6 +157,30 @@ impl Acting {
         print_since(since, &name, &self.said(last.map(|l| l.said()), "no read of it kept by this agent"));
         Ok(())
     }
+}
+
+/// A terminal's `lines N M` answer: its mark, and as `tree --since M` gives
+/// it, the last `max` lines after how many came before them.
+fn tail(reply: &str, max: usize, name: &str, from: u64) -> (u64, String) {
+    let mut lines = reply.lines();
+    let head = lines.next().unwrap_or_default();
+    let mark = head.strip_prefix("mark ").and_then(|m| m.parse().ok()).unwrap_or(from);
+    let body: Vec<&str> = lines.collect();
+    let screen = body.first() == Some(&"screen");
+    let body = &body[usize::from(screen)..];
+    let skip = body.len().saturating_sub(max);
+    let mut s = format!("{head}\n");
+    if screen {
+        s.push_str("screen\n");
+    }
+    if skip > 0 {
+        s.push_str(&format!("... {skip} lines before these: `tree {name} --since {from}` gives them\n"));
+    }
+    for l in &body[skip..] {
+        s.push_str(l);
+        s.push('\n');
+    }
+    (mark, s)
 }
 
 /// `[right|middle] [COUNT]`, in any order.
@@ -176,7 +220,7 @@ pub(super) fn press(words: &[String]) -> R {
     }
     let name = item(&k, &a)?;
     let (b, count) = button_and_count(&a.words)?;
-    let act = Acting::take(&k, &a, until, Hands::open()?)?;
+    let act = Acting::take(&k, &w, &a, until, false, Hands::open()?)?;
     // The scene presses it by name, and before that takes the agent's
     // cursor there itself: it is never behind the press.
     let done = told(sock, &format!("press {name}{} {count}", how(b, 1)));
@@ -202,13 +246,13 @@ pub(super) fn focus(words: &[String]) -> R {
     k.open()?;
     let Some((_, sock)) = &k.scene else { return Err(k.refuse("focus")) };
     let name = item(&k, &a)?;
-    let act = Acting::take(&k, &a, until, Hands::open()?)?;
+    let act = Acting::take(&k, &w, &a, until, false, Hands::open()?)?;
     let done = told(sock, &format!("focus {name}"));
     act.answer(&format!("focused {}", Element::Name(name).said()), done)
 }
 
 /// `type PID [@X] [--] TEXT|-`: into a scene's @X, or what has the
-/// keyboard.
+/// keyboard; a terminal's shell through its layer.
 pub(super) fn type_(words: &[String]) -> R {
     let (words, until) = split_until(words);
     let a = parse(&words, &TYPE)?;
@@ -219,31 +263,48 @@ pub(super) fn type_(words: &[String]) -> R {
     let text = typed(&a.words)?;
     let k = Kinds::of(&w)?;
     k.open()?;
+    if k.is_text() && (w.shell.is_some() || a.element.is_none()) {
+        if a.element.is_some() {
+            return Err(k.refuse("type @X"));
+        }
+        let t = Term::of(&k, &w, "type", true)?;
+        let act = Acting::take(&k, &w, &a, until, true, Hands::open()?)?;
+        return act.answer(&format!("typed into {}", k.name), t.type_text(&text).map(|_| String::new()));
+    }
     if let Some(e) = &a.element {
         let Some((_, sock)) = &k.scene else { return Err(k.refuse(&format!("type {}", e.said()))) };
         let name = item(&k, &a)?;
-        let act = Acting::take(&k, &a, until, Hands::open()?)?;
+        let act = Acting::take(&k, &w, &a, until, false, Hands::open()?)?;
         let done = told(sock, &format!("type {name} {text}"));
         return act.answer(&format!("typed into {}", Element::Name(name).said()), done);
     }
-    let mut act = Acting::take(&k, &a, until, Hands::open()?)?;
+    let mut act = Acting::take(&k, &w, &a, until, false, Hands::open()?)?;
     let done = act.h.type_into(&w, &text);
     act.answer(&format!("typed into {}", k.name), done.map(|_| String::new()))
 }
 
-/// `key PID NAME`: as the window manager types it.
+/// `key PID NAME`: a terminal's shell through its layer when it knows the
+/// key; else as the window manager types it.
 pub(super) fn key(words: &[String]) -> R {
     let (words, until) = split_until(words);
     let a = parse(&words, &KEY)?;
     let w = a.win()?.clone();
     let name = a.word(0).ok_or_else(|| usage("which key: key PID enter"))?;
     let k = Kinds::of(&w)?;
-    let mut act = Acting::take(&k, &a, until, Hands::open()?)?;
+    let mut act = Acting::take(&k, &w, &a, until, true, Hands::open()?)?;
+    if k.is_text() && (w.shell.is_some() || crate::term::knows_key(name)) {
+        match Term::of(&k, &w, "key", true).and_then(|t| t.key(name)) {
+            // An older layer that does not know it.
+            Err(e) if w.shell.is_none() && e.msg.starts_with("no key called") => {}
+            Err(e) if e.msg.starts_with("no key called") => return Err(usage(e.msg)),
+            done => return act.answer(&format!("pressed {name}"), done.map(|_| String::new())),
+        }
+    }
     let done = act.h.act(&format!("k {} {name}", w.target()));
     act.answer(&format!("pressed {name}"), done.map(|_| String::new()))
 }
 
-/// `hotkey PID MODS+KEY`: a chord.
+/// `hotkey PID MODS+KEY`: a chord; into a terminal's shell those it types.
 pub(super) fn hotkey(words: &[String]) -> R {
     let (words, until) = split_until(words);
     let a = parse(&words, &KEY)?;
@@ -252,24 +313,16 @@ pub(super) fn hotkey(words: &[String]) -> R {
     let mut parts: Vec<&str> = combo.split('+').collect();
     let key = parts.pop().filter(|k| !k.is_empty()).ok_or_else(|| usage("which key, after the modifiers: ctrl+l"))?;
     let k = Kinds::of(&w)?;
-    let mut act = Acting::take(&k, &a, until, Hands::open()?)?;
-    let done = if parts.is_empty() {
+    let mut act = Acting::take(&k, &w, &a, until, true, Hands::open()?)?;
+    let typed = combo == "shift+tab" || combo.strip_prefix("ctrl+").is_some_and(|c| c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic());
+    let done = if k.is_text() && (w.shell.is_some() || typed) {
+        Term::of(&k, &w, "hotkey", true).and_then(|t| t.key(combo))
+    } else if parts.is_empty() {
         act.h.act(&format!("k {} {key}", w.target()))
     } else {
         act.h.act(&format!("h {} {} {key}", w.target(), parts.join(",")))
     };
     act.answer(&format!("pressed {combo}"), done.map(|_| String::new()))
-}
-
-/// The text `type` takes: its words, or (`-`) the input, so that a
-/// password is not seen in the list of processes.
-fn typed(words: &[String]) -> R<String> {
-    if words.len() == 1 && words[0] == "-" {
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| e.to_string())?;
-        return Ok(s.strip_suffix('\n').map(str::to_owned).unwrap_or(s));
-    }
-    Ok(words.join(" "))
 }
 
 impl Hands {
@@ -302,7 +355,11 @@ mod tests {
     }
 
     #[test]
-    fn a_button_and_a_count() {
+    fn a_terminal_answers_its_last_lines() {
+        let (mark, text) = tail("mark 14\na\nb\nc", 2, "7002", 11);
+        assert_eq!(mark, 14);
+        assert_eq!(text, "mark 14\n... 1 lines before these: `tree 7002 --since 11` gives them\nb\nc\n");
+        assert_eq!(tail("mark 3\nscreen\nx", 60, "7002", 1).1, "mark 3\nscreen\nx\n");
         assert_eq!(how(273, 2), " right 2");
         assert_eq!(how(272, 1), "");
     }

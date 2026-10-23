@@ -14,7 +14,7 @@ pub(super) fn go(verb: &str, words: &[String]) -> R {
     }
     let k = Kinds::of(&w)?;
     k.open()?;
-    let mut act = act::Acting::take(&k, &a, until, Hands::open()?)?;
+    let mut act = act::Acting::take(&k, &w, &a, until, true, Hands::open()?)?;
     let h = &mut act.h;
     let (said, done) = match verb {
         "click" => {

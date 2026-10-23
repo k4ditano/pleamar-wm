@@ -99,9 +99,10 @@ fn condition(a: &Value) -> Result<Vec<String>, String> {
             w.push(need(s(a, "state"), "state")?);
             w
         }
-        "changed" => vec![until.clone()],
+        "settled" => vec!["settled".into(), duration(a, "quiet").unwrap_or_else(|| "500ms".into())],
+        "changed" | "prompt" => vec![until.clone()],
         "expr" => vec!["expr".into(), need(s(a, "expr"), "expr")?],
-        _ => return Err(format!("until is has, gone, state, not, changed or expr, not {until:?}")),
+        _ => return Err(format!("until is has, gone, state, not, changed, settled, prompt or expr, not {until:?}")),
     })
 }
 
@@ -121,7 +122,7 @@ fn step(window: &str, v: &Value) -> Result<String, String> {
 }
 
 fn tools() -> Vec<Tool<Words>> {
-    let window = json!({ "type": "string", "description": "The window: PID or PID.N as `windows` names it." });
+    let window = json!({ "type": "string", "description": "The window: PID or PID.N as `windows` names it; a terminal's shell PID:SHELL." });
     let element = json!({ "type": "string", "description": "A scene's item: @save (@=3 a name of digits)." });
     let text = json!({ "type": "string", "description": "Its whole name (case folded); several match: they are listed (exit 6), or first=true." });
     let first = json!({ "type": "boolean", "description": "Take the first of several that match." });
@@ -132,7 +133,7 @@ fn tools() -> Vec<Tool<Words>> {
     vec![
         Tool {
             name: "windows",
-            about: "Every window: PID (PID.N for one of a program's several), program, title, box, monitor, and what it does: scene (a pleamar scene: read and act by item), look (pictures, the pointer), nothing (private: ask the user).",
+            about: "Every window: PID (PID.N for one of a program's several), program, title, box, monitor, and what it does: scene (a pleamar scene: read and act by item), text (a terminal: read as text, run commands), look (pictures, the pointer), nothing (private: ask the user). A terminal with several shells names them.",
             args: json!({}),
             needed: &[],
             eager: true,
@@ -140,7 +141,7 @@ fn tools() -> Vec<Tool<Words>> {
         },
         Tool {
             name: "can",
-            about: "What one window does, and its verbs.",
+            about: "What one window does and its verbs; a terminal's shells, what runs in each, where, its size and how long it has been quiet.",
             args: json!({ "window": window }),
             needed: &["window"],
             eager: false,
@@ -162,14 +163,15 @@ fn tools() -> Vec<Tool<Words>> {
         },
         Tool {
             name: "tree",
-            about: "Read a window: a scene's items as `@name role \"name\" X,Y WxH states`, indented under what they are in, and its version. Read before you look.",
+            about: "Read a window: a scene's items as `@name role \"name\" X,Y WxH states`, indented under what they are in, and its version; a terminal: `mark M` and its lines. Read before you look.",
             args: json!({
                 "window": window,
-                "since": { "type": ["boolean", "number"], "description": "What changed since your last read of it (true), or since that version." },
+                "since": { "type": ["boolean", "number"], "description": "What changed since your last read of it (true), or since that version or mark." },
                 "within": element,
                 "role": st("Only elements of that role, under what they are in."),
                 "max": num("At most this many lines, the rest counted."),
                 "hidden": flag("What is not shown too (scrolled away, collapsed)."),
+                "history": flag("A terminal: all it keeps."),
                 "long": flag("Names cut at 400, not 120."),
                 "json": flag("As JSON."),
             }),
@@ -183,13 +185,13 @@ fn tools() -> Vec<Tool<Words>> {
                         _ => {}
                     }
                     values(w, a, &[("within", "--within"), ("role", "--role"), ("max", "--max")]);
-                    flags(w, a, &[("hidden", "--hidden"), ("long", "--long"), ("json", "--json")]);
+                    flags(w, a, &[("hidden", "--hidden"), ("history", "--history"), ("long", "--long"), ("json", "--json")]);
                 })
             },
         },
         Tool {
             name: "find",
-            about: "What says a text in its name or text, under what it is in.",
+            about: "What says a text in its name or text, under what it is in; a terminal's lines that say it, by number.",
             args: json!({ "window": window, "text": st("What to look for (case folded)."), "long": flag("Names cut at 400."), "json": flag("As JSON.") }),
             needed: &["window", "text"],
             eager: false,
@@ -243,7 +245,7 @@ fn tools() -> Vec<Tool<Words>> {
         },
         Tool {
             name: "type",
-            about: "Type text into a scene's item or what has the keyboard.",
+            about: "Type text into a scene's item or what has the keyboard; a terminal: into its shell, a newline is Enter.",
             args: json!({ "window": window, "text": st("What to type, as it is."), "element": element }),
             needed: &["window", "text"],
             eager: true,
@@ -342,16 +344,32 @@ fn tools() -> Vec<Tool<Words>> {
             },
         },
         Tool {
+            name: "run",
+            about: "A terminal: a command typed into its shell, Enter, and once the shell waits again `mark M`, how many lines came before its last 200, and those. A timeout (5): what came so far; wait with until=prompt or tree with since=M goes on from there.",
+            args: json!({ "window": window, "command": st("The command line, as it is."), "timeout": dur("How long to wait for it (30 s, up to 10 m): seconds, or 500ms, 5s, 2m."), "full": flag("All its lines, not the last 200.") }),
+            needed: &["window", "command"],
+            eager: false,
+            run: |a| {
+                on("run", a, |w| {
+                    words(w, a, &["command"]);
+                    w.extend(duration(a, "timeout"));
+                    flags(w, a, &[("full", "--full")]);
+                })
+            },
+        },
+        Tool {
             name: "wait",
-            about: "Wait until something holds, and answer `ok` and what met it. until: has (text shown), gone (text, or a scene's item), state / not (a scene's item has, or lost, state), changed, expr (a scene's expression). What a window does not wait for is refused (exit 3).",
+            about: "Wait until something holds, and answer `ok` and what met it. until: has (text shown), gone (text, or a scene's item), state / not (a scene's item has, or lost, state), changed, settled (a terminal quiet for that long), prompt (a terminal's shell waits again), expr (a scene's expression). What a window does not wait for is refused (exit 3).",
             args: json!({
                 "window": window,
-                "until": { "type": "string", "enum": ["has", "gone", "state", "not", "changed", "expr"] },
+                "until": { "type": "string", "enum": ["has", "gone", "state", "not", "changed", "settled", "prompt", "expr"] },
                 "text": st("For has and gone."),
                 "element": element,
                 "state": st("For state and not: disabled, enabled, checked, selected, offscreen."),
+                "quiet": dur("For settled: quiet for how long (500ms)."),
                 "expr": st("For expr: status == \"Saved\"."),
-                "timeout": dur("How long (30 s, up to 60 s)."),
+                "from": num("A terminal, for has: lines after its mark M."),
+                "timeout": dur("How long (30 s, up to 60 s; prompt up to 10 m)."),
                 "json": flag("What met it as JSON."),
             }),
             needed: &["window", "until"],
@@ -361,13 +379,14 @@ fn tools() -> Vec<Tool<Words>> {
                 on("wait", a, |w| {
                     w.extend(cond);
                     w.extend(duration(a, "timeout"));
+                    values(w, a, &[("from", "--from")]);
                     flags(w, a, &[("json", "--json")]);
                 })
             },
         },
         Tool {
             name: "listen",
-            about: "What happens in a window for a while, a line each: a scene's events.",
+            about: "What happens in a window for a while, a line each: a scene's events; a terminal's new lines.",
             args: json!({ "window": window, "duration": dur("How long (10 s, up to 60 s).") }),
             needed: &["window"],
             eager: false,
@@ -414,10 +433,10 @@ fn tools() -> Vec<Tool<Words>> {
 }
 
 const INSTRUCTIONS: &str = "You use a pleamar-wm desktop with the agent's own pointer and keyboard; the user's stay theirs. The loop:
-1. Find the window and what it does: windows (or can for one). scene: read and act by item; look: pictures and the pointer only; nothing: private, ask the user. Use only what it does: the rest is refused (exit 3) with what it can.
+1. Find the window and what it does: windows (or can for one). scene: read and act by item; text: a terminal, read as text and run commands; look: pictures and the pointer only; nothing: private, ask the user. Use only what it does: the rest is refused (exit 3) with what it can.
 2. Open what is not open with open, never from your own shell.
 3. Read before you look: tree gives a scene's items as @name role \"name\" X,Y WxH states, under their container; find for a long window. Look only for what reading cannot tell.
-4. Act by item: press, type, focus with element. Several steps on one window: do. Click by coordinates only when the window only does look.
+4. Act by item: press, type, focus with element; a terminal: run. Several steps on one window: do. Click by coordinates only when the window only does look.
 5. Check from the action's answer; wait for what takes time; tree with since for what changed since your last read.
 6. A failure ends with `exit N`; decide by N: 1 read the message; 2 private (ask the user, never another way); 3 not for this window; 4 the item is gone (read again); 5 timeout (after an action, the action happened); 6 ambiguous (name one); 7 the window went (windows again); 8 the user stopped you (stop, say where you left it); 64 wrong arguments; 69 no session (tell the user).
 7. done when you are finished.";
@@ -529,7 +548,7 @@ mod tests {
     #[test]
     fn the_tools_are_the_verbs() {
         let names: Vec<&str> = tools().iter().map(|t| t.name).collect();
-        assert_eq!(names, ["windows", "can", "open", "tree", "find", "at", "press", "focus", "type", "key", "hotkey", "click", "scroll", "drag", "look", "wait", "listen", "say", "do", "done"]);
+        assert_eq!(names, ["windows", "can", "open", "tree", "find", "at", "press", "focus", "type", "key", "hotkey", "click", "scroll", "drag", "look", "run", "wait", "listen", "say", "do", "done"]);
         for t in tools() {
             assert!(t.about.is_ascii() && t.args.to_string().is_ascii(), "{}", t.name);
             for k in t.needed {
@@ -544,12 +563,13 @@ mod tests {
         let w = "4521";
         assert_eq!(words("windows", json!({})), ["windows"]);
         assert_eq!(words("done", json!({})), ["done"]);
-        assert_eq!(words("can", json!({ "window": "7002.1" })), ["can", "7002.1"]);
+        assert_eq!(words("can", json!({ "window": "7002:7044" })), ["can", "7002:7044"]);
         assert_eq!(words("open", json!({ "command": "foot -e htop", "monitor": 1 })), ["open", "--monitor", "1", "--", "foot -e htop"]);
         assert_eq!(words("open", json!({ "command": "--weird" })), ["open", "--", "--weird"]);
         assert_eq!(words("tree", json!({ "window": w })), ["tree", w]);
         assert_eq!(words("tree", json!({ "window": w, "since": true, "max": 20, "hidden": true, "json": true })), ["tree", w, "--since", "--max", "20", "--hidden", "--json"]);
         assert_eq!(words("tree", json!({ "window": w, "since": 12, "within": "@3", "role": "link", "focused": false })), ["tree", w, "--since", "12", "--within", "@3", "--role", "link"]);
+        assert_eq!(words("tree", json!({ "window": "7002:7044", "history": true, "long": true })), ["tree", "7002:7044", "--history", "--long"]);
         assert_eq!(words("find", json!({ "window": w, "text": "Save as", "json": true })), ["find", w, "--text", "Save as", "--json"]);
         assert_eq!(words("at", json!({ "window": w, "x": 10, "y": 20.5 })), ["at", w, "10", "20.5"]);
         assert_eq!(words("press", json!({ "window": w, "element": "@24" })), ["press", w, "@24"]);
@@ -574,11 +594,17 @@ mod tests {
         for bad in [json!({ "window": w, "text": "a", "element": "@1" }), json!({ "window": w, "element": "@save", "box": [0, 0, 1, 1] })] {
             assert!((tool("look").run)(&bad).is_err(), "{bad}");
         }
+        assert_eq!(words("run", json!({ "window": "7002:7044", "command": "ls -l", "timeout": 60, "full": true })), ["run", "7002:7044", "ls -l", "60s", "--full"]);
+        assert_eq!(words("run", json!({ "window": w, "command": "make", "timeout": "2m" })), ["run", w, "make", "2m"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "has", "text": "OK", "timeout": 5 })), ["wait", w, "has", "--text", "OK", "5s"]);
+        assert_eq!(words("wait", json!({ "window": w, "until": "has", "text": "x", "from": 120 })), ["wait", w, "has", "--text", "x", "--from", "120"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "gone", "text": "Loading" })), ["wait", w, "gone", "--text", "Loading"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "gone", "element": "@4" })), ["wait", w, "@4", "gone"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "state", "element": "@4", "state": "checked" })), ["wait", w, "@4", "checked"]);
-        assert_eq!(words("wait", json!({ "window": w, "until": "not", "element": "@4", "state": "selected", "json": true })), ["wait", w, "@4", "not", "selected", "--json"]);
+        assert_eq!(words("wait", json!({ "window": w, "until": "not", "element": "@4", "state": "busy", "json": true })), ["wait", w, "@4", "not", "busy", "--json"]);
+        assert_eq!(words("wait", json!({ "window": w, "until": "settled" })), ["wait", w, "settled", "500ms"]);
+        assert_eq!(words("wait", json!({ "window": w, "until": "settled", "quiet": "1s", "timeout": 10 })), ["wait", w, "settled", "1s", "10s"]);
+        assert_eq!(words("wait", json!({ "window": w, "until": "prompt" })), ["wait", w, "prompt"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "expr", "expr": "status == \"Saved\"" })), ["wait", w, "expr", "status == \"Saved\""]);
         for bad in [json!({ "window": w, "until": "has" }), json!({ "window": w, "until": "soon" }), json!({ "window": w, "until": "state", "element": "@4" })] {
             assert!((tool("wait").run)(&bad).is_err(), "{bad}");

@@ -27,6 +27,7 @@
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
 //! | `r PID` | `rect X Y W H VISIBLE ZOOM`: the root surface's box on the desktop, as the scene shows it, whether it is seen (1), and how much the scene scales it: `m`'s coordinates are the window's own, W / ZOOM wide |
 //! | `c TARGET [hidpi] [X Y W H]` | `picture PATH W H AGE [SCALE]`: a PNG of the window as it drew itself, with its menus, in `m`'s coordinates (or at its own density, a pixel over SCALE), cut to that box; AGE the ms since it last drew; whole, with a menu above or left of the root's corner: `... [SCALE] X Y`, the picture's corner in `m`'s coordinates; `err private` for a private window or a locked screen, `err no-box` for a box that misses the window, `err too-big` for a picture past 16384 pixels a side |
+//! | `i PID [w]` | the agent reads (`w`: types into) that window's terminal through its layer: `ok`, and its outline lit; `err private` for a private window or a locked session, `err stopped-by-user` for `w` while stopped; while stopped, `ok stopped MS`, MS since the Stop |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
 //! | `m TARGET IDX X Y` | cursor IDX to X, Y of the window (its root surface's coordinates) |
 //! | `b TARGET IDX BUTTON PRESSED` | an evdev button (272 left), 1 down, 0 up |
@@ -547,6 +548,7 @@ impl State {
             ["g", pid] => self.agent_geometry(pid),
             ["r", pid] => self.agent_rect(pid),
             ["c", target, rest @ ..] => self.agent_picture(target, rest),
+            ["i", pid, rest @ ..] => self.agent_text(pid, rest == ["w"]),
             ["C"] => self.agent_can(None),
             ["C", pid] => self.agent_can(Some(pid)),
             ["l"] => Ok(self.agent_list()),
@@ -864,6 +866,28 @@ impl State {
         let slot = self.agent_pick(pid).map_err(|_| "target-not-found")?;
         let (r, zoom) = (self.agent_rect_of(slot), self.agent_place(slot).map_or(1.0, |p| p.2));
         Ok(format!("rect {} {} {} {} {} {zoom:.4}", r.0, r.1, r.2, r.3, u8::from(r.4)))
+    }
+
+    /// The agent at a window's text through its terminal's layer, which the
+    /// compositor does not see: refused as a picture of it would be (a
+    /// private window, a locked session), typing also while stopped; and the
+    /// window's outline lit, as for anything it does with it.
+    fn agent_text(&mut self, pid: &str, types: bool) -> Result<String, &'static str> {
+        let slot = self.agent_pick(pid).map_err(|_| "target-not-found")?;
+        let process = self.pid_of(slot);
+        if layers::locked() || self.slots_open().any(|s| (s == slot || self.pid_of(s) == process) && layers::private(s)) {
+            return Err("private");
+        }
+        let stopped = self.agent_stopped();
+        if types && stopped {
+            return Err("stopped-by-user");
+        }
+        self.agent_busy(slot);
+        // Reading while stopped: how long ago, so that a wait begun before it ends.
+        Ok(match self.agent.as_ref().and_then(|a| a.stopped).filter(|_| stopped) {
+            Some(at) => format!("ok stopped {}", at.elapsed().as_millis()),
+            None => "ok".to_owned(),
+        })
     }
 
     fn agent_rect_of(&self, slot: usize) -> (i64, i64, i64, i64, bool) {

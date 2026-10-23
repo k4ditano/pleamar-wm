@@ -6,7 +6,9 @@
 use super::*;
 
 /// The verbs a step may be: those of a window.
-const VERBS: [&str; 18] = ["tree", "find", "at", "listen", "watch", "press", "focus", "type", "key", "hotkey", "look", "wait", "say", "move", "click", "drag", "scroll", "can"];
+const VERBS: [&str; 19] = ["tree", "find", "at", "listen", "watch", "press", "focus", "type", "key", "hotkey", "look", "run", "wait", "say", "move", "click", "drag", "scroll", "can"];
+/// Those that take a terminal's shell (`PID:SHELL`); the rest get the window.
+const SHELLED: [&str; 10] = ["tree", "find", "listen", "watch", "type", "key", "hotkey", "run", "wait", "can"];
 
 /// A script's commands, each its words and the line it starts on. Quoting
 /// as a shell's: '...' as it is, "..." with \" \\ \$ \` escaped, \ before
@@ -109,19 +111,23 @@ pub(crate) fn seconds(s: &str) -> Result<f64, String> {
     duration(s).map_err(|f| f.msg)
 }
 
-/// Whether a `type` would read its text from the input, which here is the
-/// script.
-fn reads_input(words: &[String]) -> bool {
-    let mut rest: Vec<&str> = words.iter().map(String::as_str).filter(|w| *w != "--").collect();
+/// Whether a `type` or `run` would read its text from the input, which
+/// here is the script.
+fn reads_input(verb: &str, words: &[String]) -> bool {
+    let mut rest: Vec<&str> = words.iter().map(String::as_str).filter(|w| !matches!(*w, "--" | "--full")).collect();
     if rest.first().is_some_and(|w| w.starts_with('@')) {
         rest.remove(0);
+    }
+    if verb == "run" && rest.len() == 2 && is_duration(rest[1]) {
+        rest.pop();
     }
     rest == ["-"]
 }
 
 /// Each step's words for `go`, its window put in after the verb.
 fn steps(pid: &str, script: &str) -> R<Vec<(String, Vec<String>)>> {
-    Window::parse(pid).ok_or_else(|| usage(format!("{pid}: which window: PID or PID.N, as `pleamar-wm agent windows` names it")))?;
+    let w = Window::parse(pid).ok_or_else(|| usage(format!("{pid}: which window: PID, PID.N or PID:SHELL, as `pleamar-wm agent windows` names it")))?;
+    let bare = w.pid.clone();
     let cmds = commands(script)?;
     if cmds.is_empty() {
         return Err(usage("do what: one command a line on the input, as `press @12`, `type @12 -- \"ana\"`, `key tab`"));
@@ -132,11 +138,11 @@ fn steps(pid: &str, script: &str) -> R<Vec<(String, Vec<String>)>> {
             if !VERBS.contains(&verb) {
                 return Err(usage(format!("line {line}: {verb} is not a step: a step is a window's verb ({}), without the window", VERBS.join(", "))));
             }
-            if verb == "type" && reads_input(&words[1..]) {
+            if reads_input(verb, &words[1..]) {
                 return Err(usage(format!("line {line}: {verb} - reads the input, which is the script here: say the text itself (quoted)")));
             }
             let said = words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
-            let mut args = vec![words[0].clone(), pid.to_owned()];
+            let mut args = vec![words[0].clone(), if SHELLED.contains(&verb) { pid.to_owned() } else { bare.clone() }];
             args.extend_from_slice(&words[1..]);
             Ok((said, args))
         })
@@ -215,9 +221,11 @@ mod tests {
         assert_eq!(s[0], ("press @12".into(), words(&["press", "4521", "@12"])));
         assert_eq!(s[1].1, words(&["type", "4521", "@12", "--", "ana"]));
         assert_eq!(s[2].1, words(&["wait", "4521", "has", "--text", "OK", "5s"]));
-        let s = steps("7002.1", "look -o /tmp/x.png").unwrap();
-        assert_eq!(s[0].1, words(&["look", "7002.1", "-o", "/tmp/x.png"]));
-        for (script, says) in [("type @12 -", "line 1: type -"), ("press @1\ntype -- -", "line 2: type -"), ("run ls", "line 1: run is not a step"), ("windows", "line 1: windows is not a step"), ("do 4521", "is not a step"), ("", "do what")] {
+        // A shell where a shell is taken; the window elsewhere.
+        let s = steps("7002.1:7044", "run 'ls -l'\nlook -o /tmp/x.png").unwrap();
+        assert_eq!(s[0], ("run 'ls -l'".into(), words(&["run", "7002.1:7044", "ls -l"])));
+        assert_eq!(s[1].1, words(&["look", "7002.1", "-o", "/tmp/x.png"]));
+        for (script, says) in [("type @12 -", "line 1: type -"), ("press @1\ntype -- -", "line 2: type -"), ("run - 5s", "line 1: run -"), ("windows", "line 1: windows is not a step"), ("do 4521", "is not a step"), ("", "do what")] {
             let f = steps("4521", script).unwrap_err();
             assert_eq!(f.code, fail::USAGE, "{script}");
             assert!(f.msg.contains(says), "{script}: {}", f.msg);
@@ -225,7 +233,6 @@ mod tests {
         // `-` as text among others is typed.
         assert!(steps("4521", "type a - b").is_ok());
         assert_eq!(steps("firefox", "key tab").unwrap_err().code, fail::USAGE);
-        assert_eq!(steps("7002:7044", "key tab").unwrap_err().code, fail::USAGE);
     }
 
     #[test]

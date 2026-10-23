@@ -23,7 +23,7 @@ pub(super) fn windows() -> R {
     let list = reply.strip_prefix("windows").ok_or(reply.clone())?;
     let entries: Vec<Vec<&str>> = list.split('|').map(|e| e.split_whitespace().collect::<Vec<&str>>()).filter(|f| f.len() >= 9).collect();
     let (locked, can) = kind::can_reply(&wm("C")?).unwrap_or((false, Vec::new()));
-    let scenes = scenes();
+    let (scenes, layers) = (scenes(), crate::term::layers());
     for f in &entries {
         // A program with several windows: each by its own name.
         let several = entries.iter().filter(|e| e[0] == f[0]).count() > 1;
@@ -47,12 +47,17 @@ pub(super) fn windows() -> R {
         let k = Kinds {
             name: name.clone(),
             scene: scenes.get(&pid).cloned(),
+            shells: crate::term::shells_of(pid, &layers),
             private: c.is_some_and(|c| c.private),
             locked,
             popups: Vec::new(),
             slot: c.map(|c| c.slot),
         };
-        println!("{name:>8}  {}  \u{ab}{}\u{bb}  {seen}{keys}{dialog}  does {}", unhex(f[7]), unhex(f[8]), k.does());
+        let ids = match &k.shells[..] {
+            [_, _, ..] if !(k.private || locked) => format!("  shells {}", k.shells.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>().join(",")),
+            _ => String::new(),
+        };
+        println!("{name:>8}  {}  \u{ab}{}\u{bb}  {seen}{keys}{dialog}  does {}{ids}", unhex(f[7]), unhex(f[8]), k.does());
     }
     Ok(())
 }

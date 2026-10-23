@@ -2,7 +2,7 @@
 
 use super::*;
 
-const LOOK: Spec = Spec { window: Needs::Maybe, element: true, flags: &["--hidpi", "--first"], values: &["--text", "-o", "--pad"], maybe: &[], raw: false };
+const LOOK: Spec = Spec { window: Needs::Maybe, element: true, flags: &["--hidpi", "--first"], values: &["--text", "-o", "--pad"], maybe: &[], raw: false, shell: false };
 
 fn default_out() -> String {
     format!("{}/pleamar-agent-look.png", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()))

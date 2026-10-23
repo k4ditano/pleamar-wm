@@ -1,11 +1,11 @@
-//! The versions of each window an agent last read: a scene's, kept here
-//! with what it was.
+//! The versions of each window an agent last read: a terminal's mark, a
+//! scene's (kept here, with what it was).
 
 use super::*;
 
 /// Where this agent keeps the last version it got of each window:
 /// `$XDG_RUNTIME_DIR/pleamar-agent/NAME` (its name hex), a line `WINDOW V
-/// SECONDS` each, the window as it was said (`4521`, `4521.2`) and when.
+/// SECONDS` each, the window as it was said (`4521`, `7002:7044`) and when.
 pub(super) fn versions_file() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(std::env::var("XDG_RUNTIME_DIR").ok()?).join("pleamar-agent").join(hex(&agent_name())))
 }
