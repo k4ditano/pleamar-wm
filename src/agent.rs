@@ -23,17 +23,19 @@
 //! | `q PID` | `state FOCUSED_PID foreground|background_visible|background_occluded|not_found` |
 //! | `g PID` | `geometry AX AY SX SY`: where the window (AX, AY) and its root surface (SX, SY) are on the desktop |
 //! | `x` | the agent has finished: the monitor's light goes out now, not when it would have stopped waiting for its next step |
+//! | `C [PID]` | `can LOCKED` and, `|` between them, per window (every window without PID; with it, the one TARGET `root:PID` names) `PID SLOT TREE PRIVATE POPUPS`: 1 or 0, its program published a tree on the accessibility bus (asked of the broker, no walk), it is private; POPUPS its menus open, `X,Y,W,H` from the root's corner, `;` between them, `-` with none. LOCKED: the screen is locked. `err unknown-root-pid` |
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
-//! | `r PID` | `rect X Y W H VISIBLE`: the root surface's box on the desktop, as the scene shows it, and whether it is seen (1) — what a screenshot of the window is cut from, and what `m`'s coordinates count in |
+//! | `r PID` | `rect X Y W H VISIBLE ZOOM`: the root surface's box on the desktop, as the scene shows it, whether it is seen (1), and how much the scene scales it: `m`'s coordinates are the window's own, W / ZOOM wide |
 //! | `c TARGET [hidpi] [X Y W H]` | `picture PATH W H AGE [SCALE]`: a PNG of the window as it drew itself, with its menus, in `m`'s coordinates (or at its own density, a pixel over SCALE), cut to that box; AGE the ms since it last drew; whole, with a menu above or left of the root's corner: `... [SCALE] X Y`, the picture's corner in `m`'s coordinates; `err private` for a private window or a locked screen, `err no-box` for a box that misses the window, `err too-big` for a picture past 16384 pixels a side |
 //! | `c TARGET [hidpi] @ID [PAD] [HEX]` | `picture PATH W H AGE [SCALE] X Y`: the same, cut to an element `A` gave (scrolled into view first if it is not in the window), or to the run of its text that says HEX, grown by PAD; X Y its corner in `m`'s coordinates; `err gone`, `err no-box` |
 //! | `c TARGET [hidpi] marks [all]` | `picture PATH W H AGE [SCALE] V` and, `|` between them, the records of the elements marked on it: outlined, their ids on labels; what is acted on (`all`: and texts and headings), from a read `V` of its tree taken with the picture |
-//! | `A TARGET tree [all]` · `A TARGET focus` · `A TARGET at X Y` · `A TARGET find HEX` | `nodes V` and, `|` between them, records `ID DEPTH ROLE X Y W H STATES NAME TEXT` (name and text hex) of what the window's program published on the accessibility bus: what is shown (`all`: and what is not), the focused element, the one at that point, or those that say that, each with those it is in; `err no-tree`, `err private` |
+//! | `A TARGET tree [all]` · `A TARGET focus` · `A TARGET at X Y` · `A TARGET find HEX` | `nodes V` and, `|` between them, records `ID DEPTH ROLE X Y W H STATES NAME TEXT` (name and text hex) of what the window's program published on the accessibility bus: what is shown (`all`: and what is not), the focused element, the one at that point, or those that say that, each with those it is in; `err no-tree`, `err private`. Only `tree` and `tree since` reads are kept (the last 16 of a window) |
+//! | `A TARGET within ID [all]` | `nodes V` and the records of what is shown of that element as `A` numbered it and what it holds (`all`: and what is not), it at depth 0; not kept; `err gone` once it is no longer there |
 //! | `e TARGET ID box|press|focus|scroll`, `e TARGET ID action N` | that element of the window, as `A` numbered it: `box X Y W H shown|hidden` (`- - - -` without one), read now; its default action, the keyboard's focus in its window, scrolled into view, its action N: `ok`, or `err no-action`, `err no-focus`, `err no-scroll`; `err gone` once it is no longer there. Refused while stopped |
 //! | `S TARGET ID HEX` | that element's whole text set to that (`EditableText.SetTextContents`): `ok`, `err not-editable`, `err gone`. Refused while stopped |
 //! | `A TARGET tree since V [boxes]` | `changes V2` and, `|` between them, `+ RECORD` (given now, not in read V), `- ID` (in V, not now), `~ RECORD` (its role, name, text or states changed; `boxes`: its box too); `full | nodes V2 | ...`, the whole tree, when V is no longer kept or the frame is another |
 //! | `i PID [w]` | the agent reads (`w`: types into) that window's terminal through its layer: `ok`, and its outline lit; `err private` for a private window or a locked session, `err stopped-by-user` for `w` while stopped; while stopped, `ok stopped MS`, MS since the Stop |
-//! | `W TARGET MS CONDITION` | once it holds: `ok`, and for `has HEX`, `focus HEX` and `ID [not] STATE` the record that met it; `err timeout` after MS (60000 at most), `err stopped-by-user` at a Stop meanwhile, `err no-tree`. On the tree: `has HEX`, `gone HEX`, `ID gone`, `ID STATE`, `ID not STATE` (a record's states, `enabled`), `focus HEX`, `changed`; on the window: `settled MS` (neither its tree nor its picture changed for MS), `dialog` (`ok PID SLOT TITLE`, title hex) |
+//! | `W TARGET MS CONDITION` | once it holds: `ok`, and for `has HEX`, `focus HEX` and `ID [not] STATE` the record that met it; `err timeout` after MS (60000 at most), `err stopped-by-user` at a Stop meanwhile, `err no-tree`. On the tree: `has HEX`, `gone HEX`, `ID gone`, `ID STATE`, `ID not STATE` (a record's states, `enabled`), `focus HEX`, `changed`; on the window: `settled MS` (neither its tree nor its picture changed for MS), `drawn MS` (it drew since the wait began, then nothing new for MS: its picture alone, no tree walked; `ok drawing` when it does not stop: at the deadline, or after 2 MS for a window that drew without a pause as the wait began, a spinner; `err timeout` when it drew nothing), `dialog` (`ok PID SLOT TITLE`, title hex) |
 //! | `O TARGET MS` | what a screen reader would say of it, a line each as it happens: `focus RECORD` (the focus it starts on, then each it moves to), `text RECORD` (the focused element's text changed), `live RECORD` (a live region's news), `announce HEX [RECORD]`, `dialog PID SLOT TITLE`, `no-tree` (only dialogs are heard); last `end WHY HEARD READ`, WHY `time` after MS (600000 at most), `gone`, `stopped-by-user`, `private`, with the program's events heard and the elements read for them |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
 //! | `m TARGET IDX X Y` | cursor IDX to X, Y of the window (its root surface's coordinates) |
@@ -600,6 +602,8 @@ impl State {
             ["W", target, ms, condition @ ..] => self.agent_wait(target, ms, condition),
             ["O", target, ms] => self.agent_listen(target, ms),
             ["i", pid, rest @ ..] => self.agent_text(pid, rest == ["w"]),
+            ["C"] => self.agent_can(None),
+            ["C", pid] => self.agent_can(Some(pid)),
             ["l"] => Ok(self.agent_list()),
             ["o"] => Ok(self.agent_monitors()),
             ["y"] => Ok(self.agent_layers()),
@@ -926,8 +930,8 @@ impl State {
     /// compositor, which is what draws it: an agent can trust it.
     fn agent_rect(&self, pid: &str) -> Result<String, &'static str> {
         let slot = self.agent_pick(pid).map_err(|_| "target-not-found")?;
-        let r = self.agent_rect_of(slot);
-        Ok(format!("rect {} {} {} {} {}", r.0, r.1, r.2, r.3, u8::from(r.4)))
+        let (r, zoom) = (self.agent_rect_of(slot), self.agent_place(slot).map_or(1.0, |p| p.2));
+        Ok(format!("rect {} {} {} {} {} {zoom:.4}", r.0, r.1, r.2, r.3, u8::from(r.4)))
     }
 
     /// The agent at a window's text through its terminal's layer, which the
@@ -979,7 +983,7 @@ impl State {
         [left, top, right - left, bottom - top]
     }
 
-    /// `A TARGET tree [all] | tree since V [boxes] | focus | at X Y | find HEX`:
+    /// `A TARGET tree [all] | tree since V [boxes] | within ID [all] | focus | at X Y | find HEX`:
     /// what the window's program published of it on the accessibility bus
     /// (`a11y_tree.rs`), read off the loop: `nodes V` and its records, or
     /// `changes V` and what changed.
@@ -993,6 +997,7 @@ impl State {
             ["tree"] => Ask::Tree(false),
             ["tree", "all"] => Ask::Tree(true),
             ["tree", "since", v, boxes @ ..] if boxes.is_empty() || boxes == ["boxes"] => Ask::Since(v.parse().map_err(|_| "bad-args")?, !boxes.is_empty()),
+            ["within", id, all @ ..] if all.is_empty() || all == ["all"] => Ask::Within(id.parse().map_err(|_| "bad-args")?, !all.is_empty()),
             ["focus"] => Ask::Focus,
             ["at", x, y] => match (x.parse(), y.parse()) {
                 (Ok(x), Ok(y)) => Ask::At(x, y),
@@ -1058,7 +1063,10 @@ impl State {
         let pid = self.pid_of(slot);
         let title = self.slots.get(slot).and_then(Option::as_ref).map(|w| w.title.clone()).unwrap_or_default();
         self.agent_busy(slot);
-        let wait = crate::a11y_wait::Wait::start(condition, slot, pid, title, self.agent_guarded(pid), move |p| in_family(p, pid) || in_family(pid, p), ms, self.slots_open().collect());
+        let mut wait = crate::a11y_wait::Wait::start(condition, slot, pid, title, self.agent_guarded(pid), move |p| in_family(p, pid) || in_family(pid, p), ms, self.slots_open().collect());
+        if let Some(w) = self.slots.get(slot).and_then(Option::as_ref) {
+            wait.animating = w.drew.elapsed() <= crate::a11y_wait::PAUSE && w.steady.elapsed() >= crate::a11y_wait::STEADY;
+        }
         if let Some(a) = self.agent.as_mut() {
             a.pending = Some(Pending::Wait(Box::new(wait)));
         }
@@ -1073,10 +1081,11 @@ impl State {
         if self.agent.as_ref().and_then(|a| a.stopped).is_some_and(|at| at > w.since) {
             return Some("err stopped-by-user".into());
         }
-        if layers::locked() {
+        if layers::locked() || layers::private(w.slot) {
             return Some("err private".into());
         }
         let Some(window) = self.slots.get(w.slot).and_then(Option::as_ref).filter(|_| self.pid_of(w.slot) == w.pid) else { return Some("err gone".into()) };
+        w.retitle(&window.title);
         if let Some(done) = w.answered() {
             return Some(done);
         }
@@ -1087,6 +1096,10 @@ impl State {
                 }
             }
             Condition::Settled(ms) if w.quiet_since(window.drew).elapsed() >= Duration::from_millis(ms) => return Some("ok".into()),
+            // Drawing all the time: what it drew for the action is not told apart.
+            Condition::Drawn(ms) if w.animating && w.since.elapsed() >= Duration::from_millis(2 * ms) => return Some("ok drawing".into()),
+            Condition::Drawn(ms) if window.drew > w.since && window.drew.elapsed() >= Duration::from_millis(ms) => return Some("ok".into()),
+            Condition::Drawn(_) if window.drew > w.since && Instant::now() >= w.deadline => return Some("ok drawing".into()),
             _ => (),
         }
         (Instant::now() >= w.deadline).then(|| "err timeout".into())
@@ -1247,6 +1260,35 @@ impl State {
             out.push_str(&format!("{sep} {pid} {} {} {} {} {} {} {} {} {monitor} {parent} {slot}", rect.0, rect.1, rect.2, rect.3, u8::from(rect.4), u8::from(focused), hex(&w.app), hex(&w.title)));
         }
         out
+    }
+
+    /// `C [PID]`: what can be asked of a window, or of each: whether its
+    /// program (or, as `A` takes it, one of its family) published a tree,
+    /// from what the broker knows without walking it; whether it is private;
+    /// and where its menus are, for a scene's boxes in them.
+    fn agent_can(&self, spec: Option<&str>) -> Result<String, &'static str> {
+        let slots: Vec<usize> = match spec {
+            Some(p) => vec![self.agent_pick(p)?],
+            None => self.slots_open().collect(),
+        };
+        let mut programs = None;
+        let mut out = format!("can {}", u8::from(layers::locked()));
+        for slot in slots {
+            let Some(w) = self.slots[slot].as_ref() else { continue };
+            let pid = self.pid_of(slot);
+            let tree = crate::a11y::program_of(pid).is_some()
+                || programs.get_or_insert_with(crate::a11y::programs).iter().any(|p| p.root.is_some() && !p.reader && (in_family(p.pid, pid) || in_family(pid, p.pid)));
+            let g = w.geometry;
+            let popups: Vec<String> = smithay::desktop::PopupManager::popups_for_surface(&w.surface)
+                .map(|(popup, at)| {
+                    let pg = popup.geometry();
+                    format!("{},{},{},{}", g[0] + at.x - pg.loc.x, g[1] + at.y - pg.loc.y, pg.size.w, pg.size.h)
+                })
+                .collect();
+            let popups = if popups.is_empty() { "-".to_owned() } else { popups.join(";") };
+            out.push_str(&format!(" | {pid} {slot} {} {} {popups}", u8::from(tree), u8::from(layers::private(slot))));
+        }
+        Ok(out)
     }
 
     /// Where a new window of this process goes while the agent works with

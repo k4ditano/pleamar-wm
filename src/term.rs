@@ -850,17 +850,22 @@ fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
     let rest = words.next().unwrap_or("");
     let reply = match verb {
         "info" => {
-            let (title, bells, rows, cols, alt) = match s.screen.lock() {
+            let (title, bells, rows, cols, alt, cursor, before) = match s.screen.lock() {
                 Ok(p) => {
                     let (r, c) = p.screen().size();
-                    (p.callbacks().title.clone(), p.callbacks().bells, r.get(), c.get(), p.screen().alternate_screen())
+                    let (row, col) = p.screen().cursor_position();
+                    // The number of the cursor's line, as `lines` numbers them.
+                    let cursor = p.callbacks().next + (p.screen().scrollback_len() + row as usize) as u64;
+                    // What its line says before it: a prompt, when a shell waits.
+                    let before = p.screen().contents_between(row, 0, row, col);
+                    (p.callbacks().title.clone(), p.callbacks().bells, r.get(), c.get(), p.screen().alternate_screen(), cursor, before)
                 }
                 Err(_) => return,
             };
             let (pid, cmd, cwd) = foreground(s);
             let quiet = s.started.elapsed().as_millis() as u64 - s.last_out.load(std::sync::atomic::Ordering::Relaxed);
             format!(
-                "layer {}\nterminal {}\nshell {}\nforeground {pid}\ncommand {cmd}\ncwd {cwd}\nagent {}\ntitle {title}\nstate {}\nsize {cols}x{rows}\nfullscreen {}\nbells {bells}\nquiet {quiet}\nhook {}\nanswers {}\ndraft {}\n",
+                "layer {}\nterminal {}\nshell {}\nforeground {pid}\ncommand {cmd}\ncwd {cwd}\nagent {}\ntitle {title}\nstate {}\nsize {cols}x{rows}\nfullscreen {}\nbells {bells}\nquiet {quiet}\ncursor {cursor}\nhook {}\nanswers {}\ndraft {}\nbefore {before}\n",
                 // SAFETY: plain questions about this process.
                 unsafe { libc::getpid() },
                 unsafe { libc::getppid() },

@@ -15,8 +15,10 @@ const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const WINDOW: u32 = 1;
 /// `Component.ScrollTo`: wherever it is seen whole.
 const ANYWHERE: u32 = 6;
-/// AT-SPI's states, by their bit: what lives no longer, what is shown.
+/// AT-SPI's states, by their bit: what lives no longer, what can be used, what is shown.
 const DEFUNCT: u32 = 6;
+const ENABLED: u32 = 8;
+const SENSITIVE: u32 = 24;
 const SHOWING: u32 = 25;
 /// How long one call to a program is waited for.
 const CALL: Duration = Duration::from_secs(1);
@@ -95,7 +97,7 @@ fn done(said: Result<(bool,), &'static str>, missing: &'static str) -> Result<St
 }
 
 /// That element of the window, as `A` numbered it: `ok`, or for `Box`
-/// `box X Y W H shown|hidden` (`- - - -` without one). `stops`: the user's
+/// `box X Y W H shown|hidden [disabled]` (`- - - -` without one). `stops`: the user's
 /// Stops when it was asked; one since refuses it right before it is done.
 pub fn act(pid: u32, slot: usize, id: u32, act: Act, stops: u64) -> Result<String, &'static str> {
     let k = crate::a11y_tree::key_of(pid, slot, id).ok_or("gone")?;
@@ -109,9 +111,10 @@ pub fn act(pid: u32, slot: usize, id: u32, act: Act, stops: u64) -> Result<Strin
     }
     match act {
         Act::Box => {
-            let shown = if has(SHOWING) { "shown" } else { "hidden" };
+            let off = if has(ENABLED) || has(SENSITIVE) { "" } else { " disabled" };
+            let shown = format!("{}{off}", if has(SHOWING) { "shown" } else { "hidden" });
             Ok(match ask::<((i32, i32, i32, i32),), _>(&k, COMPONENT, "GetExtents", &(WINDOW,), "no-box") {
-                Ok(((x, y, w, h),)) => crate::a11y_tree::sane([x, y, w, h]).map_or(format!("box - - - - {shown}"), |[x, y, w, h]| format!("box {x} {y} {w} {h} {shown}")),
+                Ok(((x, y, w, h),)) => crate::a11y_tree::sane([x, y, w, h]).map(|b| crate::a11y_tree::placed(pid, slot, b)).map_or(format!("box - - - - {shown}"), |[x, y, w, h]| format!("box {x} {y} {w} {h} {shown}")),
                 Err("no-box") => format!("box - - - - {shown}"),
                 Err(e) => return Err(e),
             })

@@ -58,15 +58,13 @@ const MAX_RULES: usize = 512;
 const FLOOD: u32 = 10_000;
 /// What a connection that does not read its socket may have queued to it.
 const QUEUE: usize = 4096;
-/// The bytes a queue (a connection's, a listener's, a reader's held calls)
+/// The bytes a queue (a connection's, a listener's)
 /// may hold: a few of the largest messages. Past it what comes is dropped.
 const QUEUE_BYTES: usize = 32 << 20;
 /// How long a call of pleamar-wm's own is waited for at most.
 const OWN_DEADLINE: Duration = Duration::from_secs(60);
 /// How long a call between connections is waited for, as dbus-daemon's.
 const PEER_DEADLINE: Duration = Duration::from_secs(25);
-/// How long a reader is held for the user's answer.
-const ASK_DEADLINE: Duration = Duration::from_secs(60);
 
 /// A connection to the bus, as pleamar-wm's reader sees it.
 #[derive(Clone, Debug)]
@@ -74,8 +72,6 @@ pub struct Program {
     /// Its unique name (`:1.N`).
     pub name: String,
     pub pid: u32,
-    /// `/proc/PID/exe`.
-    pub exe: String,
     /// The root of its tree, as it embedded it: (bus name, object path).
     pub root: Option<(String, String)>,
     /// A reader that was let in, not a program publishing.
@@ -111,17 +107,11 @@ enum Cmd {
     /// Events pleamar-wm's reader wants (true) or no longer wants.
     Events(Vec<String>, bool),
     Listen(async_channel::Sender<Message>),
-    Answer(u32, bool),
 }
 
 static TO_BROKER: OnceLock<async_channel::Sender<Cmd>> = OnceLock::new();
 static ADDRESS: OnceLock<String> = OnceLock::new();
 static PROGRAMS: Mutex<Vec<Known>> = Mutex::new(Vec::new());
-/// Who asks the user about a reader that is not in session.conf; without
-/// one, such a reader is refused at once.
-static ASK: Mutex<Option<Asker>> = Mutex::new(None);
-
-type Asker = std::sync::Arc<dyn Fn(&Program) + Send + Sync>;
 
 /// A connection as `programs` keeps it: when its process started, to tell
 /// it from a later one with its pid, and when it embedded its tree.
@@ -247,19 +237,6 @@ impl Drop for Listener {
     }
 }
 
-/// Who asks the user when a reader that session.conf does not name wants
-/// in: it is held until `answer`, or refused after a minute.
-pub fn on_ask(f: impl Fn(&Program) + Send + Sync + 'static) {
-    *ASK.lock().unwrap() = Some(std::sync::Arc::new(f));
-}
-
-/// The user's answer about the reader of that process: allowed (for this
-/// session: `config::write_a11y_reader` keeps it), or refused until it
-/// connects again.
-pub fn answer(pid: u32, allow: bool) {
-    tell(Cmd::Answer(pid, allow));
-}
-
 /// The bus, if session.conf says `agent on`: its socket now, its thread, and
 /// `org.a11y.Bus` on the session bus.
 pub fn start(display: &str) {
@@ -293,7 +270,7 @@ fn broker_at(path: &str) -> Option<String> {
     let _ = TO_BROKER.set(tx);
     let started = std::thread::Builder::new().name("a11y".into()).spawn(move || {
         let ex: &'static async_executor::LocalExecutor<'static> = Box::leak(Box::default());
-        let broker = Rc::new(RefCell::new(Broker::new(ex)));
+        let broker = Rc::new(RefCell::new(Broker::new()));
         ex.spawn(commands(broker.clone(), rx)).detach();
         ex.spawn(expiry(broker.clone())).detach();
         futures_lite::future::block_on(ex.run(serve(ex, broker, listener)));
@@ -378,7 +355,6 @@ fn publish(address: String) {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Reader {
-    Asking,
     Allowed,
     Denied,
 }
@@ -397,8 +373,6 @@ struct Peer {
     /// When it embedded `root`, in the order embeds came.
     embedded: u64,
     reader: Option<Reader>,
-    /// Calls held while the user is asked.
-    held: Vec<Message>,
     /// Well-known names it owns (a reader's).
     names: Vec<String>,
     rules: Vec<(String, Rule)>,
@@ -448,7 +422,6 @@ impl Budget {
 
 enum Gate {
     Pass,
-    Held,
     Deny,
 }
 
@@ -461,12 +434,11 @@ struct Broker {
     /// The events pleamar-wm's reader wants, and how many want each.
     own_events: HashMap<String, usize>,
     listeners: Vec<(async_channel::Sender<Message>, Budget)>,
-    /// Readers let in, by name: session.conf's and the user's answers.
+    /// Readers let in, by name: session.conf's.
     allowed: Vec<String>,
     guid: zbus::OwnedGuid,
     next: u64,
     embeds: u64,
-    ex: &'static async_executor::LocalExecutor<'static>,
     /// Methods answered `NotSupported` that were said already.
     unsupported: std::collections::HashSet<String>,
 }
@@ -573,7 +545,6 @@ async fn commands(broker: Rc<RefCell<Broker>>, rx: async_channel::Receiver<Cmd>)
                 Cmd::Call(m, reply) => b.own_call(m, reply),
                 Cmd::Events(events, on) => b.own_events(events, on),
                 Cmd::Listen(tx) => b.listeners.push((tx, Budget::default())),
-                Cmd::Answer(pid, allow) => b.answered(pid, allow),
             }
         }
         // A walk asks thousands at once: the connections' writers send
@@ -624,9 +595,8 @@ fn relay<'a>(m: &'a Message, hdr: &'a Header<'a>, sender: &'a str, reply_serial:
 }
 
 impl Broker {
-    fn new(ex: &'static async_executor::LocalExecutor<'static>) -> Broker {
+    fn new() -> Broker {
         Broker {
-            ex,
             peers: HashMap::new(),
             names: HashMap::from([(BUS.to_owned(), 0), (REGISTRY.to_owned(), 0), (OWN.to_owned(), 0)]),
             waiting: HashMap::new(),
@@ -644,7 +614,7 @@ impl Broker {
         let id = self.next;
         self.next += 1;
         let (exe, comm) = (read_proc(pid, "exe"), read_proc(pid, "comm"));
-        let p = Peer { name: String::new(), pid, start: started(pid), exe, comm, root: None, embedded: 0, reader: None, held: Vec::new(), names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, signals: 0, out, queued: Default::default(), dropping: Cell::new(false) };
+        let p = Peer { name: String::new(), pid, start: started(pid), exe, comm, root: None, embedded: 0, reader: None, names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, signals: 0, out, queued: Default::default(), dropping: Cell::new(false) };
         self.peers.insert(id, p);
         id
     }
@@ -652,7 +622,7 @@ impl Broker {
     /// What pleamar-wm's reader sees: every connection with its name.
     fn snapshot(&self) {
         let list = self.peers.values().filter(|p| !p.name.is_empty());
-        let list = list.map(|p| Known { program: Program { name: p.name.clone(), pid: p.pid, exe: p.exe.clone(), root: p.root.clone(), reader: p.reader == Some(Reader::Allowed) }, start: p.start, embedded: p.embedded });
+        let list = list.map(|p| Known { program: Program { name: p.name.clone(), pid: p.pid, root: p.root.clone(), reader: p.reader == Some(Reader::Allowed) }, start: p.start, embedded: p.embedded });
         *PROGRAMS.lock().unwrap() = list.collect();
     }
 
@@ -835,9 +805,8 @@ impl Broker {
                 };
                 // A program calling into its own objects is not reading.
                 if to != id {
-                    match self.gate(id, m) {
+                    match self.gate(id) {
                         Gate::Pass => (),
-                        Gate::Held => return,
                         Gate::Deny => return self.error(id, &hdr, BUS, ACCESS_DENIED, "a program cannot read another program's accessibility tree"),
                     }
                 }
@@ -860,17 +829,16 @@ impl Broker {
     }
 
     /// Whether this connection may read: it is a program until it does
-    /// what only a reader does (call into a program, register for events).
-    fn gate(&mut self, id: u64, m: &Message) -> Gate {
+    /// what only a reader does (call into a program, register for events),
+    /// and then a reader only if session.conf names it.
+    fn gate(&mut self, id: u64) -> Gate {
         let p = &self.peers[&id];
         match p.reader {
             Some(Reader::Allowed) => return Gate::Pass,
             Some(Reader::Denied) => return Gate::Deny,
-            Some(Reader::Asking) => return self.hold(id, m),
             None => (),
         }
         let named = names_of(&p.exe, &p.comm).iter().any(|n| self.allowed.contains(n));
-        let asker = ASK.lock().unwrap().clone();
         let label = self.label(id);
         let p = self.peers.get_mut(&id).unwrap();
         if named {
@@ -879,60 +847,10 @@ impl Broker {
             self.snapshot();
             return Gate::Pass;
         }
-        let Some(asker) = asker else {
-            p.reader = Some(Reader::Denied);
-            let name = names_of(&p.exe, &p.comm).pop().unwrap_or_default();
-            eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {name}` in session.conf allows it)");
-            return Gate::Deny;
-        };
-        p.reader = Some(Reader::Asking);
-        let program = Program { name: p.name.clone(), pid: p.pid, exe: p.exe.clone(), root: None, reader: false };
-        println!("a11y: {label} wants to read the windows: the user is asked");
-        // Asked once the broker is free: the asker may answer at once.
-        self.ex.spawn(async move {
-            asker(&program);
-            async_io::Timer::after(ASK_DEADLINE).await;
-            tell(Cmd::Answer(program.pid, false));
-        })
-        .detach();
-        self.hold(id, m)
-    }
-
-    /// A call of a reader the user is asked about, kept for the answer, as
-    /// many as it may have waiting.
-    fn hold(&mut self, id: u64, m: &Message) -> Gate {
-        let p = self.peers.get_mut(&id).unwrap();
-        let bytes: usize = p.held.iter().map(|h| h.data().len()).sum();
-        if p.held.len() >= MAX_CALLS || bytes + m.data().len() > QUEUE_BYTES {
-            self.error(id, &m.header(), BUS, LIMITS, "too many calls waiting for the user's answer");
-        } else {
-            p.held.push(m.clone());
-        }
-        Gate::Held
-    }
-
-    /// The user answered about the reader of that process.
-    fn answered(&mut self, pid: u32, allow: bool) {
-        let asking: Vec<u64> = self.peers.iter().filter(|(_, p)| p.pid == pid && p.reader == Some(Reader::Asking)).map(|(&id, _)| id).collect();
-        for id in asking {
-            let p = self.peers.get_mut(&id).unwrap();
-            p.reader = Some(if allow { Reader::Allowed } else { Reader::Denied });
-            let held = std::mem::take(&mut p.held);
-            if allow {
-                if let Some(n) = names_of(&p.exe, &p.comm).pop() {
-                    self.allowed.push(n);
-                }
-            }
-            println!("a11y: {} {}", self.label(id), if allow { "allowed to read the windows" } else { "refused" });
-            self.snapshot();
-            for m in held {
-                if allow {
-                    self.call(id, &m);
-                } else {
-                    self.error(id, &m.header(), BUS, ACCESS_DENIED, "the user did not allow this program to read the windows");
-                }
-            }
-        }
+        p.reader = Some(Reader::Denied);
+        let name = names_of(&p.exe, &p.comm).pop().unwrap_or_default();
+        eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {name}` in session.conf allows it)");
+        Gate::Deny
     }
 
     /// A reply, or an error, to a call it was sent: passed on only to the
@@ -1162,9 +1080,8 @@ impl Broker {
                 if name.starts_with(':') || name == BUS || name == REGISTRY || zbus::names::WellKnownName::try_from(name.as_str()).is_err() {
                     return self.error(id, &hdr, BUS, INVALID_ARGS, "that name cannot be owned");
                 }
-                match self.gate(id, m) {
+                match self.gate(id) {
                     Gate::Pass => (),
-                    Gate::Held => return,
                     Gate::Deny => return self.error(id, &hdr, BUS, ACCESS_DENIED, "only a reader owns a name on this bus"),
                 }
                 match self.names.get(&name).copied() {
@@ -1241,9 +1158,8 @@ impl Broker {
                     _ => Err(()),
                 }));
                 let Ok(event) = event else { return self.error(id, &hdr, OWN, INVALID_ARGS, "an event is a string") };
-                match self.gate(id, m) {
+                match self.gate(id) {
                     Gate::Pass => (),
-                    Gate::Held => return,
                     Gate::Deny => return self.error(id, &hdr, OWN, ACCESS_DENIED, "only a reader registers for events"),
                 }
                 let p = self.peers.get_mut(&id).unwrap();
@@ -1266,9 +1182,8 @@ impl Broker {
             (DEC_PATH, "org.a11y.atspi.DeviceEventController", "NotifyListenersAsync" | "DeregisterKeystrokeListener" | "DeregisterDeviceEventListener") => self.reply(id, &hdr, OWN, &()),
             // The desktop: its children are the programs' trees, for readers.
             (ROOT, "org.a11y.atspi.Accessible", "GetChildren" | "GetChildAtIndex") => {
-                match self.gate(id, m) {
+                match self.gate(id) {
                     Gate::Pass => (),
-                    Gate::Held => return,
                     Gate::Deny => return self.error(id, &hdr, OWN, ACCESS_DENIED, "only a reader lists the programs"),
                 }
                 let all = self.children();
@@ -1479,7 +1394,7 @@ mod tests {
 
     fn broker() -> (&'static async_executor::LocalExecutor<'static>, Broker) {
         let ex: &'static async_executor::LocalExecutor<'static> = Box::leak(Box::default());
-        (ex, Broker::new(ex))
+        (ex, Broker::new())
     }
 
     /// A connection that said its Hello, and what it is sent.
@@ -1603,16 +1518,6 @@ mod tests {
             b.to_listeners(&big);
         }
         assert_eq!(signals.len(), fit);
-
-        // A reader the user is asked about has as many held as it may wait for.
-        let (asking, from_bus) = reader(&mut b);
-        b.peers.get_mut(&asking).unwrap().reader = Some(Reader::Asking);
-        let (_, program, _to_program) = peer(&mut b, QUEUE);
-        for _ in 0..=MAX_CALLS {
-            assert!(b.incoming(asking, get_role(&program)));
-        }
-        assert_eq!(b.peers[&asking].held.len(), MAX_CALLS);
-        assert_eq!(error_of(&from_bus.try_recv().unwrap()).as_deref(), Some(LIMITS));
     }
 
     #[test]
@@ -1630,7 +1535,7 @@ mod tests {
 
     #[test]
     fn a_pid_is_the_process_that_has_it_now() {
-        let known = |name: &str, start, embedded| Known { program: Program { name: name.into(), pid: 7, exe: String::new(), root: Some((name.into(), ROOT.into())), reader: false }, start, embedded };
+        let known = |name: &str, start, embedded| Known { program: Program { name: name.into(), pid: 7, root: Some((name.into(), ROOT.into())), reader: false }, start, embedded };
         let list = [known(":1.1", Some(100), 1), known(":1.3", Some(200), 3), known(":1.2", Some(200), 2)];
         assert_eq!(pick(&list, 7, Some(200)).unwrap().name, ":1.3", "the last to embed");
         assert_eq!(pick(&list, 7, Some(100)).unwrap().name, ":1.1");
@@ -1693,15 +1598,6 @@ mod tests {
         let r = other.call_method(Some(BUS), BUS_PATH, Some(BUS), "GetConnectionUnixProcessID", &(me.as_str(),));
         assert!(matches!(r, Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == NO_OWNER));
         assert!(matches!(other.call_method(Some(BUS), BUS_PATH, Some(BUS), "StartServiceByName", &("x.y", 0u32)), Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == NOT_SUPPORTED));
-
-        // A reader the user allows, once asked: its call held, then let through.
-        on_ask(|p| answer(p.pid, true));
-        let reader = connect().build().unwrap();
-        let r = reader.call_method(Some(me.as_str()), ROOT, Some("org.a11y.atspi.Accessible"), "GetRole", &()).unwrap();
-        assert_eq!(r.body().deserialize::<(u32,)>().unwrap().0, 43);
-        let names = reader.call_method(Some(BUS), BUS_PATH, Some(BUS), "ListNames", &()).unwrap().body().deserialize::<(Vec<String>,)>().unwrap().0;
-        assert!(names.contains(&me));
-        assert!(denied(other.call_method(Some(me.as_str()), ROOT, Some("org.a11y.atspi.Accessible"), "GetRole", &())), "a refused one stays refused");
 
         // Too large a message puts its sender out.
         let big = connect().build().unwrap();

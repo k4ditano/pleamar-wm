@@ -23,6 +23,10 @@ pub const MOST: u64 = 60_000;
 const EVERY: Duration = Duration::from_millis(50);
 /// The most between two walks, events or not.
 const ANYWAY: Duration = Duration::from_secs(1);
+/// A window draws all the time (a spinner, a video) when it drew with no
+/// pause longer than `PAUSE` for `STEADY` before a wait began.
+pub const PAUSE: Duration = Duration::from_millis(100);
+pub const STEADY: Duration = Duration::from_millis(500);
 /// What says that a tree changed, in the form programs compare (see `HEARD`).
 const EVENTS: &[&str] = &["Object:ChildrenChanged", "Object:StateChanged", "Object:PropertyChange", "Object:TextChanged", "Focus:"];
 /// The states a condition can name: as records say them, and `enabled`.
@@ -45,6 +49,11 @@ pub enum Condition {
     Changed,
     /// Neither the tree nor the window's picture changed for so many ms.
     Settled(u64),
+    /// The window drew since the wait began, then nothing new for so many
+    /// ms: its picture alone, no tree walked. One that draws all the time
+    /// answers `ok drawing`, at the deadline or, drawing so as it began, after
+    /// twice that.
+    Drawn(u64),
     /// A dialog of the window opened.
     Dialog,
 }
@@ -60,6 +69,7 @@ impl Condition {
             ["focus", hex] => Condition::Focus(text(hex)?),
             ["changed"] => Condition::Changed,
             ["dialog"] => Condition::Dialog,
+            ["drawn", ms] => Condition::Drawn(ms.parse().ok().filter(|ms| *ms <= MOST).ok_or("bad-args")?),
             ["settled", ms] => Condition::Settled(ms.parse().ok().filter(|ms| *ms <= MOST).ok_or("bad-args")?),
             [id, "gone"] => Condition::IdGone(id.parse().map_err(|_| "bad-args")?),
             [id, "not", s] => Condition::State(id.parse().map_err(|_| "bad-args")?, state(s)?, false),
@@ -70,7 +80,7 @@ impl Condition {
 
     /// Whether it is about the tree (`settled` reads it only if there is one).
     pub fn needs_tree(&self) -> bool {
-        !matches!(self, Condition::Settled(_) | Condition::Dialog)
+        !matches!(self, Condition::Settled(_) | Condition::Drawn(_) | Condition::Dialog)
     }
 
     /// The element it names, if it names one.
@@ -82,8 +92,8 @@ impl Condition {
     }
 
     /// Whether it holds on what is shown now (`first`: what was at the
-    /// start): and the element that met it, if one did. `settled` and
-    /// `dialog` are the window manager's.
+    /// start): and the element that met it, if one did. `settled`, `drawn`
+    /// and `dialog` are the window manager's.
     pub fn holds<'a>(&self, first: &[Node], now: &'a [Node]) -> Option<Option<&'a Node>> {
         let says = |n: &Node, t: &str| n.name.to_lowercase().contains(t) || n.text.to_lowercase().contains(t);
         match self {
@@ -93,7 +103,7 @@ impl Condition {
             Condition::State(id, s, want) => now.iter().find(|n| n.id == *id && has(n, s) == *want).map(Some),
             Condition::Focus(t) => now.iter().find(|n| n.states.contains(&"focused") && n.name.to_lowercase().contains(t.as_str())).map(Some),
             Condition::Changed => differs(first, now).then_some(None),
-            Condition::Settled(_) | Condition::Dialog => None,
+            Condition::Settled(_) | Condition::Drawn(_) | Condition::Dialog => None,
         }
     }
 }
@@ -123,10 +133,15 @@ pub struct Wait {
     pub deadline: Instant,
     /// The windows open when it began: a dialog is one that was not.
     pub open: Vec<usize>,
+    /// The window drew all the time as it began (see `PAUSE`).
+    pub animating: bool,
     answer: Receiver<String>,
     /// When the tree last changed.
     changed: Arc<Mutex<Instant>>,
     over: Arc<AtomicBool>,
+    /// The window's title as it is now: its frame is found by it, and a page
+    /// that navigated is called something else.
+    title: Arc<Mutex<String>>,
 }
 
 impl Wait {
@@ -135,12 +150,20 @@ impl Wait {
     pub fn start(condition: Condition, slot: usize, pid: u32, title: String, guarded: bool, family: impl Fn(u32) -> bool + Send + 'static, ms: u64, open: Vec<usize>) -> Wait {
         let since = Instant::now();
         let (tx, answer) = std::sync::mpsc::channel();
-        let (changed, over) = (Arc::new(Mutex::new(since)), Arc::new(AtomicBool::new(false)));
-        if condition != Condition::Dialog {
-            let (condition, changed, over) = (condition.clone(), changed.clone(), over.clone());
+        let (changed, over, title) = (Arc::new(Mutex::new(since)), Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(title)));
+        if !matches!(condition, Condition::Dialog | Condition::Drawn(_)) {
+            let (condition, changed, over, title) = (condition.clone(), changed.clone(), over.clone(), title.clone());
             std::thread::spawn(move || watch(&condition, slot, pid, (&title, guarded), family, &tx, &changed, &over));
         }
-        Wait { condition, slot, pid, since, deadline: since + Duration::from_millis(ms.min(MOST)), open, answer, changed, over }
+        Wait { condition, slot, pid, since, deadline: since + Duration::from_millis(ms.min(MOST)), open, animating: false, answer, changed, over, title }
+    }
+
+    /// Its window is called that now.
+    pub fn retitle(&self, title: &str) {
+        let mut t = self.title.lock().unwrap();
+        if *t != title {
+            title.clone_into(&mut t);
+        }
     }
 
     /// The tree's answer, once it has one.
@@ -164,7 +187,8 @@ impl Drop for Wait {
 /// the record that met it, or why it cannot be; for `settled`, only when it
 /// last changed.
 #[allow(clippy::too_many_arguments)]
-fn watch(condition: &Condition, slot: usize, pid: u32, (title, guarded): (&str, bool), family: impl Fn(u32) -> bool, tx: &Sender<String>, changed: &Mutex<Instant>, over: &AtomicBool) {
+fn watch(condition: &Condition, slot: usize, pid: u32, (title, guarded): (&Mutex<String>, bool), family: impl Fn(u32) -> bool, tx: &Sender<String>, changed: &Mutex<Instant>, over: &AtomicBool) {
+    let title = || title.lock().unwrap().clone();
     let tell = |s: String| {
         if condition.needs_tree() {
             let _ = tx.send(s);
@@ -172,7 +196,7 @@ fn watch(condition: &Condition, slot: usize, pid: u32, (title, guarded): (&str, 
     };
     let Some(listener) = crate::a11y::listen(EVENTS) else { return tell("err no-bus".into()) };
     let start = Instant::now();
-    let (names, _, first) = match crate::a11y_tree::shown(slot, pid, title, guarded, &family) {
+    let (names, _, first) = match crate::a11y_tree::shown(slot, pid, &title(), guarded, &family) {
         Ok(got) => got,
         Err(e) => return tell(format!("err {e}")),
     };
@@ -212,7 +236,7 @@ fn watch(condition: &Condition, slot: usize, pid: u32, (title, guarded): (&str, 
         while listener.signals.try_recv().is_ok() {}
         walked = Instant::now();
         // A walk that fails (the window closing) is the window manager's to say.
-        let got = crate::a11y_tree::shown(slot, pid, title, guarded, &family);
+        let got = crate::a11y_tree::shown(slot, pid, &title(), guarded, &family);
         took = walked.elapsed();
         let Ok((_, _, now)) = got else { continue };
         if differs(&last, &now) {
@@ -479,6 +503,8 @@ mod tests {
         assert_eq!(p("settled 500"), Ok(Condition::Settled(500)));
         assert_eq!(p("changed"), Ok(Condition::Changed));
         assert_eq!(p("dialog"), Ok(Condition::Dialog));
+        assert_eq!(p("drawn 150"), Ok(Condition::Drawn(150)));
+        assert_eq!(p("drawn soon"), Err("bad-args"));
         assert_eq!(p("24 shiny"), Err("unknown-state"));
         assert_eq!(p("has"), Err("bad-args"));
         assert_eq!(p("has zz"), Err("bad-args"));
@@ -503,6 +529,8 @@ mod tests {
         assert_eq!(met(Condition::Changed), Some(None));
         assert_eq!(Condition::Changed.holds(&first, &first), None);
         assert_eq!(Condition::Settled(100).holds(&first, &now), None);
+        assert_eq!(Condition::Drawn(100).holds(&first, &now), None);
+        assert!(!Condition::Drawn(100).needs_tree());
     }
 
     fn event(interface: &str, member: &str, kind: &str, detail1: i32, data: zbus::zvariant::Value) -> zbus::Message {

@@ -485,23 +485,6 @@ pub fn write_layout(monitor: &str, name: &str) -> Result<(), String> {
     std::fs::write(&path, out.join("\n") + "\n").map_err(|e| format!("could not write {path}: {e}"))
 }
 
-/// Allows a reader of the accessibility bus for good (`a11y reader NAME` in
-/// session.conf), at the end, if it is not there yet.
-pub fn write_a11y_reader(name: &str) -> Result<(), String> {
-    let path = std::env::var("PLEAMAR_WM_CONFIG").ok().or_else(|| user_dir().map(|d| format!("{d}/session.conf"))).ok_or("there is no configuration folder")?;
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    if text.lines().any(|l| words(l.split('#').next().unwrap_or("")) == ["a11y", "reader", name]) {
-        return Ok(());
-    }
-    let mut out: Vec<&str> = text.lines().collect();
-    let line = format!("a11y reader {name}");
-    out.push(&line);
-    if let Some(dir) = std::path::Path::new(&path).parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    std::fs::write(&path, out.join("\n") + "\n").map_err(|e| format!("could not write {path}: {e}"))
-}
-
 /// The file that says the monitors must not go dark (`pleamar-wm idle hold`):
 /// it is there, or it is not, so that a script can change it while the session
 /// runs, which `session.conf` (read once) cannot.

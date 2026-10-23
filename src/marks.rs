@@ -144,7 +144,7 @@ pub fn element_box(pid: u32, slot: usize, id: u32, run: Option<&str>) -> Result<
         let range = || call::<((i32, i32, i32, i32),), _>(&k, TEXT, "GetRangeExtents", &(start, end, WINDOW)).ok().and_then(|((x, y, w, h),)| a11y_tree::sane([x, y, w, h]));
         range().or_else(range)
     });
-    Ok((words.or(a11y_tree::sane([x, y, w, h])), showing))
+    Ok((words.or(a11y_tree::sane([x, y, w, h])).map(|b| a11y_tree::placed(pid, slot, b)), showing))
 }
 
 /// The element scrolled into view by its program: whether it says it did.

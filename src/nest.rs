@@ -291,6 +291,8 @@ struct Window {
     shown: Option<(String, [i32; 4])>,
     /// When it last brought something new to show (it or what hangs from it).
     drew: Instant,
+    /// Since when it has drawn without a pause (a spinner: long ago).
+    steady: Instant,
     /// Its entry in ext-foreign-toplevel-list (what a screen share lists).
     listed: ForeignToplevelHandle,
     fullscreen: bool,
@@ -2754,7 +2756,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -3046,6 +3048,9 @@ impl State {
             let mut same = false;
             if let Some(Some(win)) = self.slots.get_mut(slot) {
                 same = nothing_new && win.geometry == g && win.told == layout;
+                if win.geometry != g {
+                    crate::a11y_tree::geometry(slot, g);
+                }
                 win.geometry = g;
                 win.sent = pieces.iter().map(|p| p.id).collect();
                 win.told = layout;
@@ -3516,6 +3521,9 @@ impl CompositorHandler for State {
             // A menu is its window's.
             let window = self.menus.iter().find(|m| m.surface == root).map_or(root.clone(), |m| m.root.clone());
             if let Some(w) = self.slots.iter_mut().flatten().find(|w| w.surface == window) {
+                if w.drew.elapsed() > crate::a11y_wait::PAUSE {
+                    w.steady = Instant::now();
+                }
                 w.drew = Instant::now();
             }
         }

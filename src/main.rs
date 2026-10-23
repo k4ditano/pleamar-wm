@@ -30,6 +30,7 @@ mod session;
 mod term;
 mod link;
 mod mcp;
+mod mcp_serve;
 mod keep;
 mod output;
 

@@ -38,8 +38,8 @@ const LIMIT: Duration = Duration::from_millis(2500);
 const CALL: Duration = Duration::from_secs(1);
 /// Characters of a name or a text given.
 const CUT: usize = 400;
-/// Reads of a window kept.
-const KEPT: usize = 4;
+/// Reads of a window kept: those of what is shown, as `tree` gives it.
+const KEPT: usize = 16;
 /// Elements of a window numbered and remembered, at most: past it the
 /// oldest not in a read kept are forgotten (a long listen numbers many).
 const IDS: usize = 8192;
@@ -80,6 +80,8 @@ pub enum Ask {
     Find(String),
     /// What is shown, as what changed since that read (`true`: boxes too).
     Since(u64, bool),
+    /// What is shown of that element and what it holds (`true`: what is not shown too).
+    Within(u32, bool),
 }
 
 /// An element given.
@@ -115,8 +117,8 @@ struct Kept {
     next: u32,
     version: u64,
     reads: VecDeque<(u64, Vec<Node>)>,
-    /// Those of the reads kept that were of what is shown, as `tree` gives it.
-    shown: Vec<u64>,
+    /// How far its program's boxes are moved to be in its picture.
+    shift: [i32; 2],
 }
 
 impl Kept {
@@ -128,6 +130,17 @@ impl Kept {
         self.ids.insert(k.clone(), self.next);
         self.keys.insert(self.next, k.clone());
         self.next
+    }
+
+    /// A read of what is shown, as `tree` gives it, kept; the oldest past `KEPT` let go.
+    fn keep(&mut self, ask: &Ask, version: u64, nodes: &[Node]) {
+        if !matches!(ask, Ask::Tree(false) | Ask::Since(..)) {
+            return;
+        }
+        self.reads.push_back((version, nodes.to_vec()));
+        while self.reads.len() > KEPT {
+            self.reads.pop_front();
+        }
     }
 
     /// Past `IDS`, the oldest numbers not in a read kept forgotten, down to
@@ -165,6 +178,43 @@ pub fn sane(b: [i32; 4]) -> Option<[i32; 4]> {
 static KEPT_OF: Mutex<Option<HashMap<(u32, usize), Kept>>> = Mutex::new(None);
 /// The last version given, of any window.
 static VERSION: AtomicU64 = AtomicU64::new(0);
+/// By slot: where each window is in its root surface, as its program set it.
+static GEOMETRY: Mutex<Option<HashMap<usize, [i32; 4]>>> = Mutex::new(None);
+
+/// A window's box in its root surface (`xdg_surface.set_window_geometry`).
+pub fn geometry(slot: usize, g: [i32; 4]) {
+    GEOMETRY.lock().unwrap().get_or_insert_with(HashMap::new).insert(slot, g);
+}
+
+/// How far a program's boxes are from its window's picture, which starts at
+/// the root surface's corner. A toolkit counts from that corner (Firefox) or
+/// from the window's, inside its shadow (GTK 4): the frame, being the
+/// window, says which. None while its box or the window's is not known.
+fn shift_of(slot: usize, frame: Option<[i32; 4]>) -> Option<[i32; 2]> {
+    let (f, g) = (frame?, *GEOMETRY.lock().unwrap().as_ref()?.get(&slot)?);
+    let near = |a: i32, b: i32| (a - b).abs() <= 2;
+    Some(if near(f[2], g[2]) && near(f[3], g[3]) { [g[0] - f[0], g[1] - f[1]] } else { [0, 0] })
+}
+
+fn moved(b: [i32; 4], s: [i32; 2]) -> [i32; 4] {
+    [b[0] + s[0], b[1] + s[1], b[2], b[3]]
+}
+
+/// A box its program gave, in the window's picture, as its last read placed it.
+pub fn placed(pid: u32, slot: usize, b: [i32; 4]) -> [i32; 4] {
+    moved(b, KEPT_OF.lock().unwrap().as_ref().and_then(|all| all.get(&(pid, slot))).map_or([0, 0], |k| k.shift))
+}
+
+/// A walk's boxes in the window's picture; `frame`: it starts at the frame,
+/// whose box tells how far they are.
+fn place(kept: &mut Kept, slot: usize, seen: &mut [Seen], frame: bool) {
+    if let Some(s) = shift_of(slot, seen.first().and_then(|s| s.rect)).filter(|_| frame) {
+        kept.shift = s;
+    }
+    for r in seen.iter_mut().filter_map(|s| s.rect.as_mut()) {
+        *r = moved(*r, kept.shift);
+    }
+}
 
 /// The element that number names in that window, as it was given.
 pub fn key_of(pid: u32, slot: usize, id: u32) -> Option<(String, String)> {
@@ -176,6 +226,9 @@ pub fn key_of(pid: u32, slot: usize, id: u32) -> Option<(String, String)> {
 pub fn forget(pid: u32, slot: usize) {
     if let Some(all) = KEPT_OF.lock().unwrap().as_mut() {
         all.retain(|k, _| k.1 != slot || (pid != 0 && k.0 != pid));
+    }
+    if let Some(g) = GEOMETRY.lock().unwrap().as_mut() {
+        g.remove(&slot);
     }
 }
 
@@ -205,6 +258,8 @@ impl Seen {
         match self.role.as_str() {
             "filler" | "panel" | "section" | "redundant_object" | "unknown" => true,
             "document_frame" => self.name.is_empty() && self.text.is_empty(),
+            // GTK 4 wraps each widget in some, as a page its sections.
+            "generic" => self.name.is_empty() && !self.has(FOCUSABLE),
             _ => false,
         }
     }
@@ -299,36 +354,39 @@ fn texty(role: &str) -> bool {
 /// programs: not on the compositor's loop. `family`: the processes that may
 /// serve the tree when the window's own did not publish one (a browser's).
 /// `guarded`: a window of the program is private, so the frame is taken
-/// only by the window's title.
+/// only by the window's title. Only reads of what is shown are kept: a
+/// part, a search, a point or the focus do not push them out.
 pub fn read(slot: usize, pid: u32, title: &str, guarded: bool, family: impl Fn(u32) -> bool, ask: Ask) -> String {
     let Some(program) = a11y::program_of(pid).or_else(|| a11y::programs().into_iter().find(|p| p.root.is_some() && !p.reader && family(p.pid))) else {
         return if a11y::address().is_none() { "err no-bus".into() } else { "err no-tree".into() };
     };
     let Some(root) = program.root.clone() else { return "err no-tree".into() };
+    // A part: from the element that number names, as it was given.
+    let from = match ask {
+        Ask::Within(id, _) => match key_of(pid, slot, id) {
+            Some(k) => Some(k),
+            None => return "err gone".into(),
+        },
+        _ => None,
+    };
+    let part = from.is_some();
     let names = [program.name, root.0.clone()];
     let ex = async_executor::LocalExecutor::new();
-    let walked = futures_lite::future::block_on(ex.run(walk(&ex, root, &names, title, guarded, &ask)));
-    let Some((seen, unseen)) = walked else { return "err no-frame".into() };
+    let walked = futures_lite::future::block_on(ex.run(walk(&ex, root, from, &names, title, guarded, &ask)));
+    let Some((mut seen, unseen)) = walked else { return if part { "err gone" } else { "err no-frame" }.into() };
     let mut guard = KEPT_OF.lock().unwrap();
     let kept = kept_of(guard.get_or_insert_with(HashMap::new), pid, slot);
+    place(kept, slot, &mut seen, !part);
     let (nodes, left) = give(&seen, &ask, kept);
     let more = unseen + left;
-    // The read asked against, if it is kept and was of what is shown.
+    // The read asked against, if it is kept.
     let then = match ask {
-        Ask::Since(v, boxes) => Some(kept.reads.iter().find(|(r, _)| *r == v && kept.shown.contains(r)).map(|(_, n)| (n.clone(), boxes))),
+        Ask::Since(v, boxes) => Some(kept.reads.iter().find(|(r, _)| *r == v).map(|(_, n)| (n.clone(), boxes))),
         _ => None,
     };
     kept.version = VERSION.fetch_add(1, Ordering::Relaxed) + 1;
     let version = kept.version;
-    kept.reads.push_back((version, nodes.clone()));
-    if matches!(ask, Ask::Tree(false) | Ask::Since(..)) {
-        kept.shown.push(version);
-    }
-    while kept.reads.len() > KEPT {
-        kept.reads.pop_front();
-    }
-    let oldest = kept.reads.front().map_or(0, |r| r.0);
-    kept.shown.retain(|v| *v >= oldest);
+    kept.keep(&ask, version, &nodes);
     kept.trim();
     let mut out = match then {
         Some(Some((then, boxes))) if same_frame(&then, &nodes) => {
@@ -369,20 +427,43 @@ fn same_frame(then: &[Node], now: &[Node]) -> bool {
 
 /// What changed from one read to the next, in the order the elements are
 /// in now, then those gone: `+ RECORD` given now and not then, `~ RECORD`
-/// its role, name, text or states changed (`boxes`: its box too), `- ID`
-/// given then and not now.
+/// and `was RECORD` its role, name, text or states changed (`boxes`: its box
+/// too), `- N RECORD`
+/// given then and not now, as it was (a branch gone: its top, N more in it).
 pub fn changes(then: &[Node], now: &[Node], boxes: bool) -> Vec<String> {
     let before: HashMap<u32, &Node> = then.iter().map(|n| (n.id, n)).collect();
     let mut out = Vec::new();
     for n in now {
         match before.get(&n.id) {
             None => out.push(format!("+ {}", n.record())),
-            Some(b) if b.role != n.role || b.name != n.name || b.text != n.text || b.states != n.states || (boxes && b.rect != n.rect) => out.push(format!("~ {}", n.record())),
+            Some(b) if b.role != n.role || b.name != n.name || b.text != n.text || b.states != n.states || (boxes && b.rect != n.rect) => {
+                out.push(format!("~ {}", n.record()));
+                out.push(format!("was {}", b.record()));
+            }
             Some(_) => {}
         }
     }
     let after: std::collections::HashSet<u32> = now.iter().map(|n| n.id).collect();
-    out.extend(then.iter().filter(|n| !after.contains(&n.id)).map(|n| format!("- {}", n.id)));
+    out.extend(went(then.iter().map(|n| (n.depth, !after.contains(&n.id)))).into_iter().map(|(i, k)| format!("- {k} {}", then[i].record())));
+    out
+}
+
+/// Of elements in order, by their depth and whether they went: the first of
+/// each branch that went, and how many more went in it.
+pub fn went(all: impl IntoIterator<Item = (usize, bool)>) -> Vec<(usize, usize)> {
+    let (mut out, mut open): (Vec<(usize, usize)>, Option<usize>) = (Vec::new(), None);
+    for (i, (depth, gone)) in all.into_iter().enumerate() {
+        if let (Some(d), Some(last)) = (open, out.last_mut()) {
+            if depth > d {
+                last.1 += usize::from(gone);
+                continue;
+            }
+        }
+        open = gone.then_some(depth);
+        if gone {
+            out.push((i, 0));
+        }
+    }
     out
 }
 
@@ -396,9 +477,10 @@ pub fn shown(slot: usize, pid: u32, title: &str, guarded: bool, family: impl Fn(
     let Some(root) = program.root.clone() else { return Err("no-tree") };
     let names = vec![program.name, root.0.clone()];
     let ex = async_executor::LocalExecutor::new();
-    let (seen, _) = futures_lite::future::block_on(ex.run(walk(&ex, root, &names, title, guarded, &Ask::Tree(false)))).ok_or("no-frame")?;
+    let (mut seen, _) = futures_lite::future::block_on(ex.run(walk(&ex, root, None, &names, title, guarded, &Ask::Tree(false)))).ok_or("no-frame")?;
     let mut guard = KEPT_OF.lock().unwrap();
     let kept = kept_of(guard.get_or_insert_with(HashMap::new), pid, slot);
+    place(kept, slot, &mut seen, true);
     let (nodes, _) = give(&seen, &Ask::Tree(false), kept);
     kept.trim();
     Ok((names, seen[0].key.clone(), nodes))
@@ -422,7 +504,7 @@ pub fn element(slot: usize, pid: u32, key: (String, String)) -> Option<Node> {
     let id = kept.id(&s.key);
     kept.trim();
     let text = if s.text == s.name { String::new() } else { s.text.clone() };
-    Some(Node { id, depth: 0, role: s.role.clone(), rect: s.rect, states: s.state_names(false), name: s.name.clone(), text })
+    Some(Node { id, depth: 0, role: s.role.clone(), rect: s.rect.map(|r| moved(r, kept.shift)), states: s.state_names(false), name: s.name.clone(), text })
 }
 
 /// Whether an element is a live region or in one (`live`, `container-live`
@@ -488,11 +570,15 @@ async fn frame(ex: &async_executor::LocalExecutor<'_>, root: Key, names: &[Strin
 /// What there is under the frame, a depth at a time (each depth's elements
 /// asked at once), within the limits; and how many were left unseen. Only
 /// what is on the program's own connections (`names`) is followed: another
-/// program's objects are not read with the reader's rights.
-async fn walk(ex: &async_executor::LocalExecutor<'_>, root: Key, names: &[String], title: &str, guarded: bool, ask: &Ask) -> Option<(Vec<Seen>, usize)> {
+/// program's objects are not read with the reader's rights. `from`: an
+/// element of it instead of the frame, none once it is no longer.
+async fn walk(ex: &async_executor::LocalExecutor<'_>, root: Key, from: Option<Key>, names: &[String], title: &str, guarded: bool, ask: &Ask) -> Option<(Vec<Seen>, usize)> {
     let start = Instant::now();
-    let frame = frame(ex, root, names, title, guarded).await?;
-    let everything = matches!(ask, Ask::Tree(true));
+    let frame = match from {
+        Some(k) => Some(seen(k, None).await).filter(|s| !s.has(DEFUNCT) && (s.states != 0 || !s.interfaces.is_empty()))?,
+        None => frame(ex, root, names, title, guarded).await?,
+    };
+    let everything = everything(ask);
     let mut seen = vec![frame];
     let mut level = vec![0usize];
     let mut left = 0;
@@ -518,8 +604,10 @@ async fn walk(ex: &async_executor::LocalExecutor<'_>, root: Key, names: &[String
         }
         let got = all(ex, next.into_iter().map(|(k, p)| seen_k(k, p)).collect()).await;
         level = Vec::new();
+        // A container that says nothing is gone through: its states and box
+        // are no guide to what it holds (a page's wrappers, of no size).
         for mut s in got {
-            s.pruned = !everything && !(s.has(SHOWING) && s.has(VISIBLE));
+            s.pruned = !everything && !s.bare() && !(s.has(SHOWING) && s.has(VISIBLE));
             level.push(seen.len());
             seen.push(s);
         }
@@ -529,7 +617,7 @@ async fn walk(ex: &async_executor::LocalExecutor<'_>, root: Key, names: &[String
     let boxes = all(ex, wanted.iter().map(|&i| { let k = seen[i].key.clone(); async move { extents(&k).await } }).collect()).await;
     for (&i, b) in wanted.iter().zip(boxes) {
         seen[i].rect = b.and_then(sane);
-        if b.is_some() && seen[i].rect.is_none() && !everything && i != 0 {
+        if b.is_some() && seen[i].rect.is_none() && !everything && i != 0 && !seen[i].bare() {
             seen[i].pruned = true;
         }
     }
@@ -544,6 +632,11 @@ async fn walk(ex: &async_executor::LocalExecutor<'_>, root: Key, names: &[String
     Some((seen, left))
 }
 
+/// Whether what is not shown is walked and given too.
+fn everything(ask: &Ask) -> bool {
+    matches!(ask, Ask::Tree(true) | Ask::Within(_, true))
+}
+
 fn seen_k(k: Key, parent: usize) -> impl Future<Output = Seen> {
     seen(k, Some(parent))
 }
@@ -555,7 +648,7 @@ fn give(seen: &[Seen], ask: &Ask, kept: &mut Kept) -> (Vec<Node>, usize) {
     if seen.is_empty() {
         return (Vec::new(), 0);
     }
-    let everything = matches!(ask, Ask::Tree(true));
+    let everything = everything(ask);
     // Each one's children, as walked.
     let mut kids: Vec<Vec<usize>> = vec![Vec::new(); seen.len()];
     for (i, s) in seen.iter().enumerate().skip(1) {
@@ -563,10 +656,17 @@ fn give(seen: &[Seen], ask: &Ask, kept: &mut Kept) -> (Vec<Node>, usize) {
             kids[p].push(i);
         }
     }
-    let shown = |s: &Seen| {
-        let repeats = s.children.is_empty() && matches!(s.role.as_str(), "text" | "static") && s.parent.is_some_and(|p| !seen[p].name.is_empty() && seen[p].name == s.text);
-        !s.bare() && !repeats && (everything || s.rect.is_some() || s.parent.is_none())
+    // A text that says what the nearest element it is in is named (a
+    // button's own label): that element says it already.
+    let repeats = |s: &Seen| {
+        let mut p = s.parent;
+        while let Some(k) = p.filter(|&k| seen[k].bare()) {
+            p = seen[k].parent;
+        }
+        let says = if s.text.is_empty() { &s.name } else { &s.text };
+        s.children.is_empty() && matches!(s.role.as_str(), "text" | "static" | "label") && p.is_some_and(|p| !seen[p].name.is_empty() && seen[p].name == *says)
     };
+    let shown = |s: &Seen| !s.bare() && !repeats(s) && (everything || s.rect.is_some() || s.parent.is_none());
     // How deep each one is in what was walked.
     let deep = |mut i: usize| {
         let mut d = 0;
@@ -582,7 +682,7 @@ fn give(seen: &[Seen], ask: &Ask, kept: &mut Kept) -> (Vec<Node>, usize) {
     // And those gone through to a match: one under a box of no size is
     // given all the same, under the nearest given above it.
     let (pick, through): (Vec<bool>, Vec<bool>) = match ask {
-        Ask::Tree(_) | Ask::Since(..) => ((0..seen.len()).map(|i| !seen[i].pruned && shown(&seen[i])).collect(), vec![false; seen.len()]),
+        Ask::Tree(_) | Ask::Since(..) | Ask::Within(..) => ((0..seen.len()).map(|i| !seen[i].pruned && shown(&seen[i])).collect(), vec![false; seen.len()]),
         Ask::Focus | Ask::Find(_) | Ask::At(..) => {
             let needle = if let Ask::Find(t) = ask { t.to_lowercase() } else { String::new() };
             let holds = |s: &Seen, x: i32, y: i32| {
@@ -598,7 +698,7 @@ fn give(seen: &[Seen], ask: &Ask, kept: &mut Kept) -> (Vec<Node>, usize) {
             let hit = |i: usize, s: &Seen| match ask {
                 Ask::Focus => s.has(FOCUSED),
                 Ask::At(..) => Some(i) == under,
-                _ => !needle.is_empty() && (s.name.to_lowercase().contains(&needle) || s.text.to_lowercase().contains(&needle)),
+                _ => !needle.is_empty() && !repeats(s) && (s.name.to_lowercase().contains(&needle) || s.text.to_lowercase().contains(&needle)),
             };
             let (mut pick, mut through) = (vec![false; seen.len()], vec![false; seen.len()]);
             for i in 0..seen.len() {
@@ -670,6 +770,28 @@ mod tests {
     }
 
     #[test]
+    fn boxes_are_placed_in_the_picture_as_the_frame_says() {
+        // GTK 4 counts from the window, 12 in from its shadow's corner.
+        geometry(9001, [12, 12, 1657, 1376]);
+        let mut kept = Kept::default();
+        let mut seen = vec![s("/f", None, "frame", "Characters", Some([0, 0, 1657, 1376])), s("/b", Some(0), "push_button", "Main Menu", Some([235, 0, 32, 32]))];
+        place(&mut kept, 9001, &mut seen, true);
+        assert_eq!(seen[1].rect, Some([247, 12, 32, 32]));
+        // A part of it is moved as the last whole read was.
+        let mut part = vec![s("/b", None, "push_button", "Main Menu", Some([235, 0, 32, 32]))];
+        place(&mut kept, 9001, &mut part, false);
+        assert_eq!(part[0].rect, Some([247, 12, 32, 32]));
+        // Firefox counts from the root surface: its frame is where the window is.
+        geometry(9002, [85, 70, 1599, 1003]);
+        assert_eq!(shift_of(9002, Some([85, 70, 1598, 1003])), Some([0, 0]));
+        // A frame that is not the window's size says nothing of it.
+        assert_eq!(shift_of(9001, Some([0, 0, 400, 300])), Some([0, 0]));
+        assert_eq!(shift_of(9003, Some([0, 0, 400, 300])), None);
+        forget(0, 9001);
+        assert_eq!(shift_of(9001, Some([0, 0, 1657, 1376])), None);
+    }
+
+    #[test]
     fn an_element_keeps_its_number_between_reads() {
         let mut kept = Kept::default();
         let seen = vec![s("/f", None, "frame", "Page", Some([0, 0, 800, 600])), s("/b", Some(0), "push_button", "Save", Some([10, 10, 80, 30]))];
@@ -693,6 +815,23 @@ mod tests {
         let nodes = give(&seen, &Ask::Find("save".into()), &mut kept).0;
         let got: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(got, vec!["Page", "Menu", "Save As"]);
+    }
+
+    #[test]
+    fn a_button_is_found_once_not_again_by_its_own_label() {
+        let mut kept = Kept::default();
+        let seen = vec![
+            s("/f", None, "frame", "Files", Some([0, 0, 800, 600])),
+            s("/g", Some(0), "generic", "", Some([0, 0, 800, 40])),
+            s("/b", Some(1), "button", "claude-1000", Some([10, 4, 120, 32])),
+            s("/w", Some(2), "generic", "", Some([10, 4, 120, 32])),
+            s("/l", Some(3), "label", "claude-1000", Some([14, 8, 100, 24])),
+        ];
+        let nodes = give(&seen, &Ask::Find("claude".into()), &mut kept).0;
+        let got: Vec<(&str, usize)> = nodes.iter().map(|n| (n.role.as_str(), n.depth)).collect();
+        assert_eq!(got, vec![("frame", 0), ("button", 1)]);
+        let all = give(&seen, &Ask::Tree(false), &mut kept).0;
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
@@ -729,8 +868,15 @@ mod tests {
     fn changes_give_what_came_what_went_and_what_is_other() {
         let then = vec![n(1, "frame", "Page", [0, 0, 800, 600], vec![]), n(2, "check_box", "Bold", [10, 10, 80, 20], vec!["focusable"]), n(3, "page_tab", "Page 1", [10, 40, 80, 20], vec!["selected"]), n(4, "label", "One", [10, 70, 80, 20], vec![])];
         let now = vec![n(1, "frame", "Page", [0, 0, 800, 600], vec![]), n(2, "check_box", "Bold", [10, 10, 80, 20], vec!["focusable", "checked"]), n(3, "page_tab", "Page 1", [10, 40, 80, 20], vec!["selected"]), n(5, "label", "Two", [10, 70, 80, 20], vec![])];
-        assert_eq!(changes(&then, &now, false), vec!["~ 2 1 check_box 10 10 80 20 focusable,checked 426f6c64 -", "+ 5 1 label 10 70 80 20 - 54776f -", "- 4"]);
+        assert_eq!(changes(&then, &now, false), vec!["~ 2 1 check_box 10 10 80 20 focusable,checked 426f6c64 -", "was 2 1 check_box 10 10 80 20 focusable 426f6c64 -", "+ 5 1 label 10 70 80 20 - 54776f -", "- 0 4 1 label 10 70 80 20 - 4f6e65 -"]);
         assert!(changes(&now, &now, true).is_empty());
+    }
+
+    #[test]
+    fn a_branch_gone_is_its_top() {
+        // A list of two items went, one of a kept list's items too.
+        let all = [(0, false), (1, true), (2, true), (3, true), (2, true), (1, false), (2, true), (1, true)];
+        assert_eq!(went(all), vec![(1, 3), (6, 0), (7, 0)]);
     }
 
     #[test]
@@ -738,7 +884,7 @@ mod tests {
         let then = vec![n(1, "frame", "Page", [0, 0, 800, 600], vec![]), n(2, "link", "Home", [10, 10, 80, 20], vec![])];
         let now = vec![n(1, "frame", "Page", [0, 0, 800, 600], vec![]), n(2, "link", "Home", [10, -90, 80, 20], vec![])];
         assert!(changes(&then, &now, false).is_empty());
-        assert_eq!(changes(&then, &now, true), vec!["~ 2 1 link 10 -90 80 20 - 486f6d65 -"]);
+        assert_eq!(changes(&then, &now, true), vec!["~ 2 1 link 10 -90 80 20 - 486f6d65 -", "was 2 1 link 10 10 80 20 - 486f6d65 -"]);
     }
 
     #[test]
@@ -826,6 +972,32 @@ mod tests {
         assert!(kept.keys.contains_key(&1) && kept.keys.contains_key(&new));
         assert!(!kept.keys.contains_key(&2));
         assert_eq!(kept.id(&(":1.1".into(), "/1".into())), new + 1);
+    }
+
+    #[test]
+    fn only_reads_of_what_is_shown_are_kept() {
+        let mut kept = Kept::default();
+        for v in 1..=20 {
+            kept.keep(&Ask::Tree(false), v, &[]);
+            for ask in [Ask::Find("x".into()), Ask::At(1, 1), Ask::Focus, Ask::Within(3, false), Ask::Tree(true)] {
+                kept.keep(&ask, 100 + v, &[]);
+            }
+        }
+        kept.keep(&Ask::Since(20, false), 21, &[]);
+        let versions: Vec<u64> = kept.reads.iter().map(|r| r.0).collect();
+        assert_eq!(versions, (6..=21).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_part_is_given_as_a_tree_from_it() {
+        let mut kept = Kept::default();
+        let mut hidden = s("/h", Some(0), "push_button", "Later", Some([0, 40, 80, 30]));
+        hidden.states &= !(1 << SHOWING);
+        hidden.pruned = true;
+        let seen = vec![s("/l", None, "list", "Files", Some([0, 0, 200, 100])), s("/a", Some(0), "list_item", "a.txt", Some([0, 0, 200, 20])), hidden];
+        let got = |ask: Ask, kept: &mut Kept| give(&seen, &ask, kept).0.iter().map(|n| (n.name.clone(), n.depth)).collect::<Vec<_>>();
+        assert_eq!(got(Ask::Within(1, false), &mut kept), vec![("Files".into(), 0), ("a.txt".into(), 1)]);
+        assert!(everything(&Ask::Within(1, true)) && !everything(&Ask::Within(1, false)));
     }
 
     #[test]
