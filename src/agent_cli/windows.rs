@@ -48,6 +48,7 @@ pub(super) fn windows() -> R {
             name: name.clone(),
             scene: scenes.get(&pid).cloned(),
             shells: crate::term::shells_of(pid, &layers),
+            tree: c.is_none_or(|c| c.tree),
             private: c.is_some_and(|c| c.private),
             locked,
             popups: Vec::new(),

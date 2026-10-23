@@ -291,6 +291,8 @@ struct Window {
     shown: Option<(String, [i32; 4])>,
     /// When it last brought something new to show (it or what hangs from it).
     drew: Instant,
+    /// Since when it has drawn without a pause (a spinner: long ago).
+    steady: Instant,
     /// Its entry in ext-foreign-toplevel-list (what a screen share lists).
     listed: ForeignToplevelHandle,
     fullscreen: bool,
@@ -894,6 +896,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         crate::output::serve(&dir.display().to_string());
     }
     agent::start(&mut state);
+    crate::a11y::start(&state.socket);
     state.start_xwayland();
     state.export_environment();
     println!("windows · programs connect at WAYLAND_DISPLAY={socket}");
@@ -901,6 +904,9 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
     // its launcher): this process may not have it in its own environment.
     pleamar::set_child_env("WAYLAND_DISPLAY", Some(&socket));
     pleamar::set_child_env("DISPLAY", None);
+    for (k, v) in crate::a11y::environment() {
+        pleamar::set_child_env(k, Some(&v));
+    }
     // A terminal it starts runs the user's shell through a layer of this
     // program (term.rs), which lets windows wired to it read and type in it.
     if let Some((link, real)) = crate::term::session_shell() {
@@ -1422,6 +1428,8 @@ impl State {
             vars.push(format!("CUA_INJECT_SOCKET={}", a.path));
             vars.push("CUA_DRIVER_RS_ENABLE_WAYLAND=1".to_owned());
         }
+        // And where accessibility trees are published (a11y.rs).
+        vars.extend(crate::a11y::environment().into_iter().map(|(k, v)| format!("{k}={v}")));
         match std::process::Command::new("dbus-update-activation-environment").arg("--systemd").args(&vars).status() {
             Ok(s) if s.success() => println!("windows · dbus and systemd know where the desktop is: {}", vars.join(" ")),
             _ => eprintln!("windows · dbus-update-activation-environment failed: portals may not find the desktop"),
@@ -1742,6 +1750,8 @@ impl State {
         if let Some(a) = &self.agent {
             c.env("CUA_INJECT_SOCKET", &a.path).env("CUA_DRIVER_RS_ENABLE_WAYLAND", "1");
         }
+        // And publishes its accessibility tree where only pleamar-wm reads it.
+        c.envs(crate::a11y::environment());
         c.env("GDK_BACKEND", "wayland").env("QT_QPA_PLATFORM", "wayland").env("MOZ_ENABLE_WAYLAND", "1").env("SDL_VIDEODRIVER", "wayland");
         // Programs that draw with the GPU hand over their frames on the card
         // (dmabuf). If the card the scene is painted on cannot read them, with
@@ -2746,7 +2756,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -2794,6 +2804,7 @@ impl State {
             let screen = self.slots[slot].as_ref().map(|w| w.screen);
             self.order.iter().copied().find(|s| *s != slot && self.slots[*s].as_ref().is_some_and(|w| w.fullscreen && Some(w.screen) == screen))
         }).or_else(|| self.order.iter().copied().find(|s| *s != slot && monitor.is_some() && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref())));
+        crate::a11y_tree::forget(self.pid_of(slot), slot);
         if let Some(w) = self.slots[slot].take() {
             self.thumb_closed(&w.listed.identifier());
             self.toplevel_list.remove_toplevel(&w.listed);
@@ -3037,6 +3048,9 @@ impl State {
             let mut same = false;
             if let Some(Some(win)) = self.slots.get_mut(slot) {
                 same = nothing_new && win.geometry == g && win.told == layout;
+                if win.geometry != g {
+                    crate::a11y_tree::geometry(slot, g);
+                }
                 win.geometry = g;
                 win.sent = pieces.iter().map(|p| p.id).collect();
                 win.told = layout;
@@ -3507,6 +3521,9 @@ impl CompositorHandler for State {
             // A menu is its window's.
             let window = self.menus.iter().find(|m| m.surface == root).map_or(root.clone(), |m| m.root.clone());
             if let Some(w) = self.slots.iter_mut().flatten().find(|w| w.surface == window) {
+                if w.drew.elapsed() > crate::a11y_wait::PAUSE {
+                    w.steady = Instant::now();
+                }
                 w.drew = Instant::now();
             }
         }

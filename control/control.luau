@@ -56,6 +56,7 @@ end
 
 on("dk", function(v)
     local k, x = v // 100, v % 100
+    if k >= 6 then return agent_set(k, x) end
     local i = k + 1
     if not DOCK[i] then return end
     local value
@@ -78,11 +79,53 @@ on("dk", function(v)
     end)
 end)
 
+-- ── Agent: what an AI agent may do (`agent`, `a11y`, `agent pace` in session.conf) ──
+-- Read from what the session was started with (`pleamar-wm config`); a change
+-- is written there and shows in the next session.
+local PACES = { "default", "fast", "instant" }
+local function agent_look()
+    wm({ "config" }, function(out, code)
+        if code ~= 0 then return end
+        local function field(name) return out:match("\n%s*" .. name .. ": (%w+)") end
+        fact["a.agent"] = field("agent") == "true" and 1 or 0
+        fact["a.a11y"] = field("a11y") == "true" and 1 or 0
+        local pace = field("pace")
+        fact["a.pace"] = pace == "Fast" and 1 or (pace == "Instant" and 2 or 0)
+    end)
+end
+
+local function agent_saved(what, out, code)
+    text.toast = code == 0 and (what .. ", from the next session") or ("Not saved: " .. out)
+    fact.toasted = fact.toasted + 1
+end
+
+-- Settings 6 (its hands) and 7 (accessibility) are the dock's toggles' codes;
+-- 8 is the pace.
+local function agent_set(k, x)
+    if k == 6 then
+        fact["a.agent"] = x
+        wm({ "config", "set", "agent", x == 1 and "on" or "off" }, function(out, code)
+            agent_saved("The agent's own hands " .. (x == 1 and "on" or "off"), out, code)
+        end)
+    elseif k == 7 then
+        fact["a.a11y"] = x
+        wm({ "config", "set", "a11y", x == 1 and "on" or "off" }, function(out, code)
+            agent_saved("The accessibility bus " .. (x == 1 and "on" or "off"), out, code)
+        end)
+    elseif k == 8 and PACES[x + 1] then
+        fact["a.pace"] = x
+        wm({ "config", "set", "agent-pace", PACES[x + 1] }, function(out, code)
+            agent_saved("The agent's pace: " .. PACES[x + 1], out, code)
+        end)
+    end
+end
+
 local open_build = nil   -- the Build page, below: wakes its engine up
 on("go", function(page)
     fact.page = page
     if page == 3 and open_build then open_build() end
     if page == 4 then dock_look() end
+    if page == 5 then agent_look() end
 end)
 
 on("pick", function(v)
@@ -106,6 +149,7 @@ end)
 wm({ "--version" }, function(out) text.version = out ~= "" and out or "pleamar-wm" end)
 look()
 dock_look()
+agent_look()
 -- A layout picked from the strip, or with Super+W, shows here too.
 every(2000, look)
 

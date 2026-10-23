@@ -36,7 +36,7 @@ impl Window {
     }
 }
 
-/// An element: a number (`@24`), or a scene item's name.
+/// An element: a number a tree gave (a11y), or a scene item's name.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Element {
     Id(u32),

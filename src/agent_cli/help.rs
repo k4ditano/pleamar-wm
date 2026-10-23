@@ -6,9 +6,10 @@ pub(super) const HELP: &str = "pleamar-wm agent: use the desktop with the agent'
 What a window does
   windows                         every window: its name (PID, or PID.N for one of a program's
                                   several), program, title, box, monitor, keyboard, a dialog's
-                                  owner, and `does`: scene (a pleamar scene), text (a terminal),
-                                  look (pictures); `nothing (private)`: ask the user. A terminal
-                                  with several shells says them: name one as PID:SHELL
+                                  owner, and `does`: scene (a pleamar scene), tree (its elements,
+                                  from the accessibility bus), text (a terminal), look (pictures);
+                                  `nothing (private)`: ask the user. A terminal with several shells
+                                  says them: name one as PID:SHELL
   can PID                         what it does, its verbs; a terminal's shells, what runs in each,
                                   where, its size and how long it has been quiet
   monitors, layers                the monitors; the programs' own surfaces (bars, docks, panels)
@@ -17,44 +18,52 @@ What a window does
                                   without taking your keyboard
   send PID MONITOR                that window to another monitor
 
-Names: a window PID, PID.N, PID:SHELL; a scene's item @save (one of digits @=3); a text to
-look for --text \"Save as\"; a file -o FILE; durations 500ms, 5s, 2m, or seconds; -- ends the
-options (what follows is text, even @alice or --until)
+Names: a window PID, PID.N, PID:SHELL; an element @24 (a tree's number) or @save (a scene's
+name; one of digits @=3); a text to look for --text \"Save as\"; a file -o FILE; durations
+500ms, 5s, 2m, or seconds; -- ends the options (what follows is text, even @alice or --set)
 
 Read
   tree PID [--hidden] [--json] [--long]
-                                  a scene's items and its version (`tree V`): what can be acted on,
+                                  the whole window and its version (`tree V`): what can be acted on,
                                   headings and texts that say something, one a line, under what they
-                                  are in: @name role \"name\" text \"...\" X,Y WxH states (look
-                                  coordinates; names cut at 120, --long 400); --hidden: what is not
+                                  are in: @ID role \"name\" text \"...\" X,Y WxH states (look coordinates;
+                                  names cut at 120, --long 400); more than 8 alike rows without a name
+                                  fold to `... N more ROLE without a name`; --hidden: what is not
                                   shown too
-  tree PID --within @X            a part: that item and what it holds
-  tree PID --role ROLE            the items of that role, under what they are in
+  tree PID --within @X            a part: that element and what it holds
+  tree PID --role ROLE            the elements of that role, under what they are in
   tree PID --max N                at most N lines, the rest counted (with any of the above)
   tree PID --since [V]            what changed since your last read of it (`since V, read at HH:MM`),
                                   or since read V: + came, - went, ~ changed; `full` and the whole
-                                  window if that read is not kept
+                                  window if that read is not kept or it shows another page or dialog
+  tree PID --focused              the focused element and what it is in (a window with a tree)
   tree PID[:SHELL] [--history]    a terminal: `mark M` (its newest line) and its screen's lines;
                                   --history all it keeps; --since [M] what came after your last read
                                   of it, or after line M
   find PID --text T               what says T in its name or text, under what it is in; a terminal's
                                   lines that say it, by number
-  at PID X Y                      a scene's item at that point of the picture, under what it is in
-  listen PID[:SHELL] [DURATION]   a line for each thing as it happens (30 s, up to 10 m): a scene's
-                                  events; a terminal's new lines, after `mark M`
+  at PID X Y                      the element at that point of the picture, under what it is in
+  listen PID[:SHELL] [DURATION]   a line for each thing as it happens (30 s, up to 10 m): focus,
+                                  text, live, announce, dialog; a scene's events; a terminal's new
+                                  lines, after `mark M`
 
-Act: each answers what it did (`pressed @save`, `typed into @query`, `clicked 120,40`), then
-what changed since just before it, as `tree PID --since V` gives it (at most 60 lines, --max N;
-a terminal: `mark M` and its new lines; pictures only: `done`); --no-wait: what it did alone
+Act: each answers what it did (`pressed @24`, `typed into @12`, `clicked 120,40`), then what
+changed since just before it, as `tree PID --since V` gives it (at most 60 lines, --max N; a
+page that navigated: `full` and its first lines; a terminal: `mark M` and its new lines; pictures
+only: `done`), once the window drew and stopped (at most 1 s; a window that never stops drawing,
+a spinner: `still drawing after 0.3 s`); --no-wait: what it did alone
   ... --until COND [DURATION]    then waits as `wait` does: `ok`, what met it, and the changes;
                                   a timeout (5): the action happened, the condition did not hold
-  press PID @X [right|middle] [COUNT]
-                                  a scene's item: the cursor goes to it and presses it
-  press PID --text T [--first]    the item whose whole name is T (several: they are listed, or
+  press PID @X [right|middle] [COUNT] [--action N]
+                                  the cursor goes to it and presses it (scrolled into view first);
+                                  --action N: its action N (0 its default) without the pointer
+  press PID --text T [--first]    the element whose whole name is T (several: they are listed, or
                                   --first takes the first)
   focus PID @X|--text T           the focus in its window to it (a field, to type in)
-  type PID [@X] [--] TEXT|-       typed into a scene's @X or what has the keyboard; - reads it from
-                                  the input. A terminal: into its shell, a newline is Enter
+  type PID [@X] [--set] [--] TEXT|-
+                                  typed into @X (focused first) or what has the keyboard; - reads it
+                                  from the input; --set: its whole text at once. A terminal: into
+                                  its shell, a newline is Enter
   key PID NAME                    enter tab escape backspace space up down left right delete home end
                                   pageup pagedown f1..f12
   hotkey PID MODS+KEY             ctrl+l, ctrl+shift+t, alt+f4
@@ -74,7 +83,10 @@ Look
   look [PID] [-o FILE]            a picture of the window (or of the desktop); prints the file. The
                                   window's own: covered or on another workspace, with its menus
   look PID X Y W H                a part of it, in the picture's coordinates
-  look PID @X|--text T [--pad N]  a scene's item only, N units around it; prints its corner
+  look PID @X|--text T [--pad N]  one element only, N units around it; prints its corner
+  look PID --words T [--pad N]    just the words T, where an element's text says them
+  look PID --marks [--all]        what can be acted on outlined with its @ID, and their records
+                                  (--all: texts and headings too)
   look ... --hidpi                at the window's own pixels; prints the scale
 
 Wait
@@ -85,17 +97,20 @@ Wait
                                   terminal: a line that came after the wait began (--from M: after
                                   its mark M), or no line of its screen
     @X gone, @X STATE, @X not STATE
-                                  that item went, has or lost a state (disabled, enabled, checked,
-                                  selected, offscreen)
+                                  that element went, has or lost a state (a tree's: focused,
+                                  checked, selected, expanded, editable, disabled, enabled, busy...;
+                                  a scene's: disabled, enabled, checked, selected, offscreen)
+    focus @X                      the focus is there (a tree)
     changed                       anything shown changed; a terminal: any output
-    settled DURATION              a terminal: quiet for that long
+    settled DURATION              nothing changed, nor the picture, for that long; a terminal: quiet
     prompt                        a terminal's shell waits for a command again (up to 10 m)
+    dialog                        the window opened a dialog
     expr 'EXPR'                   a scene's expression holds: expr 'status == \"Saved\"'
 
 Several steps
   do PID <<'EOF'                  one command a line, as said here without `pleamar-wm agent` and the
-                                  window (press @save, type @query -- \"ana\", key tab, wait has --text
-                                  OK 5s), quoted as in a shell, # comments; in order, each under
+                                  window (press @12, type @12 -- \"ana\", key tab, wait has --text OK
+                                  5s), quoted as in a shell, # comments; in order, each under
                                   `step N: COMMAND`, until one fails: its number, and its exit code.
                                   PID may be PID.N or PID:SHELL; `type -` and `run -` are refused
   mcp                             these verbs as an MCP server (stdio): structured arguments, the
@@ -110,7 +125,7 @@ The hands
   raw LINE...                     protocol lines, as they are (cua-inject v1)
 
 Exit codes: 0 done, 1 another error (read the message), 2 private window or locked screen (ask
-the user), 3 not for this window (the message says what it does), 4 the item is gone (read
+the user), 3 not for this window (the message says what it does), 4 the element is gone (read
 again), 5 timeout, 6 ambiguous (name one of those listed), 7 the window is gone, 8 the user
 stopped the agent, 64 bad arguments, 69 no session.
 
