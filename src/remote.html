@@ -168,7 +168,7 @@
   </div>
   <button id="handle" title="The bar">≡</button>
   <div id="stage"><canvas id="screen" tabindex="0"></canvas><video id="direct" autoplay muted playsinline disablepictureinpicture></video></div>
-  <textarea id="keys" aria-hidden="true"></textarea>
+  <textarea id="keys" aria-hidden="true" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   <div id="toast"></div>
   <div id="dropzone"><div><b>Drop to send home</b>Into «Remote» in its downloads. On a window, the window gets them too.</div></div>
   <div id="xfer" class="pill"><span id="xfer-what">Sending…</span><span class="meter"><i></i></span><button id="xfer-stop" class="quiet">Cancel</button></div>
@@ -1351,10 +1351,12 @@
     let k = 0;
     while (k < now.length && k < was.length && now[k] === was[k]) k++;
     const gone = was.length - k, added = now.slice(k).join('');
-    for (let i = 0; i < gone; i++) { hand('k 14 1'); hand('k 14 0'); }
+    // All as text, in order: keys that rub out went another way and arrived
+    // after what replaced the word (a capital, a correction).
+    if (gone) send('type ' + '\b'.repeat(gone));
     const lines = added.split('\n');
     lines.forEach((t, i) => {
-      if (i) { hand('k 28 1'); hand('k 28 0'); }
+      if (i) send('type \n');
       if (t) send('type ' + t);
     });
     typed = keys.value;
