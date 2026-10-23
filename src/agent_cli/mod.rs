@@ -133,6 +133,8 @@ fn go(args: &[String]) -> R {
                 println!("{}", h.say(line)?);
             }
         }
+        // Words of this branch that the grammar took over.
+        "read" => return Err(usage("read is gone: tree PID (a terminal's text too), find PID --text T, at PID X Y, tree PID --focused")),
         other => return Err(usage(format!("I don't know {other:?}: pleamar-wm agent help"))),
     }
     Ok(())
@@ -160,8 +162,12 @@ mod tests {
     }
 
     #[test]
-    fn the_grammar_is_read_before_any_socket() {
+    fn the_old_words_of_this_branch_are_refused_with_the_new() {
         let go = |w: &[&str]| go(&w.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let f = go(&["read", "4521", "focus"]).unwrap_err();
+        assert_eq!(f.code, fail::USAGE);
+        assert!(f.msg.contains("tree PID --focused"));
+        // Before any socket: the grammar.
         assert_eq!(go(&["tree"]).unwrap_err().code, fail::USAGE);
         assert_eq!(go(&["tree", "4521", "all"]).unwrap_err().code, fail::USAGE);
         assert_eq!(go(&["press", "4521", "--shell", "7"]).unwrap_err().code, fail::USAGE);

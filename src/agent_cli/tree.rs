@@ -2,12 +2,17 @@
 
 use super::*;
 
-const TREE: Spec = Spec { flags: &["--hidden", "--json", "--history", "--long", "--boxes"], values: &["--within", "--role", "--max"], maybe: &["--since"], ..SHELL };
-const FIND: Spec = Spec { flags: &["--json", "--long"], values: &["--text"], ..SHELL };
+const TREE: Spec = Spec { flags: &["--hidden", "--json", "--focused", "--history", "--long", "--elements", "--boxes"], values: &["--within", "--role", "--max"], maybe: &["--since"], ..SHELL };
+const FIND: Spec = Spec { flags: &["--json", "--long", "--elements"], values: &["--text"], ..SHELL };
 const AT: Spec = Spec { flags: &["--json", "--long"], ..PLAIN };
-const LISTEN: Spec = SHELL;
+const LISTEN: Spec = Spec { flags: &["--elements"], ..SHELL };
 
-const TREE_FORM: &str = "tree PID [--hidden] [--within @X] [--role ROLE] [--max N] [--since [V]] [--json] [--long]; a terminal's: tree PID[:SHELL] [--history] [--since [M]]";
+const TREE_FORM: &str = "tree PID [--hidden] [--within @X] [--role ROLE] [--max N] [--since [V]] [--json] [--long]; tree PID --focused; a terminal's: tree PID[:SHELL] [--history] [--since [M]]";
+
+/// A terminal is read as text unless its tree is asked for (`--elements`).
+fn as_text(k: &Kinds, w: &Window, a: &Args) -> bool {
+    k.is_text() && (w.shell.is_some() || !a.has("--elements") || !k.tree)
+}
 
 /// What a `tree` gives: a part, a role, at most so many.
 struct Part<'a> {
@@ -32,11 +37,14 @@ pub(super) fn tree(words: &[String]) -> R {
     if a.has("--since") && part.within.is_some() {
         return Err(usage("--since answers the whole window: --within reads a part of it now"));
     }
+    if a.has("--focused") && (a.has("--since") || part.within.is_some()) {
+        return Err(usage("--focused is the focused element and what it is in: alone"));
+    }
     let (k, long) = (Kinds::of(w)?, a.has("--long"));
     k.open()?;
-    if k.is_text() {
-        if json {
-            return Err(Fail::new(fail::NOT_HERE, format!("{} is a terminal: its text is given as text, with no --json (`tree {}`)", k.name, k.name)));
+    if as_text(&k, w, &a) {
+        if a.has("--focused") || json {
+            return Err(Fail::new(fail::NOT_HERE, format!("{} is a terminal: its text is given as text, with no focus nor --json (`tree {}`)", k.name, k.name)));
         }
         if part.within.is_some() || part.role.is_some() || part.max.is_some() {
             return Err(Fail::new(fail::NOT_HERE, format!("{} is a terminal: its text has no elements, roles nor parts (`find {} --text T` gives the lines that say T)", k.name, k.name)));
@@ -47,9 +55,53 @@ pub(super) fn tree(words: &[String]) -> R {
         return Err(Fail::new(fail::NOT_HERE, format!("{} is not a terminal: --history is a terminal's (it does {})", k.name, k.does())));
     }
     if k.is_scene() {
+        if a.has("--focused") {
+            return Err(Fail::new(fail::NOT_HERE, format!("{} is a pleamar scene: its description has no focus (--focused is for a window with a tree)", k.name)));
+        }
         return scene_tree(&k, &a, &part, json, long);
     }
-    Err(k.refuse("tree"))
+    if !k.tree {
+        return Err(k.refuse("tree"));
+    }
+    let mut h = Hands::open()?;
+    let hidden = if a.has("--hidden") { " all" } else { "" };
+    if a.has("--focused") {
+        nodes(&h.say(&format!("A {} focus", w.target()))?, &w.pid)?.print(json, long);
+        return Ok(());
+    }
+    match &part.within {
+        Some(Element::Id(id)) => {
+            let reply = h.say(&format!("A {} within {id}{hidden}", w.target()))?;
+            if reply.starts_with("err ") {
+                return Err(answered(&reply, Of::Element(&k.name, &format!("@{id}"))));
+            }
+            nodes(&reply, &k.name)?.shaped(part.role, part.max, &k.name).print(json, long);
+            return Ok(());
+        }
+        Some(Element::Name(n)) => return Err(Fail::new(fail::NOT_HERE, format!("{} is a window with a tree: its elements are numbered, @ID (@{n} names a scene's item)", k.name))),
+        None => {}
+    }
+    if a.has("--since") {
+        // The read asked against: the one given, else the last this agent got (none: `0`, never kept, the whole tree).
+        let last = last_version(&k.name);
+        let explicit = a.number::<u64>("--since").map_err(|_| usage("--since V: a version, as `tree` gives it"))?;
+        let v = explicit.or(last.map(|l| l.v)).unwrap_or(0);
+        let reply = h.say(&format!("A {} tree since {v}{}", w.target(), if a.has("--boxes") { " boxes" } else { "" }))?;
+        keep_version(&k.name, &reply);
+        let why = match (explicit, last) {
+            (None, None) => format!("no read of {} kept by this agent yet", k.name),
+            _ => format!("read {v} is no longer kept (a window's last 16 are), or the window shows another page or dialog"),
+        };
+        let said = Said { last: explicit.is_none().then(|| last.map(|l| l.said())).flatten(), why_full: &why, role: part.role, max: part.max, json, long };
+        print_since(since_reply(&reply, &k.name)?, &k.name, &said);
+        return Ok(());
+    }
+    let reply = h.say(&format!("A {} tree{hidden}", w.target()))?;
+    if hidden.is_empty() {
+        keep_version(&k.name, &reply);
+    }
+    nodes(&reply, &k.name)?.shaped(part.role, part.max, &k.name).print(json, long);
+    Ok(())
 }
 
 /// A terminal's `tree`: `mark M` and its screen; `--since [M]` what came
@@ -153,7 +205,7 @@ pub(super) fn find(words: &[String]) -> R {
     };
     let (k, json, long) = (Kinds::of(w)?, a.has("--json"), a.has("--long"));
     k.open()?;
-    if k.is_text() {
+    if as_text(&k, w, &a) {
         if json {
             return Err(Fail::new(fail::NOT_HERE, format!("{} is a terminal: its lines are given as text, with no --json", k.name)));
         }
@@ -164,7 +216,11 @@ pub(super) fn find(words: &[String]) -> R {
         Read { recs: with_containers(&read.recs, |r| r.says(&text)), ..read }.print(json, long);
         return Ok(());
     }
-    Err(k.refuse("find"))
+    if !k.tree {
+        return Err(k.refuse("find"));
+    }
+    nodes(&Hands::open()?.say(&format!("A {} find {}", w.target(), hex(&text)))?, &w.pid)?.print(json, long);
+    Ok(())
 }
 
 /// `at PID X Y`: the element there, and what it is in.
@@ -179,11 +235,16 @@ pub(super) fn at(words: &[String]) -> R {
         Read { recs: at_point(&read.recs, x, y), ..read }.print(json, long);
         return Ok(());
     }
-    Err(k.refuse("at"))
+    if !k.tree || (k.is_text() && w.shell.is_some()) {
+        return Err(k.refuse("at"));
+    }
+    nodes(&Hands::open()?.say(&format!("A {} at {} {}", w.target(), x as i32, y as i32))?, &w.pid)?.print(json, long);
+    Ok(())
 }
 
-/// `listen PID [DURATION]`: a scene's events, or a terminal's new lines
-/// (old: `watch PID [SECONDS]`), a line each as it happens.
+/// `listen PID [DURATION]`: what a screen reader would say, a scene's
+/// events, or a terminal's new lines (old: `watch PID [SECONDS]`), a line
+/// each as it happens.
 pub(super) fn listen(words: &[String]) -> R {
     let a = parse(words, &LISTEN)?;
     let w = a.win()?;
@@ -199,10 +260,40 @@ pub(super) fn listen(words: &[String]) -> R {
             let _ = std::io::stdout().flush();
         })?);
     }
-    if k.is_text() {
+    if as_text(&k, w, &a) {
         return listen_text(&Term::of(&k, w, "listen", false)?, secs);
     }
-    Err(k.refuse("listen"))
+    if !k.tree || w.shell.is_some() {
+        return Err(k.refuse("listen"));
+    }
+    let mut h = Hands::open()?;
+    let _ = h.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs_f64(secs + 5.0)));
+    writeln!(h.writer, "O {} {}", w.target(), (secs * 1000.0) as u64).map_err(|e| e.to_string())?;
+    let start = std::time::Instant::now();
+    loop {
+        let mut line = String::new();
+        if h.reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Err("the session hung up".into());
+        }
+        let line = line.trim_end();
+        if line.starts_with("err ") {
+            return Err(answered(line, Of::Window(&w.pid)));
+        }
+        let (why, heard, read) = match listened(line) {
+            Listened::Say(s) => {
+                println!("{s}");
+                let _ = std::io::stdout().flush();
+                continue;
+            }
+            Listened::End(why, heard, read) => (why, heard, read),
+        };
+        let took = start.elapsed().as_secs_f64();
+        eprintln!("listened {took:.1} s: {heard} events from it ({:.0} a second), {read} elements read", heard as f64 / took.max(0.001));
+        return match why.as_str() {
+            "stopped-by-user" | "private" | "gone" => Err(answered(&why, Of::Window(&w.pid))),
+            _ => Ok(()),
+        };
+    }
 }
 
 /// How long the newest line has to be still to be given before another
