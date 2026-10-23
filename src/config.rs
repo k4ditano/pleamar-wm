@@ -107,10 +107,45 @@ pub struct Config {
     /// `agent on`: a computer-use agent (Cua Driver) may use the desktop
     /// with a pointer and a keyboard of its own (see `agent.rs`).
     pub agent: bool,
+    /// `agent pace fast`: how fast the agent's hands go when the session
+    /// starts (`T` changes it).
+    pub pace: Pace,
     /// `terminals off`: the terminals the session starts get the user's
     /// shell as it is, without the layer that lets wired windows read and
     /// type in them (see `term.rs`). On unless said.
     pub terminals_off: bool,
+}
+
+/// How fast the agent's hands go, for every agent of the session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pace {
+    /// The cursor glides as a hand would, and stops a moment before it presses.
+    #[default]
+    Default,
+    /// It glides, quicker, and presses at once.
+    Fast,
+    /// It goes there in one motion; what acts on an element (`e`) goes by
+    /// the element (`Action.DoAction`, `GrabFocus`) where it has them.
+    Instant,
+}
+
+impl Pace {
+    pub fn parse(s: &str) -> Option<Pace> {
+        match s {
+            "default" => Some(Pace::Default),
+            "fast" => Some(Pace::Fast),
+            "instant" => Some(Pace::Instant),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Pace::Default => "default",
+            Pace::Fast => "fast",
+            Pace::Instant => "instant",
+        }
+    }
 }
 
 /// How the dock of free monitors behaves (`dock-style …`).
@@ -641,10 +676,16 @@ pub fn parse(text: &str, c: &mut Config) {
                 [monitor, name] if layout_index(name).is_some() => c.layouts.push((monitor.clone(), name.clone())),
                 _ => eprintln!("config · line {}: a layout line is `layout MONITOR|* NAME`, NAME one of {}", n + 1, LAYOUTS.join(", ")),
             },
-            "agent" => c.agent = on(rest.first()).unwrap_or_else(|| {
-                eprintln!("config · line {}: `agent on` or `agent off`", n + 1);
-                false
-            }),
+            "agent" => match rest {
+                [w, pace] if w == "pace" => match Pace::parse(pace) {
+                    Some(p) => c.pace = p,
+                    None => eprintln!("config · line {}: `agent pace default|fast|instant`", n + 1),
+                },
+                _ => c.agent = on(rest.first()).unwrap_or_else(|| {
+                    eprintln!("config · line {}: `agent on`, `agent off` or `agent pace default|fast|instant`", n + 1);
+                    false
+                }),
+            },
             "terminals" => c.terminals_off = !on(rest.first()).unwrap_or_else(|| {
                 eprintln!("config · line {}: `terminals on` or `terminals off`", n + 1);
                 true
@@ -863,6 +904,21 @@ mod tests {
         assert_eq!(c.repeat(), (30, 400));
         assert_eq!(c.touchpad.tap, Some(true));
         assert_eq!(c.off_after, Some(600));
+    }
+
+    #[test]
+    fn the_agent_pace_is_its_own_line() {
+        let mut c = Config::default();
+        parse("agent on\nagent pace fast", &mut c);
+        assert!(c.agent);
+        assert_eq!(c.pace, Pace::Fast);
+        // A pace it does not know leaves the one it had, and the agent as it was.
+        parse("agent pace slow", &mut c);
+        assert_eq!((c.agent, c.pace), (true, Pace::Fast));
+        assert_eq!(Config::default().pace, Pace::Default);
+        for p in [Pace::Default, Pace::Fast, Pace::Instant] {
+            assert_eq!(Pace::parse(p.name()), Some(p));
+        }
     }
 
     #[test]

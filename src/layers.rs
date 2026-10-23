@@ -236,6 +236,90 @@ pub fn shown(slot: usize) -> Option<(String, [i32; 4])> {
     SHOWN.lock().unwrap().get(slot).cloned().flatten().filter(|(m, _)| !m.is_empty())
 }
 
+/// A window's menu, as the compositor inside last placed it: its surface
+/// on a monitor (`show`'s id), which monitor, and where it is from the
+/// window's corner (its geometry's) and its size, in units.
+#[derive(Clone, Debug)]
+pub struct WindowMenu {
+    pub id: u64,
+    pub monitor: usize,
+    pub at: (i32, i32),
+    pub size: (u32, u32),
+}
+
+/// Each window's menus, with the window's own size in units, in the order
+/// they are drawn: for its pictures (`window_menus`).
+static MENUS: Mutex<Vec<((u32, u32), Vec<WindowMenu>)>> = Mutex::new(Vec::new());
+
+pub fn set_menus(slot: usize, size: (u32, u32), menus: Vec<WindowMenu>) {
+    let mut m = MENUS.lock().unwrap();
+    if m.len() <= slot {
+        m.resize(slot + 1, ((0, 0), Vec::new()));
+    }
+    m[slot] = (size, menus);
+}
+
+/// A window's menus read back from their monitors, with the window's size
+/// in units, bottom to top; none if it has none. Waits for the monitors (a
+/// frame, or a second at most): not on the compositor's loop.
+pub fn window_menus(slot: usize) -> Option<((u32, u32), Vec<(WindowMenu, ClientPicture)>)> {
+    let (size, menus) = MENUS.lock().unwrap().get(slot).cloned().filter(|(_, m)| !m.is_empty())?;
+    let mut monitors: Vec<usize> = menus.iter().map(|m| m.monitor).collect();
+    monitors.sort_unstable();
+    monitors.dedup();
+    let mut read = Vec::new();
+    for k in monitors {
+        let (tx, rx) = std::sync::mpsc::channel();
+        read_clients(k, menus.iter().filter(|m| m.monitor == k).map(|m| m.id).collect(), tx);
+        read.extend(rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_default());
+    }
+    let pictures = menus.into_iter().filter_map(|m| {
+        let i = read.iter().position(|p| p.id == m.id)?;
+        Some((m, read.swap_remove(i)))
+    });
+    Some((size, pictures.collect()))
+}
+
+/// A window's picture from the render (cut to the window, at its own
+/// density) with its menus over it, cut where it ends.
+pub fn with_menus(slot: usize, picture: &mut [u8], size: (u32, u32)) {
+    let Some(((uw, _), menus)) = window_menus(slot) else { return };
+    let density = if uw > 0 { size.0 as f64 / uw as f64 } else { 1.0 };
+    for (menu, its) in &menus {
+        lay_menu(picture, size, (0, 0), density, menu, its);
+    }
+}
+
+/// A menu laid over a window's picture (BGRA, premultiplied) of `size`
+/// pixels whose corner is the window's at `origin` pixels, at `density`
+/// pixels a unit: stretched to its size there, cut where the picture ends.
+pub fn lay_menu(picture: &mut [u8], size: (u32, u32), origin: (i32, i32), density: f64, menu: &WindowMenu, its: &ClientPicture) {
+    let (pw, ph) = its.size;
+    if pw == 0 || ph == 0 {
+        return;
+    }
+    let x0 = origin.0 + (menu.at.0 as f64 * density).round() as i32;
+    let y0 = origin.1 + (menu.at.1 as f64 * density).round() as i32;
+    let w = (menu.size.0 as f64 * density).round() as i32;
+    let h = (menu.size.1 as f64 * density).round() as i32;
+    for y in y0.max(0)..(y0 + h).min(size.1 as i32) {
+        let sy = (((y - y0) as i64 * ph as i64) / h.max(1) as i64).min(ph as i64 - 1) as u32;
+        for x in x0.max(0)..(x0 + w).min(size.0 as i32) {
+            let sx = (((x - x0) as i64 * pw as i64) / w.max(1) as i64).min(pw as i64 - 1) as u32;
+            let s = ((sy * pw + sx) * 4) as usize;
+            let d = ((y as u32 * size.0 + x as u32) * 4) as usize;
+            let a = its.pixels[s + 3] as u32;
+            if a == 255 {
+                picture[d..d + 4].copy_from_slice(&its.pixels[s..s + 4]);
+            } else if a > 0 {
+                for k in 0..4 {
+                    picture[d + k] = (its.pixels[s + k] as u32 + picture[d + k] as u32 * (255 - a) / 255).min(255) as u8;
+                }
+            }
+        }
+    }
+}
+
 /// Whether a window is seen at that point of that monitor (its pixels).
 pub fn window_at(monitor: &str, x: f64, y: f64) -> bool {
     SHOWN.lock().unwrap().iter().flatten().any(|(m, r)| m == monitor && x >= r[0] as f64 && y >= r[1] as f64 && x < (r[0] + r[2]) as f64 && y < (r[1] + r[3]) as f64)
@@ -251,6 +335,10 @@ pub fn set_private(slot: usize, yes: bool) {
         p.resize(slot + 1, false);
     }
     p[slot] = yes;
+}
+
+pub fn private(slot: usize) -> bool {
+    PRIVATE.lock().unwrap().get(slot).copied().unwrap_or(false)
 }
 
 /// Where the private windows are seen on that monitor, in its pixels.
@@ -384,6 +472,17 @@ pub struct ClientLayer {
     /// pieces keep their own pixels; where they go and where the pointer
     /// touches them is scaled by this.
     pub zoom: f64,
+    /// Put together on the monitor. One that is not is still read and kept,
+    /// for its pictures (`read_clients`): the menus of a window not shown.
+    pub drawn: bool,
+}
+
+/// A program's surface on a monitor, read back (`read_clients`): its pixels
+/// over transparent, BGRA, premultiplied, row after row with no padding.
+pub struct ClientPicture {
+    pub id: u64,
+    pub size: (u32, u32),
+    pub pixels: Vec<u8>,
 }
 
 pub struct ClientPiece {
@@ -653,13 +752,13 @@ pub fn show(monitor: usize, layer: ClientLayer) {
             _ => false,
         };
         if same_place {
-            if let Some(n) = &new {
+            if let Some(n) = new.as_ref().filter(|n| n.drawn) {
                 for p in n.pieces.iter().filter(|p| p.content.is_some()) {
                     st.note_change(n.piece_rect(p), n.owner);
                 }
             }
         } else {
-            for l in old.iter().chain(new.iter()) {
+            for l in old.iter().chain(new.iter()).filter(|l| l.drawn) {
                 for p in &l.pieces {
                     st.note_change(l.piece_rect(p), l.owner);
                 }
@@ -697,7 +796,7 @@ pub fn hide(id: u64) {
         let mut st = lock.lock().unwrap();
         if let Some(i) = st.clients.iter().position(|c| c.id == id) {
             let old = st.clients.remove(i);
-            for p in &old.pieces {
+            for p in old.pieces.iter().filter(|_| old.drawn) {
                 st.note_change(old.piece_rect(p), old.owner);
             }
             for p in old.pieces {
@@ -734,6 +833,21 @@ pub fn capture(monitor: usize, id: u64, piece: [i32; 4], on_change: bool, owner:
         st.dirty = true;
         cv.notify_all();
     }
+}
+
+/// Those programs' surfaces on that monitor, read back the next time it is
+/// put together, drawn there or not: the ones it does not have are left out.
+pub fn read_clients(monitor: usize, ids: Vec<u64>, to: std::sync::mpsc::Sender<Vec<ClientPicture>>) {
+    let monitors = MONITORS.lock().unwrap();
+    let Some((_, sc)) = monitors.get(monitor) else {
+        let _ = to.send(Vec::new());
+        return;
+    };
+    let (lock, cv) = &**sc;
+    let mut st = lock.lock().unwrap();
+    st.reads.push((ids, to));
+    st.dirty = true;
+    cv.notify_all();
 }
 
 /// A picture no longer wanted: its program let it go before it was taken.
@@ -784,7 +898,7 @@ mod tests {
     fn dragging_while_windows_redraw_does_not_freeze() {
         let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0 };
         register(vec![(info, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere)))]);
-        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0 });
+        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn: true });
         set_drag_icon(vec![(0, 7)]);
         let (done, finished) = std::sync::mpsc::channel();
         let mover = {

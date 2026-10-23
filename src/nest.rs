@@ -289,6 +289,8 @@ struct Window {
     screen: usize,
     /// Where the scene shows it: on which monitor, and its box there.
     shown: Option<(String, [i32; 4])>,
+    /// When it last brought something new to show (it or what hangs from it).
+    drew: Instant,
     /// Its entry in ext-foreign-toplevel-list (what a screen share lists).
     listed: ForeignToplevelHandle,
     fullscreen: bool,
@@ -434,6 +436,9 @@ struct Menu {
     root: WlSurface,
     monitor: usize,
     sent: Vec<u64>,
+    /// Where it is from the window's corner (its geometry's), and its size, in units.
+    at: (i32, i32),
+    size: (u32, u32),
 }
 
 /// A program dragging something: its icon (one surface per monitor, at the
@@ -1287,8 +1292,14 @@ impl State {
             ToNest::Shown { slot, monitor, rect } => {
                 layers::set_shown(slot, monitor.clone(), rect);
                 // No longer drawn: where it was is still where its menus and
-                // its X11 place are; only the ones who hide it need to know.
+                // its X11 place are; only the ones who hide it need to know,
+                // and its menus, which are no longer drawn either.
                 if monitor.is_empty() {
+                    if let Some(Some(w)) = self.slots.get(slot) {
+                        if self.menus.iter().any(|m| m.root == w.surface) {
+                            self.dirty.push(w.surface.clone());
+                        }
+                    }
                     return;
                 }
                 if let Some(m) = layers::monitors().iter().find(|m| m.name == monitor) {
@@ -2423,7 +2434,7 @@ impl State {
         let id = self.panels[k].id;
         // A lock screen: all of its monitor, over everything, with the keyboard.
         if matches!(self.panels[k].shell, Shell::Lock(_)) {
-            layers::show(self.panels[k].monitor, ClientLayer { id, level: 4, rect: [0, 0, px(w), px(h)], pieces, region: None, keyboard: 1, blur: Vec::new(), blur_cut: 0.0, owner: owner_of(&root), zoom: 1.0 });
+            layers::show(self.panels[k].monitor, ClientLayer { id, level: 4, rect: [0, 0, px(w), px(h)], pieces, region: None, keyboard: 1, blur: Vec::new(), blur_cut: 0.0, owner: owner_of(&root), zoom: 1.0, drawn: true });
             return;
         }
         // On the phone, a panel wider than it is shown smaller (Marea: her
@@ -2466,7 +2477,7 @@ impl State {
         if std::env::var_os("PLEAMAR_DEBUG_WINDOWS").is_some() {
             eprintln!("windows · surface {id}: level {level}, keyboard {keyboard}, {}×{} at {x},{y}", w, h);
         }
-        layers::show(self.panels[k].monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces, region, keyboard, blur, blur_cut: 0.0, owner: owner_of(&root), zoom });
+        layers::show(self.panels[k].monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces, region, keyboard, blur, blur_cut: 0.0, owner: owner_of(&root), zoom, drawn: true });
     }
 
     /// What the programs' bars keep at each edge of each monitor (their
@@ -2735,7 +2746,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -2823,10 +2834,14 @@ impl State {
     }
 
     /// A window's menus, over everything on the monitor it is seen on, where
-    /// the scene shows it; the ones that closed, taken away.
+    /// the scene shows it; the ones that closed, taken away. While the window
+    /// is not shown they stay on its monitor undrawn, for its pictures.
     fn show_menus(&mut self, slot: usize, root: &WlSurface, g: [i32; 4]) {
         let monitors = layers::monitors();
-        let place = self.slots.get(slot).and_then(Option::as_ref).and_then(|w| w.shown.clone()).and_then(|(name, r)| monitors.iter().position(|m| m.name == name).map(|k| (k, r)));
+        let Some(win) = self.slots.get(slot).and_then(Option::as_ref) else { return };
+        let seen = win.shown.clone().and_then(|(name, r)| monitors.iter().position(|m| m.name == name).map(|k| (k, r)));
+        let shown = seen.is_some() && layers::shown(slot).is_some();
+        let place = seen.or_else(|| (win.screen < monitors.len()).then(|| (win.screen, [0, 0, (g[2] as f64 * self.scale_of(win.screen)).round() as i32, (g[3] as f64 * self.scale_of(win.screen)).round() as i32])));
         let mut now = Vec::new();
         if let Some((k, r)) = place {
             let scale = self.scale_of(k);
@@ -2853,10 +2868,11 @@ impl State {
                     Some(i) => i,
                     None => {
                         self.next_number += 1;
-                        self.menus.push(Menu { id: self.next_number, surface: surface.clone(), root: root.clone(), monitor: k, sent: Vec::new() });
+                        self.menus.push(Menu { id: self.next_number, surface: surface.clone(), root: root.clone(), monitor: k, sent: Vec::new(), at: (0, 0), size: (0, 0) });
                         self.menus.len() - 1
                     }
                 };
+                (self.menus[i].at, self.menus[i].size) = ((at.x, at.y), (w as u32, h as u32));
                 // Moved to another monitor: gone from the one it was on.
                 if self.menus[i].monitor != k {
                     layers::hide(self.menus[i].id);
@@ -2876,7 +2892,7 @@ impl State {
                 }
                 let blur = blur.iter().map(|b| [px(b[0] as f64), px(b[1] as f64), px(b[2] as f64), px(b[3] as f64)]).collect();
                 let id = self.menus[i].id;
-                layers::show(k, ClientLayer { id, level: 3, rect: [x, y, px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, blur_cut, owner: owner_of(&surface), zoom: 1.0 });
+                layers::show(k, ClientLayer { id, level: 3, rect: [x, y, px(w as f64), px(h as f64)], pieces, region: None, keyboard: 0, blur, blur_cut, owner: owner_of(&surface), zoom: 1.0, drawn: shown });
                 now.push(id);
             }
         }
@@ -2887,10 +2903,13 @@ impl State {
             }
             keep
         });
+        let menus = self.menus.iter().filter(|m| &m.root == root).map(|m| layers::WindowMenu { id: m.id, monitor: m.monitor, at: m.at, size: m.size });
+        layers::set_menus(slot, (g[2].max(0) as u32, g[3].max(0) as u32), menus.collect());
     }
 
     /// Menus whose surface or window went: off their monitor.
     fn prune_menus(&mut self) {
+        let before = self.menus.len();
         self.menus.retain(|m| {
             let keep = m.surface.alive()
                 && m.root.alive()
@@ -2900,6 +2919,21 @@ impl State {
             }
             keep
         });
+        if self.menus.len() != before {
+            for slot in 0..self.slots.len() {
+                self.publish_menus(slot);
+            }
+        }
+    }
+
+    /// A window's menus, for its pictures (`layers::window_menus`).
+    fn publish_menus(&self, slot: usize) {
+        let Some(Some(w)) = self.slots.get(slot) else {
+            layers::set_menus(slot, (0, 0), Vec::new());
+            return;
+        };
+        let menus = self.menus.iter().filter(|m| m.root == w.surface).map(|m| layers::WindowMenu { id: m.id, monitor: m.monitor, at: m.at, size: m.size });
+        layers::set_menus(slot, (w.geometry[2].max(0) as u32, w.geometry[3].max(0) as u32), menus.collect());
     }
 
     /// The cursor a program draws itself, to the session: its pixels in shared
@@ -2939,7 +2973,7 @@ impl State {
             panel_pieces(&icon, (0, 0), sent, s, &mut pieces);
             *sent = pieces.iter().map(|p| p.key).collect();
             let rect = layers::drag_rect(*k, (w as f64 * s) as i32, (h as f64 * s) as i32);
-            layers::show(*k, ClientLayer { id: *id, level: 3, rect, pieces, region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner, zoom: 1.0 });
+            layers::show(*k, ClientLayer { id: *id, level: 3, rect, pieces, region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner, zoom: 1.0, drawn: true });
         }
     }
 
@@ -3469,6 +3503,13 @@ impl CompositorHandler for State {
             },
         };
         self.callbacks.extend(callbacks.into_iter().map(|cb| (cb, waits)));
+        if matches!(buffer, Some(BufferAssignment::NewBuffer(_))) {
+            // A menu is its window's.
+            let window = self.menus.iter().find(|m| m.surface == root).map_or(root.clone(), |m| m.root.clone());
+            if let Some(w) = self.slots.iter_mut().flatten().find(|w| w.surface == window) {
+                w.drew = Instant::now();
+            }
+        }
         let feedback = with_states(surface, |s| std::mem::take(&mut s.cached_state.get::<PresentationFeedbackCachedState>().current().callbacks));
         let buffer_was_removed = matches!(buffer, Some(BufferAssignment::Removed));
         self.tally[0] += 1;

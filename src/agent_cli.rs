@@ -6,6 +6,7 @@
 //! Its coordinates are the pixels of `pleamar-wm agent look PID`: what is seen
 //! in that picture at (x, y) is where `click PID x y` lands.
 
+use crate::config::Pace;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
@@ -20,7 +21,10 @@ const HELP: &str = "pleamar-wm agent — use the desktop with the agent's own po
                                   panels—: number, program (and scene), name, box, monitor, level
   hide N · show N                 one of those off the screen for now, or back (its program runs on)
   look [PID] [FILE]               a picture of that window (or of the whole desktop); prints the file
-                                  (a program with a dialog open: the dialog, which is where it listens)
+                                  (a program with a dialog open: the dialog, which is where it listens).
+                                  The window's own: covered or on another workspace, with its menus
+  look PID X Y W H [FILE]         a part of it, in the picture's coordinates
+  look PID ... --hidpi            at the window's own pixels; prints the scale (a pixel / scale is a point)
   move PID X Y                    the agent's cursor to X, Y of the window's picture
   click PID X Y [left|right|middle] [COUNT]
   drag PID X1 Y1 X2 Y2            press at one point, glide to the other, let go
@@ -38,6 +42,9 @@ const HELP: &str = "pleamar-wm agent — use the desktop with the agent's own po
                                   waits a minute and a half, in case the agent is thinking)
   stop                            the user's: the agent stops, and what it tries next is refused
                                   until it says `done` (or for a minute)
+  pace [default|fast|instant]     how fast the hands go, for every agent of the session (without
+                                  one, the pace now): fast glides quicker, instant goes there in
+                                  one motion; the pill on the monitor says it when not default
   raw LINE…                       protocol lines, as they are (cua-inject v1)
 
 A window made with pleamar (`windows` says «pleamar scene NAME») is asked and used by name:
@@ -187,6 +194,26 @@ pub(crate) fn monitors() -> Result<Vec<(String, f64, f64, f64, f64)>, String> {
 struct Hands {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
+    /// The session's pace, asked once.
+    pace: Pace,
+}
+
+/// A glide of FAR units at a pace: its time in ms, its steps, and the moment
+/// still before pressing; none, one motion.
+fn glide(pace: Pace, far: f64) -> Option<(f64, u32, u64)> {
+    match pace {
+        Pace::Default => Some(((220.0 + far * 0.45).clamp(260.0, 620.0), ((far / 22.0).round() as u32).clamp(8, 24), 70)),
+        Pace::Fast => Some(((60.0 + far * 0.12).clamp(80.0, 150.0), ((far / 80.0).round() as u32).clamp(4, 6), 0)),
+        Pace::Instant => None,
+    }
+}
+
+/// A drag's steps and the ms between scrolls at a pace.
+fn strokes(pace: Pace) -> (u32, u64) {
+    match pace {
+        Pace::Default => (24, 60),
+        Pace::Fast | Pace::Instant => (8, 20),
+    }
 }
 
 impl Hands {
@@ -195,7 +222,7 @@ impl Hands {
         let stream = UnixStream::connect(&path).map_err(|e| format!("{path}: {e}"))?;
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
         let writer = stream.try_clone().map_err(|e| e.to_string())?;
-        let mut hands = Hands { reader: BufReader::new(stream), writer };
+        let mut hands = Hands { reader: BufReader::new(stream), writer, pace: Pace::Default };
         let hello = hands.say("cua-inject v1")?;
         if hello != "cua-inject v1" {
             return Err(format!("the socket answered «{hello}»"));
@@ -205,6 +232,10 @@ impl Hands {
         // it: nothing is lost.
         let name = std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "agent".to_owned());
         let _ = hands.say(&format!("n {}", hex(&name)));
+        // How fast it goes is the session's (`T`); an older one: as ever.
+        if let Some(p) = hands.say("T").unwrap_or_default().strip_prefix("pace ").and_then(Pace::parse) {
+            hands.pace = p;
+        }
         Ok(hands)
     }
 
@@ -240,8 +271,12 @@ impl Hands {
         if far < 2.0 {
             return self.act(&format!("m root:{pid} 0 {x} {y}"));
         }
-        let total = (220.0 + far * 0.45).clamp(260.0, 620.0);
-        let steps = ((far / 22.0).round() as u32).clamp(8, 24);
+        let Some((total, steps, still)) = glide(self.pace, far) else {
+            // One motion, from a unit short of the point: a program sees the
+            // pointer move over what is there, not only land on it.
+            let _ = self.say(&format!("m root:{pid} 0 {:.1} {:.1}", x - (x - sx) / far, y - (y - sy) / far));
+            return self.act(&format!("m root:{pid} 0 {x} {y}"));
+        };
         for k in 0..=steps {
             let t = k as f64 / steps as f64;
             let e = t * t * (3.0 - 2.0 * t);
@@ -256,7 +291,7 @@ impl Hands {
             }
         }
         // A moment on the spot, as a hand stops before it presses.
-        std::thread::sleep(std::time::Duration::from_millis(70));
+        std::thread::sleep(std::time::Duration::from_millis(still));
         Ok(())
     }
 
@@ -415,42 +450,44 @@ fn go(args: &[String]) -> Result<(), String> {
             Hands::open()?.act(&format!("v {p} {monitor}"))?;
         }
         "look" => {
-            let out = args.get(2).cloned().unwrap_or_else(|| {
-                let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-                format!("{dir}/pleamar-agent-look.png")
-            });
-            // At scale 1: grim's own default is the greatest monitor's scale
-            // (a HiDPI monitor, the phone's), and the boxes are the desktop's units.
-            let shot = std::process::Command::new("grim").args(["-s", "1", "-"]).output().map_err(|e| format!("grim: {e} (install grim to look)"))?;
-            if !shot.status.success() {
-                return Err(format!("grim: {}", String::from_utf8_lossy(&shot.stderr).trim()));
-            }
-            let desktop = image::load_from_memory(&shot.stdout).map_err(|e| e.to_string())?.to_rgba8();
-            let picture = match pid().ok() {
-                None => desktop,
-                Some(p) => {
-                    let reply = Hands::open()?.say(&format!("r {p}"))?;
-                    let f: Vec<i64> = reply.strip_prefix("rect ").ok_or(reply.clone())?.split_whitespace().filter_map(|v| v.parse().ok()).collect();
-                    let [x, y, w, h, seen] = f[..] else { return Err(reply) };
-                    if seen == 0 || w <= 0 || h <= 0 {
-                        return Err("that window is not seen now (another workspace, put away): `focus` it first".into());
-                    }
-                    // Cut at its box, what falls off the desktop left black: a
-                    // pixel of the picture stays the point `click` takes.
-                    let mut cut = image::RgbaImage::from_pixel(w as u32, h as u32, image::Rgba([0, 0, 0, 255]));
-                    for py in 0..h {
-                        for px in 0..w {
-                            let (dx, dy) = (x + px, y + py);
-                            if dx >= 0 && dy >= 0 && (dx as u32) < desktop.width() && (dy as u32) < desktop.height() {
-                                cut.put_pixel(px as u32, py as u32, *desktop.get_pixel(dx as u32, dy as u32));
-                            }
-                        }
-                    }
-                    cut
+            let window = pid().ok();
+            let rest: Vec<&str> = args.iter().skip(if window.is_some() { 2 } else { 1 }).map(String::as_str).collect();
+            let hidpi = rest.contains(&"--hidpi");
+            let rest: Vec<&str> = rest.into_iter().filter(|a| *a != "--hidpi").collect();
+            let default_out = || format!("{}/pleamar-agent-look.png", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()));
+            let Some(p) = window else {
+                let out = rest.first().map_or_else(default_out, |f| f.to_string());
+                // At scale 1: grim's own default is the greatest monitor's scale
+                // (a HiDPI monitor, the phone's), and the boxes are the desktop's units.
+                let shot = std::process::Command::new("grim").args(["-s", "1", &out]).output().map_err(|e| format!("grim: {e} (install grim to look)"))?;
+                if !shot.status.success() {
+                    return Err(format!("grim: {}", String::from_utf8_lossy(&shot.stderr).trim()));
                 }
+                let (w, h) = image::image_dimensions(&out).map_err(|e| e.to_string())?;
+                println!("{out} {w}x{h}");
+                return Ok(());
             };
-            picture.save(&out).map_err(|e| format!("{out}: {e}"))?;
-            println!("{out} {}x{}", picture.width(), picture.height());
+            // The window manager's picture of it: what it drew, covered or
+            // on another workspace, with its menus and nothing over it.
+            let (cut, out) = match rest.as_slice() {
+                [x, y, w, h, out @ ..] if [x, y, w, h].iter().all(|v| v.parse::<i32>().is_ok()) => (format!(" {x} {y} {w} {h}"), out.first().map(|f| f.to_string())),
+                [out, ..] => (String::new(), Some(out.to_string())),
+                [] => (String::new(), None),
+            };
+            let reply = Hands::open()?.say(&format!("c {}{}{cut}", target(&p), if hidpi { " hidpi" } else { "" }))?;
+            let f: Vec<&str> = reply.strip_prefix("picture ").ok_or_else(|| match reply.as_str() {
+                "err private" => "that window is private (a rule says so), or the screen is locked: it is not looked at".to_owned(),
+                "err no-picture" | "err timeout" => "that window has not drawn anything to look at yet".to_owned(),
+                _ => reply.clone(),
+            })?.split_whitespace().collect();
+            let [path, _, _, age, ref scale @ ..] = f[..] else { return Err(reply) };
+            let out = out.unwrap_or_else(default_out);
+            std::fs::copy(path, &out).map_err(|e| format!("{out}: {e}"))?;
+            let (w, h) = image::image_dimensions(&out).map_err(|e| e.to_string())?;
+            let scale = scale.first().map_or(String::new(), |s| format!(" scale {s}"));
+            // A window that has not drawn for a while may be behind what it would show now.
+            let old = age.parse::<u64>().ok().filter(|a| *a > 10_000).map_or(String::new(), |a| format!(" (drawn {}s ago)", a / 1000));
+            println!("{out} {w}x{h}{scale}{old}");
         }
         "move" => {
             let p = pid()?;
@@ -474,8 +511,9 @@ fn go(args: &[String]) -> Result<(), String> {
             let mut h = Hands::open()?;
             h.arrive(&p, x1, y1)?;
             h.act(&format!("b {} 0 272 1", target(&p)))?;
-            for k in 1..=24 {
-                let t = k as f64 / 24.0;
+            let (steps, _) = strokes(h.pace);
+            for k in 1..=steps {
+                let t = k as f64 / steps as f64;
                 h.act(&format!("m {} 0 {:.1} {:.1}", target(&p), x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))?;
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
@@ -496,7 +534,7 @@ fn go(args: &[String]) -> Result<(), String> {
             h.arrive(&p, x, y)?;
             for _ in 0..steps {
                 h.act(&format!("a {} 0 {axis} {value}", target(&p)))?;
-                std::thread::sleep(std::time::Duration::from_millis(60));
+                std::thread::sleep(std::time::Duration::from_millis(strokes(h.pace).1));
             }
         }
         "type" => {
@@ -561,6 +599,13 @@ fn go(args: &[String]) -> Result<(), String> {
         }
         "done" => Hands::open()?.act("x")?,
         "stop" => Hands::open()?.act("s")?,
+        "pace" => match args.get(1) {
+            None => println!("{}", Hands::open()?.pace.name()),
+            Some(p) => {
+                let pace = Pace::parse(p).ok_or_else(|| format!("a pace is default, fast or instant: {p} is not one"))?;
+                Hands::open()?.act(&format!("T {}", pace.name()))?;
+            }
+        },
         "focus" => {
             let p = pid()?;
             Hands::open()?.act(&format!("f {p}"))?;
@@ -574,4 +619,26 @@ fn go(args: &[String]) -> Result<(), String> {
         other => return Err(format!("I don't know «{other}»: pleamar-wm agent help")),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_pace_moves_as_its_table_says() {
+        // As a hand: from 260 to 620 ms, 8 to 24 steps, and a moment still.
+        assert_eq!(glide(Pace::Default, 10.0), Some((260.0, 8, 70)));
+        assert_eq!(glide(Pace::Default, 2000.0), Some((620.0, 24, 70)));
+        // Quicker, and no stop.
+        assert_eq!(glide(Pace::Fast, 10.0), Some((80.0, 4, 0)));
+        assert_eq!(glide(Pace::Fast, 2000.0), Some((150.0, 6, 0)));
+        for far in [5.0, 300.0, 900.0] {
+            let (ms, steps, _) = glide(Pace::Fast, far).unwrap();
+            assert!((80.0..=150.0).contains(&ms) && (4..=6).contains(&steps));
+        }
+        assert_eq!(glide(Pace::Instant, 500.0), None);
+        assert_eq!(strokes(Pace::Default), (24, 60));
+        assert_eq!(strokes(Pace::Fast), (8, 20));
+    }
 }

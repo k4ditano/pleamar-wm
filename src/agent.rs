@@ -25,6 +25,7 @@
 //! | `x` | the agent has finished: the monitor's light goes out now, not when it would have stopped waiting for its next step |
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
 //! | `r PID` | `rect X Y W H VISIBLE`: the root surface's box on the desktop, as the scene shows it, and whether it is seen (1) — what a screenshot of the window is cut from, and what `m`'s coordinates count in |
+//! | `c TARGET [hidpi] [X Y W H]` | `picture PATH W H AGE [SCALE]`: a PNG of the window as it drew itself, with its menus, in `m`'s coordinates (or at its own density, a pixel over SCALE), cut to that box; AGE the ms since it last drew; `err private` for a private window or a locked screen |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
 //! | `m TARGET IDX X Y` | cursor IDX to X, Y of the window (its root surface's coordinates) |
 //! | `b TARGET IDX BUTTON PRESSED` | an evdev button (272 left), 1 down, 0 up |
@@ -33,6 +34,7 @@
 //! | `k TARGET KEY` | a named key: enter, tab, escape, backspace, space, arrows, f1–f12 |
 //! | `h TARGET MODS KEY` | a chord: `ctrl,shift` and a key |
 //! | `d X Y COUNT BUTTON` | a click at a point of the desktop |
+//! | `T`, `T PACE` | `pace PACE`: how fast the hands go, for every agent (`default`, `fast`, `instant`); `T PACE` sets it. The CLI moves at it, and Stop does not refuse it |
 //! | `M PID W H IDX X Y` | cursor IDX to X, Y of that process' surface of W × H that is no window (a panel: Marea, a bar) |
 //! | `B PID W H IDX BUTTON PRESSED` | a button there |
 //! | `R MONITOR HEX` · `R off` | `pleamar-wm remote`: someone uses this desktop from elsewhere, looking at that monitor, from that address (hex encoded) — said again every few seconds while it lasts, and forgotten 15 s after the last |
@@ -131,18 +133,29 @@ pub struct Agent {
     /// Someone at this desktop from elsewhere (`pleamar-wm remote`): when
     /// that was last said.
     remote: Option<Instant>,
-    /// What the last command pasted, until the window reads it, and what
-    /// was copied before, to give back then: its answer waits for that (see
-    /// `agent_lines`).
-    pasting: Option<(std::sync::Arc<super::Kept>, Option<std::sync::Arc<super::Kept>>)>,
+    /// What the last command left to finish after its line: its answer
+    /// waits for that (see `agent_lines`).
+    pending: Option<Pending>,
     /// Typing for the person, not for an agent (the phone's keyboard, `U`):
     /// the same hands, without the agent's marks on the monitor.
     quiet: bool,
+    /// How fast the hands go (`T`), for every agent and shell: the CLI asks
+    /// it when it opens the socket.
+    pace: crate::config::Pace,
     pub path: String,
 }
 
+/// A command whose answer comes later than its line.
+enum Pending {
+    /// A paste the window has not read yet, and what was copied before, to
+    /// give back then.
+    Paste(std::sync::Arc<super::Kept>, Option<std::sync::Arc<super::Kept>>),
+    /// Work done off the loop: its answer, or none by the deadline.
+    Work(std::sync::mpsc::Receiver<String>, Instant),
+}
+
 /// A connection to the socket: what it sent that is not answered yet, and
-/// whether an answer is being waited for (a paste the window has not read).
+/// whether an answer is being waited for (`Pending`).
 struct Conn {
     stream: UnixStream,
     buffer: Vec<u8>,
@@ -212,7 +225,7 @@ pub fn start(state: &mut State) {
         return;
     }
     println!("agent · computer use: cua-inject v1 at {path}");
-    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pasting: None, quiet: false });
+    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace });
     // Whether it is at work, looked at every second: between one action and
     // the next an agent thinks, and that is still working.
     let timer = Timer::from_duration(Duration::from_secs(1));
@@ -251,7 +264,9 @@ impl State {
     /// was pasted, or after a second and a half: a program reads it when it
     /// gets round to the Ctrl+V, and something pasted next could otherwise
     /// get there first —Chromium pasted the second emoji in place of the
-    /// first—. The lines after it wait meanwhile. false: the connection is over.
+    /// first—. Work done off the loop (`Pending::Work`) is answered when it
+    /// is done, or `err timeout` at its deadline. The lines after either
+    /// wait meanwhile. false: the connection is over.
     fn agent_lines(&mut self, conn: &std::rc::Rc<std::cell::RefCell<Conn>>) -> bool {
         loop {
             let line = {
@@ -274,20 +289,30 @@ impl State {
             } else {
                 self.agent_command(&line)
             };
-            if let Some((pasted, back)) = self.agent.as_mut().and_then(|a| a.pasting.take()) {
+            if let Some(mut pending) = self.agent.as_mut().and_then(|a| a.pending.take()) {
                 conn.borrow_mut().waiting = true;
                 let (conn, since) = (conn.clone(), Instant::now());
-                let mut back = Some(back);
+                let mut reply = Some(reply);
                 let timer = Timer::from_duration(Duration::from_millis(5));
                 let _ = self.handle.insert_source(timer, move |_, _, state: &mut State| {
-                    if !pasted.read.load(std::sync::atomic::Ordering::Relaxed) && since.elapsed() < Duration::from_millis(1500) {
-                        return TimeoutAction::ToDuration(Duration::from_millis(5));
-                    }
-                    if let Some(back) = back.take() {
-                        state.agent_give_back(&pasted, back);
-                    }
+                    let done = match &mut pending {
+                        Pending::Paste(pasted, back) => {
+                            if !pasted.read.load(std::sync::atomic::Ordering::Relaxed) && since.elapsed() < Duration::from_millis(1500) {
+                                return TimeoutAction::ToDuration(Duration::from_millis(5));
+                            }
+                            state.agent_give_back(&pasted.clone(), back.take());
+                            reply.take().unwrap_or_default()
+                        }
+                        Pending::Work(work, deadline) => match work.try_recv() {
+                            Ok(done) => done,
+                            Err(std::sync::mpsc::TryRecvError::Empty) if Instant::now() < *deadline => {
+                                return TimeoutAction::ToDuration(Duration::from_millis(5));
+                            }
+                            Err(_) => "err timeout".to_owned(),
+                        },
+                    };
                     conn.borrow_mut().waiting = false;
-                    if answer(&conn, &reply) {
+                    if answer(&conn, &done) {
                         state.agent_lines(&conn);
                     }
                     TimeoutAction::Drop
@@ -307,6 +332,7 @@ impl State {
             ["q", pid] => return self.agent_query(pid.parse().unwrap_or(0)),
             ["g", pid] => self.agent_geometry(pid),
             ["r", pid] => self.agent_rect(pid),
+            ["c", target, rest @ ..] => self.agent_picture(target, rest),
             ["l"] => Ok(self.agent_list()),
             ["o"] => Ok(self.agent_monitors()),
             ["y"] => Ok(self.agent_layers()),
@@ -319,6 +345,17 @@ impl State {
                 Ok("ok".to_owned())
             }
             ["p", idx] => Ok(self.agent_where(idx.parse().unwrap_or(0))),
+            // The pace: how the hands move, not something they do, so the
+            // user's Stop does not refuse it.
+            ["T"] => Ok(format!("pace {}", self.agent.as_ref().map_or_else(Default::default, |a| a.pace).name())),
+            ["T", pace] => match (crate::config::Pace::parse(pace), self.agent.as_mut()) {
+                (Some(p), Some(a)) => {
+                    a.pace = p;
+                    let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.pace"), p as u8 as f32));
+                    Ok("ok".to_owned())
+                }
+                _ => Err("bad-args"),
+            },
             ["v", pid, monitor] => self.agent_send(pid, monitor.parse().unwrap_or(usize::MAX)).map(|_| "ok".to_owned()),
             ["x"] => {
                 self.agent_done();
@@ -615,22 +652,83 @@ impl State {
     }
 
     fn agent_rect_of(&self, slot: usize) -> (i64, i64, i64, i64, bool) {
-        let Some(Some(w)) = self.slots.get(slot) else { return (0, 0, 0, 0, false) };
         let Some((_, root, zoom, _)) = self.agent_place(slot) else { return (0, 0, 0, 0, false) };
-        // From the root surface's corner to the window's far edges: the scene
-        // draws the window only (not a program's own shadow), and starting at
-        // the root's corner keeps a pixel of the picture a point `m` takes.
+        let (right, bottom) = self.agent_extent(slot);
+        let (width, height) = ((right as f64 * zoom).round(), (bottom as f64 * zoom).round());
+        (root[0].round() as i64, root[1].round() as i64, width as i64, height as i64, true)
+    }
+
+    /// How far a window reaches from its root surface's corner, in its units:
+    /// to the window's far edges (the scene draws the window only, not a
+    /// program's own shadow, and starting at the root's corner keeps a pixel
+    /// of a picture a point `m` takes), and its menus that hang out of it (a
+    /// right-click menu near its edge), whole.
+    fn agent_extent(&self, slot: usize) -> (i32, i32) {
+        let Some(Some(w)) = self.slots.get(slot) else { return (0, 0) };
         let g = w.geometry;
         let (mut right, mut bottom) = (g[0] + g[2], g[1] + g[3]);
-        // And its menus that hang out of it (a right-click menu near its
-        // edge): a picture of the window shows them whole.
         for (popup, offset) in smithay::desktop::PopupManager::popups_for_surface(&w.surface) {
             let size = popup.geometry().size;
             right = right.max(g[0] + offset.x + size.w);
             bottom = bottom.max(g[1] + offset.y + size.h);
         }
-        let (width, height) = ((right as f64 * zoom).round(), (bottom as f64 * zoom).round());
-        (root[0].round() as i64, root[1].round() as i64, width as i64, height as i64, true)
+        (right, bottom)
+    }
+
+    /// `c TARGET [hidpi] [X Y W H]`: a picture of the window from what it
+    /// drew, not from the screen: covered, on another workspace, with its
+    /// menus and nothing else over it. In look coordinates (its root
+    /// surface's units: a pixel is the point `m` takes), or at the window's
+    /// own density with `hidpi` (a pixel over SCALE is that point). Put
+    /// together off the loop; answered `picture PATH W H AGE [SCALE]`, AGE
+    /// the milliseconds since the window last drew.
+    fn agent_picture(&mut self, target: &str, rest: &[&str]) -> Result<String, &'static str> {
+        let slot = self.agent_target(target)?;
+        if layers::private(slot) || layers::locked() {
+            return Err("private");
+        }
+        let hidpi = rest.first() == Some(&"hidpi");
+        let cut = match &rest[usize::from(hidpi)..] {
+            [] => None,
+            [x, y, w, h] => match (x.parse::<i32>(), y.parse::<i32>(), w.parse::<i32>(), h.parse::<i32>()) {
+                (Ok(x), Ok(y), Ok(w), Ok(h)) if w > 0 && h > 0 => Some([x, y, w, h]),
+                _ => return Err("bad-args"),
+            },
+            _ => return Err("bad-args"),
+        };
+        let Some(Some(w)) = self.slots.get(slot) else { return Err("unknown-pid") };
+        let (geometry, age, extent) = (w.geometry, w.drew.elapsed().as_millis(), self.agent_extent(slot));
+        let peer = self.agent.as_ref().map_or(0, |a| a.peer);
+        self.agent_busy(slot);
+        static WHO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
+        let who = WHO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (answer, work) = std::sync::mpsc::channel();
+        let to_render = self.to_render.clone();
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel::<pleamar::scene::WindowPicture>();
+            let _ = to_render.send(ToRender::WatchWindow(slot, who, Some(tx)));
+            let got = rx.recv_timeout(Duration::from_millis(2500));
+            let _ = to_render.send(ToRender::WatchWindow(slot, who, None));
+            let reply = match got {
+                Ok(p) => {
+                    let (picture, scale) = look_picture(slot, &p, geometry, extent, hidpi, cut);
+                    match keep_picture(&picture, peer) {
+                        Ok(path) => {
+                            let (w, h) = cut.map_or(extent, |c| (c[2], c[3]));
+                            let scale = if hidpi { format!(" {scale:.3}") } else { String::new() };
+                            format!("picture {path} {w} {h} {age}{scale}")
+                        }
+                        Err(e) => format!("err {e}"),
+                    }
+                }
+                Err(_) => "err no-picture".to_owned(),
+            };
+            let _ = answer.send(reply);
+        });
+        if let Some(a) = self.agent.as_mut() {
+            a.pending = Some(Pending::Work(work, Instant::now() + Duration::from_secs(3)));
+        }
+        Ok(String::new())
     }
 
     /// Every window: its process, its box (as `r` says it), whether it is
@@ -787,7 +885,7 @@ impl State {
         match lent {
             Ok(()) => {
                 if let Some(a) = self.agent.as_mut() {
-                    a.pasting = Some((pasted, back));
+                    a.pending = Some(Pending::Paste(pasted, back));
                 }
             }
             Err(_) => self.agent_give_back(&pasted, back),
@@ -1008,6 +1106,8 @@ impl State {
         let working = idle < Duration::from_secs(90) || (alive && idle < Duration::from_secs(600));
         if working != agent.active {
             agent.active = working;
+            // The pill says the pace, from the session's start too.
+            let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.pace"), agent.pace as u8 as f32));
             let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.active"), if working { 1.0 } else { 0.0 }));
             if !working {
                 self.agent_keyboard_leave();
@@ -1722,6 +1822,77 @@ fn keymap_fd(text: &str) -> Option<(std::os::fd::OwnedFd, u32)> {
 /// Taken by the agent's seats out of what the session's seat does.
 pub fn is_agent_seat(seat: &Seat<State>) -> bool {
     seat.name().starts_with("cua-agent")
+}
+
+/// A window's picture from the render (cut to its geometry, at its own
+/// density, BGRA premultiplied) laid out from its root surface's corner,
+/// with its menus over it, `extent` units across, at a unit a pixel (or at
+/// its density, `hidpi`), cut to `cut` (in units): RGBA, and its pixels a unit.
+fn look_picture(slot: usize, p: &pleamar::scene::WindowPicture, g: [i32; 4], extent: (i32, i32), hidpi: bool, cut: Option<[i32; 4]>) -> (image::RgbaImage, f64) {
+    let s = if g[2] > 0 { p.size.0 as f64 / g[2] as f64 } else { 1.0 };
+    let d = if hidpi { s } else { 1.0 };
+    let px = |v: i32| (v as f64 * d).round() as i32;
+    let size = (px(extent.0).max(1) as u32, px(extent.1).max(1) as u32);
+    let mut canvas = vec![0u8; (size.0 * size.1 * 4) as usize];
+    let own = image::RgbaImage::from_raw(p.size.0, p.size.1, p.pixels.to_vec());
+    // Its pixels to the canvas's: resampled premultiplied, as they are.
+    let fit = (px(g[2]).max(1) as u32, px(g[3]).max(1) as u32);
+    let own = own.map(|o| if o.dimensions() == fit { o } else { image::imageops::resize(&o, fit.0, fit.1, image::imageops::FilterType::Triangle) });
+    if let Some(own) = own {
+        let (ox, oy) = (px(g[0]), px(g[1]));
+        for (x, y, c) in own.enumerate_pixels() {
+            let (tx, ty) = (ox + x as i32, oy + y as i32);
+            if tx >= 0 && ty >= 0 && (tx as u32) < size.0 && (ty as u32) < size.1 {
+                let k = ((ty as u32 * size.0 + tx as u32) * 4) as usize;
+                canvas[k..k + 4].copy_from_slice(&c.0);
+            }
+        }
+    }
+    if let Some((_, menus)) = layers::window_menus(slot) {
+        for (menu, its) in &menus {
+            layers::lay_menu(&mut canvas, size, (px(g[0]), px(g[1])), d, menu, its);
+        }
+    }
+    // BGRA premultiplied to RGBA as it is seen.
+    for c in canvas.chunks_exact_mut(4) {
+        let a = c[3] as u32;
+        let un = |v: u8| if a == 0 { 0 } else { ((v as u32 * 255 + a / 2) / a).min(255) as u8 };
+        let (b, g, r) = (un(c[0]), un(c[1]), un(c[2]));
+        c[0] = r;
+        c[1] = g;
+        c[2] = b;
+    }
+    let picture = image::RgbaImage::from_raw(size.0, size.1, canvas).unwrap_or_default();
+    let picture = match cut {
+        Some([x, y, w, h]) => {
+            let (x0, y0) = (px(x).clamp(0, size.0 as i32) as u32, px(y).clamp(0, size.1 as i32) as u32);
+            let (w, h) = ((px(w) as u32).min(size.0 - x0).max(1), (px(h) as u32).min(size.1 - y0).max(1));
+            image::imageops::crop_imm(&picture, x0, y0, w, h).to_image()
+        }
+        None => picture,
+    };
+    (picture, d)
+}
+
+/// Where the agent's pictures are kept (yours only): the last few, each
+/// connection's numbered, the older ones let go.
+fn keep_picture(picture: &image::RgbaImage, peer: u32) -> Result<String, String> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = format!("{}/pleamar-agent", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    let path = format!("{dir}/look-{peer}-{}.png", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).map_err(|e| e.to_string())?;
+    picture.write_to(&mut file, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    let mut kept: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(&dir)
+        .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("look-")).filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect())
+        .unwrap_or_default();
+    kept.sort();
+    for (_, old) in kept.iter().rev().skip(16) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
