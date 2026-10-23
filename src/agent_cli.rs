@@ -58,6 +58,33 @@ A window made with pleamar (`windows` says «pleamar scene NAME») is asked and 
   say PID ORDER…                  any other order to the scene: type query words, drag knob 0 -40,
                                   hold card, wheel list -3, key escape
 
+Any other window is read from what its program publishes for screen readers (GTK, Qt, Firefox, Chromium…),
+its elements numbered (@ID) and boxed in the picture's coordinates:
+  tree PID [all] [json]           what is shown: role, @ID, name, text, box, states (focused, checked,
+                                  disabled…), each under what it is in; `all`: what is not shown too
+  tree PID --since [V] [--boxes] [json]
+                                  only what changed since read V (by default the last you got of it):
+                                  + came, - went, ~ other role, name, text or states (--boxes: box);
+                                  `full` and the whole tree if the window shows another page or dialog
+  read PID focus                  the element with the focus, and what it is in
+  read PID at X Y                 the element at that point of the picture
+  read PID find TEXT              the elements whose name or text has TEXT in it
+  press PID @ID [right|middle] [COUNT]
+                                  your cursor goes to it and clicks it, as `click` (scrolled into view
+                                  first if it is not); at pace instant, its own action instead
+  press PID @ID --action N        its action N (0, its default) without clicking: what cannot be clicked
+  press PID \"TEXT\"                the same, on the first element named TEXT
+  focus PID @ID                   the focus in its window to it (a field, to type in)
+  type PID @ID TEXT|- [--set]     focus it and type; --set: its whole text set at once (long text;
+                                  a program that checks each key typed may not see it)
+  look PID --marks [all] [FILE]   a picture with what can be acted on outlined and its @ID on it
+                                  (all: texts and headings too), and their records as `tree` gives them
+  look PID @ID [--pad N] [FILE]   a picture of that element only (scrolled into view first), N units
+                                  around it; prints where its corner is in the window's picture
+  look PID \"TEXT\" [--pad N] [FILE]
+                                  the same, of the first element that says TEXT (in a longer text,
+                                  only those words); a FILE has a / or ends in .png
+
 A terminal (`pleamar-wm term list`: its shell has pleamar-wm's layer) is read as text, history and all:
   read PID [N] [--since M]        its last N lines (200); the first says `mark M`, the newest line's
                                   number: --since M gives what came after it (or `screen` and the
@@ -240,8 +267,7 @@ impl Hands {
         // Who it is, for the cursor's label: `PLEAMAR_AGENT_NAME` (Marea
         // says hers), «agent» otherwise. An older session does not know
         // it: nothing is lost.
-        let name = std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "agent".to_owned());
-        let _ = hands.say(&format!("n {}", hex(&name)));
+        let _ = hands.say(&format!("n {}", hex(&agent_name())));
         // How fast it goes is the session's (`T`); an older one: as ever.
         if let Some(p) = hands.say("T").unwrap_or_default().strip_prefix("pace ").and_then(Pace::parse) {
             hands.pace = p;
@@ -479,6 +505,402 @@ fn unhex(s: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// A record of `A`'s (`ID DEPTH ROLE X Y W H STATES NAME TEXT`), read.
+struct Rec<'a> {
+    id: &'a str,
+    depth: usize,
+    role: &'a str,
+    rect: [&'a str; 4],
+    states: &'a str,
+    name: String,
+    text: String,
+}
+
+impl<'a> Rec<'a> {
+    fn parse(r: &'a str) -> Option<Self> {
+        let f: Vec<&str> = r.split_whitespace().collect();
+        let [id, depth, role, x, y, w, h, states, name, text] = f[..] else { return None };
+        Some(Rec { id, depth: depth.parse().unwrap_or(0), role, rect: [x, y, w, h], states, name: unhex(name), text: unhex(text) })
+    }
+
+    /// `role @ID "name" text X,Y WxH states`.
+    fn line(&self) -> String {
+        let quote = |s: &str| format!("{:?}", s.chars().take(160).collect::<String>());
+        let b = self.rect;
+        let mut line = format!("{} @{}", self.role, self.id);
+        if !self.name.is_empty() {
+            line.push_str(&format!(" {}", quote(&self.name)));
+        }
+        if !self.text.is_empty() {
+            line.push_str(&format!(" text {}", quote(&self.text)));
+        }
+        if b[0] != "-" {
+            line.push_str(&format!(" {},{} {}x{}", b[0], b[1], b[2], b[3]));
+        }
+        if self.states != "-" {
+            line.push_str(&format!(" {}", self.states));
+        }
+        line
+    }
+
+    fn json(&self) -> serde_json::Value {
+        let n = |v: &str| v.parse::<i64>().ok();
+        let b = self.rect;
+        serde_json::json!({ "id": self.id.parse::<u32>().unwrap_or(0), "depth": self.depth, "role": self.role, "x": n(b[0]), "y": n(b[1]), "w": n(b[2]), "h": n(b[3]), "states": if self.states == "-" { Vec::new() } else { self.states.split(',').collect() }, "name": self.name, "text": self.text })
+    }
+}
+
+/// An `err` of `A`'s, as a person reads it.
+fn tree_err(head: &str) -> String {
+    match head {
+        "err no-tree" => "that window's program publishes nothing for screen readers (or was started before the session's accessibility bus): look at it instead".to_owned(),
+        "err no-bus" => "this session has no accessibility bus (an older pleamar-wm, or `agent off`)".to_owned(),
+        "err no-frame" => "its program publishes a tree, but none of its frames is this window".to_owned(),
+        "err private" => "that window is private (a rule says so), or the screen is locked: it is not read".to_owned(),
+        _ => head.to_owned(),
+    }
+}
+
+/// `A`'s answer (`nodes V | records…`), as a person reads it: `tree V`, then
+/// each element indented by its depth, `role @ID "name" text X,Y WxH states`;
+/// or as JSON.
+fn print_nodes(reply: &str, json: bool) -> Result<(), String> {
+    let mut parts = reply.split(" | ");
+    let head = parts.next().unwrap_or_default();
+    let version = head.strip_prefix("nodes ").ok_or_else(|| tree_err(head))?;
+    let mut nodes = Vec::new();
+    let mut more = None;
+    for r in parts {
+        if let Some(n) = r.strip_prefix("... more ") {
+            more = Some(n.to_owned());
+            continue;
+        }
+        nodes.extend(Rec::parse(r));
+    }
+    if json {
+        let all: Vec<serde_json::Value> = nodes.iter().map(Rec::json).collect();
+        println!("{}", serde_json::json!({ "version": version, "nodes": all, "more": more }));
+        return Ok(());
+    }
+    println!("tree {version}");
+    if nodes.is_empty() {
+        println!("(nothing: no element has the focus, or none says that)");
+    }
+    for n in &nodes {
+        println!("{}{}", "  ".repeat(n.depth), n.line());
+    }
+    if let Some(n) = more {
+        println!("... {n} more not given: `read PID find TEXT` for what you look for");
+    }
+    Ok(())
+}
+
+// -- elements: acted on by the number a tree gave them ------------------
+
+/// An element as `press`, `focus` and `type` name it: `@24`.
+fn element(arg: Option<&String>) -> Option<u32> {
+    arg?.strip_prefix('@')?.parse().ok()
+}
+
+/// The first element given by `find` whose name (else whose text) is that,
+/// case folded.
+fn named(reply: &str, text: &str) -> Option<u32> {
+    let records: Vec<Vec<&str>> = reply.split(" | ").skip(1).map(|r| r.split_whitespace().collect::<Vec<_>>()).filter(|f| f.len() == 10).collect();
+    let is = |hex: &str| unhex(hex).to_lowercase() == text.to_lowercase();
+    records.iter().find(|f| is(f[8])).or_else(|| records.iter().find(|f| is(f[9]))).and_then(|f| f[0].parse().ok())
+}
+
+/// What `e` or `S` answered about that element: `ok`, a `box`, or what it
+/// does not do (`err no-action`...); what ends the act, an error.
+fn meant(reply: String, pid: &str, id: u32) -> Result<String, String> {
+    match reply.as_str() {
+        "err gone" => Err(format!("@{id} is no longer there (or {pid}'s tree never gave it): read the tree again")),
+        "err stopped-by-user" => Err(STOPPED.to_owned()),
+        "err private" => Err(format!("{pid} is private (a rule says so), or the screen is locked: it is not acted on")),
+        "ok" | "err no-action" | "err no-focus" | "err no-scroll" | "err not-editable" => Ok(reply),
+        r if r.starts_with("box ") => Ok(reply),
+        r => Err(format!("@{id}: {r}")),
+    }
+}
+
+impl Hands {
+    /// `e` on that element of a window.
+    fn on(&mut self, pid: &str, id: u32, what: &str) -> Result<String, String> {
+        meant(self.say(&format!("e root:{pid} {id} {what}"))?, pid, id)
+    }
+
+    /// Where that element is clicked: its center, if it is on screen;
+    /// `scroll`: scrolled into view first when it is not. None without a box.
+    fn spot(&mut self, pid: &str, id: u32, scroll: bool) -> Result<Option<(f64, f64)>, String> {
+        let window = self.say(&format!("r {pid}"))?;
+        let size: Vec<f64> = window.strip_prefix("rect ").map(|v| v.split_whitespace().filter_map(|n| n.parse().ok()).collect()).unwrap_or_default();
+        for again in [false, true] {
+            let b = self.on(pid, id, "box")?;
+            let f: Vec<&str> = b.split_whitespace().collect();
+            let [_, x, y, w, h, shown] = f[..] else { return Err(format!("@{id}: {b}")) };
+            let [Ok(x), Ok(y), Ok(w), Ok(h)] = [x, y, w, h].map(str::parse::<f64>) else { return Ok(None) };
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            // Shown, and inside the window: a page scrolled away keeps its
+            // elements showing, their boxes off its edges.
+            let seen = shown == "shown" && size.len() >= 4 && cx >= 0.0 && cy >= 0.0 && cx < size[2] && cy < size[3];
+            if seen {
+                return Ok(Some((cx, cy)));
+            }
+            if !scroll || again {
+                break;
+            }
+            let _ = self.on(pid, id, "scroll")?;
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        if scroll {
+            return Err(format!("@{id} is not on screen, and it did not scroll into view: `press {pid} @{id} --action 0` acts on it without the pointer"));
+        }
+        Ok(None)
+    }
+
+    /// The pointer on that element, clicked as `click` does.
+    fn click_element(&mut self, pid: &str, id: u32, button: u32, count: u32) -> Result<(), String> {
+        let (x, y) = self.spot(pid, id, true)?.ok_or_else(|| format!("@{id} has no box to click: `press {pid} @{id} --action 0` acts on it without the pointer"))?;
+        self.arrive(pid, x, y)?;
+        for _ in 0..count {
+            self.act(&format!("b root:{pid} 0 {button} 1"))?;
+            self.act(&format!("b root:{pid} 0 {button} 0"))?;
+        }
+        Ok(())
+    }
+
+    /// `press PID @ID [right|middle] [COUNT] [--action N]`, or by its name.
+    /// Through the pointer; at `instant` by its default action, where it has
+    /// one; with `--action N` by that action, the cursor shown on it.
+    fn press_element(&mut self, pid: &str, rest: &[String]) -> Result<(), String> {
+        let id = match element(rest.first()) {
+            Some(id) => id,
+            None => {
+                let text = rest.first().ok_or("press what: @ID, or its name")?;
+                let reply = self.say(&format!("A root:{pid} find {}", hex(text)))?;
+                if !reply.starts_with("nodes ") {
+                    print_nodes(&reply, false)?;
+                }
+                named(&reply, text).ok_or_else(|| format!("no element of {pid} is named {text:?}: `read {pid} find {text}` says what has it"))?
+            }
+        };
+        let action = rest.iter().position(|a| a == "--action");
+        if let Some(k) = action {
+            let n = rest.get(k + 1).and_then(|n| n.parse::<u32>().ok()).ok_or("--action N: the action's number, 0 its default")?;
+            if let Some((x, y)) = self.spot(pid, id, false)? {
+                self.arrive(pid, x, y)?;
+            }
+            return match self.on(pid, id, &format!("action {n}"))?.as_str() {
+                "ok" => Ok(()),
+                _ => Err(format!("@{id} has no action {n}")),
+            };
+        }
+        let (b, count) = (button(rest.get(1))?, rest.get(2).and_then(|c| c.parse::<u32>().ok()).unwrap_or(1).clamp(1, 3));
+        // At `instant`, a plain click is its default action, the cursor
+        // jumping to it where it is seen.
+        if self.pace == Pace::Instant && b == 272 && count == 1 {
+            if let Some((x, y)) = self.spot(pid, id, false)? {
+                self.arrive(pid, x, y)?;
+            }
+            if self.on(pid, id, "press")? == "ok" {
+                return Ok(());
+            }
+        }
+        self.click_element(pid, id, b, count)
+    }
+
+    /// `focus PID @ID`: the keyboard's focus in its window to it, the cursor
+    /// going there where it is seen; by the pointer if it cannot be given.
+    fn focus_element(&mut self, pid: &str, id: u32) -> Result<(), String> {
+        if let Some((x, y)) = self.spot(pid, id, false)? {
+            self.arrive(pid, x, y)?;
+        }
+        if self.on(pid, id, "focus")? == "ok" {
+            return Ok(());
+        }
+        self.click_element(pid, id, 272, 1)
+    }
+
+    /// `type PID @ID TEXT --set`: its whole text, at once.
+    fn set_text(&mut self, pid: &str, id: u32, text: &str) -> Result<(), String> {
+        if text.len() > 30_000 {
+            return Err("--set takes up to 30000 bytes: type the rest after it".into());
+        }
+        if let Some((x, y)) = self.spot(pid, id, false)? {
+            self.arrive(pid, x, y)?;
+        }
+        match meant(self.say(&format!("S root:{pid} {id} {}", if text.is_empty() { "-".to_owned() } else { hex(text) }))?, pid, id)?.as_str() {
+            "ok" => Ok(()),
+            _ => Err(format!("@{id} takes no text: focus it and type")),
+        }
+    }
+}
+
+/// `A`'s answer to `tree since` (`changes V | + RECORD | - ID | ~ RECORD`),
+/// as a person reads it: `changes V`, then `+ role @ID ...`, `- @ID`, `~ role
+/// @ID ...`; or `full` and the whole tree. JSON: `version`, `full` and either
+/// `changes` (each a node with `change`: `+`, `~`, or `-` and its id alone)
+/// or `nodes`.
+fn print_changes(reply: &str, json: bool) -> Result<(), String> {
+    if let Some(tree) = reply.strip_prefix("full | ") {
+        if !json {
+            println!("full: that read is not kept (or there was none), or the window shows another page or dialog");
+            return print_nodes(tree, false);
+        }
+        let mut parts = tree.split(" | ");
+        let version = parts.next().and_then(|h| h.strip_prefix("nodes ")).unwrap_or_default();
+        let (more, nodes): (Vec<&str>, Vec<&str>) = parts.partition(|r| r.starts_with("... more "));
+        let all: Vec<serde_json::Value> = nodes.into_iter().filter_map(Rec::parse).map(|r| r.json()).collect();
+        println!("{}", serde_json::json!({ "version": version, "full": true, "nodes": all, "more": more.first().and_then(|m| m.strip_prefix("... more ")) }));
+        return Ok(());
+    }
+    let mut parts = reply.split(" | ");
+    let head = parts.next().unwrap_or_default();
+    let version = head.strip_prefix("changes ").ok_or_else(|| tree_err(head))?;
+    let (mut lines, mut all, mut more) = (Vec::new(), Vec::new(), None);
+    for r in parts {
+        if let Some(n) = r.strip_prefix("... more ") {
+            more = Some(n.to_owned());
+        } else if let Some(id) = r.strip_prefix("- ") {
+            lines.push(format!("- @{id}"));
+            all.push(serde_json::json!({ "change": "-", "id": id.parse::<u32>().unwrap_or(0) }));
+        } else if let Some((c, rec)) = r.split_once(' ').and_then(|(c, rec)| Some((c, Rec::parse(rec)?))) {
+            lines.push(format!("{c} {}", rec.line()));
+            let mut j = rec.json();
+            j["change"] = c.into();
+            all.push(j);
+        }
+    }
+    if json {
+        println!("{}", serde_json::json!({ "version": version, "full": false, "changes": all, "more": more }));
+        return Ok(());
+    }
+    println!("changes {version}");
+    for l in &lines {
+        println!("{l}");
+    }
+    if let Some(n) = more {
+        println!("... {n} more not compared: `read PID find TEXT` for what you look for");
+    }
+    Ok(())
+}
+
+/// Who the agent is: `PLEAMAR_AGENT_NAME`, `agent` otherwise.
+fn agent_name() -> String {
+    std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "agent".to_owned())
+}
+
+/// Where this agent keeps the last version it got of each window's tree:
+/// `$XDG_RUNTIME_DIR/pleamar-agent/NAME` (its name hex), a line `PID V` each.
+fn versions_file() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var("XDG_RUNTIME_DIR").ok()?).join("pleamar-agent").join(hex(&agent_name())))
+}
+
+fn last_version(pid: &str) -> Option<u64> {
+    std::fs::read_to_string(versions_file()?).ok()?.lines().find_map(|l| l.strip_prefix(pid)?.strip_prefix(' ')?.parse().ok())
+}
+
+/// The version an answer of `A`'s gave, kept for that window: the owner's alone.
+fn keep_version(pid: &str, reply: &str) {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let head = reply.strip_prefix("full | ").unwrap_or(reply).split(" | ").next().unwrap_or_default();
+    let Some(v) = head.strip_prefix("nodes ").or_else(|| head.strip_prefix("changes ")) else { return };
+    let Some(path) = versions_file() else { return };
+    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(path.parent().unwrap());
+    let mut kept: Vec<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| l.split(' ').next() != Some(pid)).map(str::to_owned).collect();
+    kept.push(format!("{pid} {v}"));
+    // Written aside and moved over it: a reader never sees half of it.
+    let aside = path.with_extension(std::process::id().to_string());
+    let written = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&aside).and_then(|mut f| f.write_all((kept.join("\n") + "\n").as_bytes()));
+    if written.and_then(|_| std::fs::rename(&aside, &path)).is_err() {
+        let _ = std::fs::remove_file(&aside);
+    }
+}
+
+/// `look PID @ID|"TEXT" [--pad N] [FILE]` and `look PID --marks [all]
+/// [FILE]`: one element of the window (the first that says TEXT, cut to the
+/// words when they are in a longer text), or the window with its elements
+/// marked and their records. false: another look. A text is told from a
+/// file by the file's `/` or its `.png`.
+fn look_at(p: &str, rest: &[&str], hidpi: bool, default_out: impl Fn() -> String) -> Result<bool, String> {
+    let mut rest = rest.to_vec();
+    let pad = match rest.iter().position(|a| *a == "--pad") {
+        Some(k) => {
+            let n = rest.get(k + 1).and_then(|n| n.parse::<u32>().ok()).ok_or("--pad N: a number of units")?;
+            rest.drain(k..k + 2);
+            n
+        }
+        None => 0,
+    };
+    let file = |a: &str| a.contains('/') || [".png", ".jpg", ".jpeg"].iter().any(|e| a.to_lowercase().ends_with(e));
+    let target = format!("root:{p}");
+    let hi = if hidpi { " hidpi" } else { "" };
+    let (reply, out) = match rest.as_slice() {
+        ["--marks", more @ ..] => {
+            let all = more.first() == Some(&"all");
+            (Hands::open()?.say(&format!("c {target}{hi} marks{}", if all { " all" } else { "" }))?, more.get(usize::from(all)).map(|f| f.to_string()))
+        }
+        [at, more @ ..] if at.strip_prefix('@').is_some_and(|id| id.parse::<u32>().is_ok()) => (Hands::open()?.say(&format!("c {target}{hi} {at} {pad}"))?, more.first().map(|f| f.to_string())),
+        [text, more @ ..] if !file(text) && text.parse::<f64>().is_err() => {
+            let mut h = Hands::open()?;
+            let found = h.say(&format!("A {target} find {}", hex(text)))?;
+            let head = found.split(" | ").next().unwrap_or_default();
+            if !head.starts_with("nodes ") {
+                // As `read` says it.
+                print_nodes(&found, false)?;
+            }
+            let id = first_match(&found, text).ok_or_else(|| format!("nothing in that window says \"{text}\" (a file to save to has a / or ends in .png)"))?;
+            (h.say(&format!("c {target}{hi} @{id} {pad} {}", hex(text)))?, more.first().map(|f| f.to_string()))
+        }
+        _ => return Ok(false),
+    };
+    let mut parts = reply.splitn(2, " | ");
+    let head = parts.next().unwrap_or_default();
+    let f: Vec<&str> = head.strip_prefix("picture ").ok_or_else(|| match head {
+        "err gone" => "that element is gone (the window changed since it was read): read its tree again".to_owned(),
+        "err no-box" => "that element is not in the window, and its program did not scroll it into view".to_owned(),
+        "err private" => "that window is private (a rule says so), or the screen is locked: it is not looked at".to_owned(),
+        "err no-picture" | "err timeout" => "that window has not drawn anything to look at yet".to_owned(),
+        "err no-tree" => "that window's program publishes nothing for screen readers: look at it instead".to_owned(),
+        _ => head.to_owned(),
+    })?.split_whitespace().collect();
+    let [path, _, _, _, ref after @ ..] = f[..] else { return Err(reply) };
+    let (scale, after) = if hidpi { (after.first().map_or(String::new(), |s| format!(" scale {s}")), after.get(1..).unwrap_or_default()) } else { (String::new(), after) };
+    let out = out.unwrap_or_else(default_out);
+    std::fs::copy(path, &out).map_err(|e| format!("{out}: {e}"))?;
+    let (w, hh) = image::image_dimensions(&out).map_err(|e| e.to_string())?;
+    match after {
+        // An element: where its picture's corner is in the window's.
+        [x, y] => println!("{out} {w}x{hh}{scale} at {x},{y}"),
+        [version] => {
+            println!("{out} {w}x{hh}{scale}");
+            print_nodes(&format!("nodes {version}{}", parts.next().map_or(String::new(), |r| format!(" | {r}"))), false)?;
+        }
+        _ => return Err(reply),
+    }
+    Ok(true)
+}
+
+/// Of a search's records (`nodes V | ...`), the first element that says
+/// `text`: the deepest of those that do, one inside the other, from there.
+fn first_match(found: &str, text: &str) -> Option<u32> {
+    let needle = text.to_lowercase();
+    let records: Vec<(u32, usize, bool)> = found
+        .split(" | ")
+        .skip(1)
+        .filter_map(|r| {
+            let f: Vec<&str> = r.split_whitespace().collect();
+            let [id, depth, _, _, _, _, _, _, name, says] = f[..] else { return None };
+            Some((id.parse().ok()?, depth.parse().ok()?, unhex(name).to_lowercase().contains(&needle) || unhex(says).to_lowercase().contains(&needle)))
+        })
+        .collect();
+    let mut at = records.iter().position(|r| r.2)?;
+    while records.get(at + 1).is_some_and(|n| n.1 > records[at].1 && n.2) {
+        at += 1;
+    }
+    Some(records[at].0)
+}
+
 fn button(name: Option<&String>) -> Result<u32, String> {
     match name.map(String::as_str).unwrap_or("left") {
         "left" => Ok(272),
@@ -521,7 +943,9 @@ fn go(args: &[String]) -> Result<(), String> {
     // A terminal with pleamar-wm's layer is read, followed and typed into
     // through it; a pleamar window keeps its scene's `tree` and `wait`.
     let terminal = match what.as_str() {
-        "read" | "run" | "type" | "key" => true,
+        "read" => !matches!(args.get(2).map(String::as_str), Some("focus" | "at" | "find")),
+        "run" | "key" => true,
+        "type" => element(args.get(2)).is_none(),
         "hotkey" => args.get(2).is_some_and(|k| k == "shift+tab" || k.strip_prefix("ctrl+").is_some_and(|c| c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic())),
         "tree" | "wait" => pid().is_ok_and(|p| scene_of(&p).is_err()),
         _ => false,
@@ -642,6 +1066,9 @@ fn go(args: &[String]) -> Result<(), String> {
                 println!("{out} {w}x{h}");
                 return Ok(());
             };
+            if look_at(&p, &rest, hidpi, default_out)? {
+                return Ok(());
+            }
             // The window manager's picture of it: what it drew, covered or
             // on another workspace, with its menus and nothing over it.
             let (cut, out) = match rest.as_slice() {
@@ -714,8 +1141,17 @@ fn go(args: &[String]) -> Result<(), String> {
         }
         "type" => {
             let p = pid()?;
-            let text = typed(&args[2..])?;
+            let id = element(args.get(2));
+            let words: Vec<String> = args[2 + usize::from(id.is_some())..].iter().filter(|a| id.is_none() || *a != "--set").cloned().collect();
+            let text = typed(&words)?;
             let mut h = Hands::open()?;
+            // Into that element: its focus first; with --set, its whole text at once.
+            if let Some(id) = id {
+                if args[3..].iter().any(|a| a == "--set") {
+                    return h.set_text(&p, id, &text);
+                }
+                h.focus_element(&p, id)?;
+            }
             // In pieces (one line of the protocol has its limits), whole
             // characters each: any text, accents and all.
             let chars: Vec<char> = text.chars().collect();
@@ -741,18 +1177,53 @@ fn go(args: &[String]) -> Result<(), String> {
         }
         "tree" => {
             let p = pid()?;
-            let (_, sock) = scene_of(&p)?;
-            let json = args.get(2).is_some_and(|a| a == "json");
-            print!("{}", ask(&sock, if json { "describe json" } else { "describe" })?);
+            let json = args.iter().skip(2).any(|a| a == "json");
+            match scene_of(&p) {
+                Ok((_, sock)) => print!("{}", ask(&sock, if json { "describe json" } else { "describe" })?),
+                // Any other window: what its program published for screen readers.
+                Err(_) if args.iter().any(|a| a == "--since") => {
+                    // The read asked against: the one given, else the last this agent got (none: `0`, never kept, the whole tree).
+                    let at = args.iter().position(|a| a == "--since").unwrap();
+                    let v = match args.get(at + 1).filter(|a| !a.starts_with("--") && *a != "json") {
+                        Some(v) => v.parse::<u64>().map_err(|_| format!("--since V: a version, as `tree` gives it, not {v}"))?,
+                        None => last_version(&p).unwrap_or(0),
+                    };
+                    let boxes = if args.iter().any(|a| a == "--boxes") { " boxes" } else { "" };
+                    let reply = Hands::open()?.say(&format!("A {} tree since {v}{boxes}", target(&p)))?;
+                    keep_version(&p, &reply);
+                    print_changes(&reply, json)?;
+                }
+                Err(_) => {
+                    let all = args.iter().skip(2).any(|a| a == "all");
+                    let reply = Hands::open()?.say(&format!("A {} tree{}", target(&p), if all { " all" } else { "" }))?;
+                    if !all {
+                        keep_version(&p, &reply);
+                    }
+                    print_nodes(&reply, json)?;
+                }
+            }
+        }
+        "read" => {
+            let p = pid()?;
+            let line = match args.get(2).map(String::as_str) {
+                Some("focus") => "focus".to_owned(),
+                Some("at") => format!("at {} {}", number(args.get(3), "x")? as i32, number(args.get(4), "y")? as i32),
+                Some("find") => format!("find {}", hex(&args.get(3..).map(|w| w.join(" ")).filter(|w| !w.is_empty()).ok_or("find what")?)),
+                _ => return Err("read PID focus | at X Y | find TEXT (a terminal: read PID [N])".into()),
+            };
+            let reply = Hands::open()?.say(&format!("A {} {line}", target(&p)))?;
+            print_nodes(&reply, args.iter().skip(2).any(|a| a == "json"))?;
         }
         "press" => {
             let p = pid()?;
-            let name = args.get(2).ok_or("press what: its name, as `tree` gives it")?;
-            let (_, sock) = scene_of(&p)?;
-            // The scene presses it by name, and before that takes the agent's
-            // cursor there itself: it is never behind the press.
-            let _ = name;
-            print!("{}", ask(&sock, &format!("press {}", args[2..].join(" ")))?);
+            args.get(2).ok_or("press what: @ID, or its name, as `tree` gives it")?;
+            match scene_of(&p) {
+                // The scene presses it by name, and before that takes the agent's
+                // cursor there itself: it is never behind the press.
+                Ok((_, sock)) if element(args.get(2)).is_none() => print!("{}", ask(&sock, &format!("press {}", args[2..].join(" ")))?),
+                // Any other window: the element its tree numbered, or named.
+                _ => Hands::open()?.press_element(&p, &args[2..])?,
+            }
         }
         "wait" | "watch" | "say" => {
             let p = pid()?;
@@ -775,7 +1246,10 @@ fn go(args: &[String]) -> Result<(), String> {
         },
         "focus" => {
             let p = pid()?;
-            Hands::open()?.act(&format!("f {p}"))?;
+            match element(args.get(2)) {
+                Some(id) => Hands::open()?.focus_element(&p, id)?,
+                None => Hands::open()?.act(&format!("f {p}"))?,
+            }
         }
         "raw" => {
             let mut h = Hands::open()?;
@@ -793,6 +1267,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_search_is_looked_at_in_the_deepest_that_says_it() {
+        let found = format!("nodes 3 | 1 0 frame 0 0 800 600 - {} - | 31 1 label 105 280 144 19 - {} - | 32 2 check_box 109 282 14 14 focusable {} - | 40 1 paragraph 10 10 80 20 - - {}", hex("Remember me - Firefox"), hex("Remember me"), hex("Remember me"), hex("remember me later"));
+        assert_eq!(first_match(&found, "remember ME"), Some(32));
+        assert_eq!(first_match(&found, "later"), Some(40));
+        assert_eq!(first_match(&found, "nowhere"), None);
+    }
+
+    #[test]
     fn each_pace_moves_as_its_table_says() {
         // As a hand: from 260 to 620 ms, 8 to 24 steps, and a moment still.
         assert_eq!(glide(Pace::Default, 10.0), Some((260.0, 8, 70)));
@@ -807,5 +1289,18 @@ mod tests {
         assert_eq!(glide(Pace::Instant, 500.0), None);
         assert_eq!(strokes(Pace::Default), (24, 60));
         assert_eq!(strokes(Pace::Fast), (8, 20));
+    }
+
+    #[test]
+    fn an_element_is_its_number_or_its_name() {
+        assert_eq!(element(Some(&"@24".to_owned())), Some(24));
+        // A text that starts with @ is still text to type.
+        assert_eq!(element(Some(&"@john".to_owned())), None);
+        assert_eq!(element(Some(&"24".to_owned())), None);
+        // Its name, case folded, before its text; what it is in is not it.
+        let reply = format!("nodes 3 | 1 0 frame 0 0 800 600 - {} - | 5 1 push_button 10 10 80 30 focusable {} - | 6 1 label 10 50 80 20 - - {}", hex("Save as"), hex("Save"), hex("save"));
+        assert_eq!(named(&reply, "save"), Some(5));
+        assert_eq!(named(&reply, "Save as"), Some(1));
+        assert_eq!(named(&reply, "Open"), None);
     }
 }

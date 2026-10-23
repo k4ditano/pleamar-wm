@@ -26,7 +26,13 @@
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
 //! | `r PID` | `rect X Y W H VISIBLE`: the root surface's box on the desktop, as the scene shows it, and whether it is seen (1) — what a screenshot of the window is cut from, and what `m`'s coordinates count in |
 //! | `c TARGET [hidpi] [X Y W H]` | `picture PATH W H AGE [SCALE]`: a PNG of the window as it drew itself, with its menus, in `m`'s coordinates (or at its own density, a pixel over SCALE), cut to that box; AGE the ms since it last drew; `err private` for a private window or a locked screen |
+//! | `c TARGET [hidpi] @ID [PAD] [HEX]` | `picture PATH W H AGE [SCALE] X Y`: the same, cut to an element `A` gave (scrolled into view first if it is not in the window), or to the run of its text that says HEX, grown by PAD; X Y its corner in `m`'s coordinates; `err gone`, `err no-box` |
+//! | `c TARGET [hidpi] marks [all]` | `picture PATH W H AGE [SCALE] V` and, `|` between them, the records of the elements marked on it: outlined, their ids on labels; what is acted on (`all`: and texts and headings), from a read `V` of its tree taken with the picture |
 //! | `i PID [w]` | the agent reads (`w`: types into) that window's terminal through its layer: `ok`, and its outline lit; `err private` for a private window or a locked session, `err stopped-by-user` for `w` while stopped |
+//! | `A TARGET tree [all]` · `A TARGET focus` · `A TARGET at X Y` · `A TARGET find HEX` | `nodes V` and, `|` between them, records `ID DEPTH ROLE X Y W H STATES NAME TEXT` (name and text hex) of what the window's program published on the accessibility bus: what is shown (`all`: and what is not), the focused element, the one at that point, or those that say that, each with those it is in; `err no-tree`, `err private` |
+//! | `e TARGET ID box|press|focus|scroll`, `e TARGET ID action N` | that element of the window, as `A` numbered it: `box X Y W H shown|hidden` (`- - - -` without one), read now; its default action, the keyboard's focus in its window, scrolled into view, its action N: `ok`, or `err no-action`, `err no-focus`, `err no-scroll`; `err gone` once it is no longer there. Refused while stopped |
+//! | `S TARGET ID HEX` | that element's whole text set to that (`EditableText.SetTextContents`): `ok`, `err not-editable`, `err gone`. Refused while stopped |
+//! | `A TARGET tree since V [boxes]` | `changes V2` and, `|` between them, `+ RECORD` (given now, not in read V), `- ID` (in V, not now), `~ RECORD` (its role, name, text or states changed; `boxes`: its box too); `full | nodes V2 | ...`, the whole tree, when V is no longer kept or the frame is another |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
 //! | `m TARGET IDX X Y` | cursor IDX to X, Y of the window (its root surface's coordinates) |
 //! | `b TARGET IDX BUTTON PRESSED` | an evdev button (272 left), 1 down, 0 up |
@@ -153,6 +159,16 @@ enum Pending {
     Paste(std::sync::Arc<super::Kept>, Option<std::sync::Arc<super::Kept>>),
     /// Work done off the loop: its answer, or none by the deadline.
     Work(std::sync::mpsc::Receiver<String>, Instant),
+}
+
+/// What `c` makes of a window's picture.
+enum Look {
+    /// It, or that box of it.
+    Cut(Option<[i32; 4]>),
+    /// An element's box grown by a margin, or the run of its text that says that.
+    Element(u32, i32, Option<String>),
+    /// It with its elements marked (`all`: what is read too).
+    Marks(bool),
 }
 
 /// A connection to the socket: what it sent that is not answered yet, and
@@ -334,6 +350,7 @@ impl State {
             ["g", pid] => self.agent_geometry(pid),
             ["r", pid] => self.agent_rect(pid),
             ["c", target, rest @ ..] => self.agent_picture(target, rest),
+            ["A", target, rest @ ..] => self.agent_tree(target, rest),
             ["i", pid, rest @ ..] => self.agent_text(pid, rest == ["w"]),
             ["l"] => Ok(self.agent_list()),
             ["o"] => Ok(self.agent_monitors()),
@@ -462,7 +479,19 @@ impl State {
                 Ok("ok".to_owned())
             }
             // Looking stays possible; doing anything does not.
-            [verb, ..] if matches!(*verb, "f" | "m" | "b" | "a" | "t" | "k" | "h" | "d" | "v" | "L" | "M" | "B") && self.agent_stopped() => Err("stopped-by-user"),
+            [verb, ..] if matches!(*verb, "f" | "m" | "b" | "a" | "t" | "k" | "h" | "d" | "v" | "L" | "M" | "B" | "e" | "S") && self.agent_stopped() => Err("stopped-by-user"),
+            ["e", target, id, act @ ..] => match (id.parse(), crate::a11y_act::Act::parse(act)) {
+                (Ok(id), Some(act)) => self.agent_element(target, id, act),
+                _ => Err("bad-args"),
+            },
+            // A whole text, longer than `t`'s: `-` for none.
+            ["S", target, id, hex] if hex.len() % 2 == 0 || *hex == "-" => {
+                let bytes: Result<Vec<u8>, _> = (0..hex.len()).step_by(2).filter(|_| *hex != "-").map(|k| u8::from_str_radix(&hex[k..k + 2], 16)).collect();
+                match (id.parse(), bytes.ok().and_then(|b| String::from_utf8(b).ok())) {
+                    (Ok(id), Some(text)) => self.agent_element(target, id, crate::a11y_act::Act::Set(text)),
+                    _ => Err("bad-args"),
+                }
+            }
             // A program opened by the agent, on a monitor (-1: the one it
             // works on, or one you are not on): «opened PID MONITOR».
             ["L", monitor, command] => match monitor.parse::<i64>() {
@@ -694,58 +723,122 @@ impl State {
         (right, bottom)
     }
 
+    /// `A TARGET tree [all] | tree since V [boxes] | focus | at X Y | find HEX`:
+    /// what the window's program published of it on the accessibility bus
+    /// (`a11y_tree.rs`), read off the loop: `nodes V` and its records, or
+    /// `changes V` and what changed.
+    fn agent_tree(&mut self, target: &str, rest: &[&str]) -> Result<String, &'static str> {
+        use crate::a11y_tree::Ask;
+        let slot = self.agent_target(target)?;
+        if layers::private(slot) || layers::locked() {
+            return Err("private");
+        }
+        let ask = match rest {
+            ["tree"] => Ask::Tree(false),
+            ["tree", "all"] => Ask::Tree(true),
+            ["tree", "since", v, boxes @ ..] if boxes.is_empty() || boxes == ["boxes"] => Ask::Since(v.parse().map_err(|_| "bad-args")?, !boxes.is_empty()),
+            ["focus"] => Ask::Focus,
+            ["at", x, y] => match (x.parse(), y.parse()) {
+                (Ok(x), Ok(y)) => Ask::At(x, y),
+                _ => return Err("bad-args"),
+            },
+            ["find", hex] => Ask::Find(String::from_utf8_lossy(&unhex(hex).map_err(|_| "bad-args")?).into_owned()),
+            _ => return Err("bad-args"),
+        };
+        let pid = self.pid_of(slot);
+        let title = self.slots.get(slot).and_then(Option::as_ref).map(|w| w.title.clone()).unwrap_or_default();
+        self.agent_busy(slot);
+        let (answer, work) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = answer.send(crate::a11y_tree::read(slot, pid, &title, |p| in_family(p, pid) || in_family(pid, p), ask));
+        });
+        if let Some(a) = self.agent.as_mut() {
+            a.pending = Some(Pending::Work(work, Instant::now() + Duration::from_secs(3)));
+        }
+        Ok(String::new())
+    }
+
+    /// `e TARGET ID ...`, `S TARGET ID HEX`: that element of the window, as
+    /// `A` numbered it, acted on off the loop (`a11y_act.rs`).
+    fn agent_element(&mut self, target: &str, id: u32, act: crate::a11y_act::Act) -> Result<String, &'static str> {
+        let slot = self.agent_target(target)?;
+        if layers::private(slot) || layers::locked() {
+            return Err("private");
+        }
+        let pid = self.pid_of(slot);
+        self.agent_busy(slot);
+        let (answer, work) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = answer.send(crate::a11y_act::act(pid, slot, id, act).unwrap_or_else(|e| format!("err {e}")));
+        });
+        if let Some(a) = self.agent.as_mut() {
+            a.pending = Some(Pending::Work(work, Instant::now() + Duration::from_secs(3)));
+        }
+        Ok(String::new())
+    }
+
     /// `c TARGET [hidpi] [X Y W H]`: a picture of the window from what it
     /// drew, not from the screen: covered, on another workspace, with its
     /// menus and nothing else over it. In look coordinates (its root
     /// surface's units: a pixel is the point `m` takes), or at the window's
     /// own density with `hidpi` (a pixel over SCALE is that point). Put
     /// together off the loop; answered `picture PATH W H AGE [SCALE]`, AGE
-    /// the milliseconds since the window last drew.
+    /// the milliseconds since the window last drew. `@ID [PAD] [HEX]`: cut to
+    /// that element (or to the run of its text that says HEX), grown by PAD,
+    /// and its corner after: `... X Y`. `marks [all]`: its elements marked
+    /// on it, and their records after: `... V | records`.
     fn agent_picture(&mut self, target: &str, rest: &[&str]) -> Result<String, &'static str> {
         let slot = self.agent_target(target)?;
         if layers::private(slot) || layers::locked() {
             return Err("private");
         }
         let hidpi = rest.first() == Some(&"hidpi");
-        let cut = match &rest[usize::from(hidpi)..] {
-            [] => None,
+        let look = match &rest[usize::from(hidpi)..] {
+            [] => Look::Cut(None),
             [x, y, w, h] => match (x.parse::<i32>(), y.parse::<i32>(), w.parse::<i32>(), h.parse::<i32>()) {
-                (Ok(x), Ok(y), Ok(w), Ok(h)) if w > 0 && h > 0 => Some([x, y, w, h]),
+                (Ok(x), Ok(y), Ok(w), Ok(h)) if w > 0 && h > 0 => Look::Cut(Some([x, y, w, h])),
                 _ => return Err("bad-args"),
             },
+            ["marks"] => Look::Marks(false),
+            ["marks", "all"] => Look::Marks(true),
+            [at, more @ ..] if at.starts_with('@') && more.len() <= 2 => {
+                let id = at[1..].parse().map_err(|_| "bad-args")?;
+                let pad = more.first().map_or(Ok(0), |p| p.parse::<i32>()).map_err(|_| "bad-args")?.clamp(0, 400);
+                let run = more.get(1).map(|h| unhex(h).map(|b| String::from_utf8_lossy(&b).into_owned())).transpose()?;
+                Look::Element(id, pad, run)
+            }
             _ => return Err("bad-args"),
         };
         let Some(Some(w)) = self.slots.get(slot) else { return Err("unknown-pid") };
-        let (geometry, age, extent) = (w.geometry, w.drew.elapsed().as_millis(), self.agent_extent(slot));
-        let peer = self.agent.as_ref().map_or(0, |a| a.peer);
+        let (geometry, age, extent, title) = (w.geometry, w.drew.elapsed().as_millis(), self.agent_extent(slot), w.title.clone());
+        let (pid, peer) = (self.pid_of(slot), self.agent.as_ref().map_or(0, |a| a.peer));
         self.agent_busy(slot);
         static WHO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
         let who = WHO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (answer, work) = std::sync::mpsc::channel();
         let to_render = self.to_render.clone();
+        // A read of the tree as well may take its own 2.5 s.
+        let deadline = Duration::from_secs(if matches!(look, Look::Marks(_)) { 4 } else { 3 });
         std::thread::spawn(move || {
-            let (tx, rx) = std::sync::mpsc::channel::<pleamar::scene::WindowPicture>();
+            let (tx, pictures) = std::sync::mpsc::channel::<pleamar::scene::WindowPicture>();
             let _ = to_render.send(ToRender::WatchWindow(slot, who, Some(tx)));
-            let got = rx.recv_timeout(Duration::from_millis(2500));
-            let _ = to_render.send(ToRender::WatchWindow(slot, who, None));
-            let reply = match got {
-                Ok(p) => {
-                    let (picture, scale) = look_picture(slot, &p, geometry, extent, hidpi, cut);
-                    match keep_picture(&picture, peer) {
-                        Ok(path) => {
-                            let (w, h) = cut.map_or(extent, |c| (c[2], c[3]));
-                            let scale = if hidpi { format!(" {scale:.3}") } else { String::new() };
-                            format!("picture {path} {w} {h} {age}{scale}")
-                        }
-                        Err(e) => format!("err {e}"),
+            let shot = Shot { slot, who, to_render, pictures, geometry, extent, hidpi, peer, age };
+            let reply = match look {
+                Look::Cut(cut) => match shot.first() {
+                    Some(p) => {
+                        drop(shot);
+                        let (picture, scale) = look_picture(slot, &p, geometry, extent, hidpi, cut);
+                        kept(&picture, peer, cut.map_or(extent, |c| (c[2], c[3])), age, hidpi.then_some(scale), "")
                     }
-                }
-                Err(_) => "err no-picture".to_owned(),
+                    None => "err no-picture".to_owned(),
+                },
+                Look::Element(id, pad, run) => look_element(shot, pid, id, pad, run.as_deref()),
+                Look::Marks(all) => look_marks(shot, pid, title, all),
             };
             let _ = answer.send(reply);
         });
         if let Some(a) = self.agent.as_mut() {
-            a.pending = Some(Pending::Work(work, Instant::now() + Duration::from_secs(3)));
+            a.pending = Some(Pending::Work(work, Instant::now() + deadline));
         }
         Ok(String::new())
     }
@@ -1912,6 +2005,104 @@ fn keep_picture(picture: &image::RgbaImage, peer: u32) -> Result<String, String>
         let _ = std::fs::remove_file(old);
     }
     Ok(path)
+}
+
+/// A window being looked at for `c`: its pictures, each time it draws,
+/// while this lives.
+struct Shot {
+    slot: usize,
+    who: u64,
+    to_render: std::sync::mpsc::Sender<ToRender>,
+    pictures: std::sync::mpsc::Receiver<pleamar::scene::WindowPicture>,
+    geometry: [i32; 4],
+    extent: (i32, i32),
+    hidpi: bool,
+    peer: u32,
+    age: u128,
+}
+
+impl Shot {
+    /// What it shows now.
+    fn first(&self) -> Option<pleamar::scene::WindowPicture> {
+        self.pictures.recv_timeout(Duration::from_millis(2500)).ok()
+    }
+
+    /// What it shows once it has drawn again and stopped (a scroll that
+    /// glides), within that long: none if it did not draw.
+    fn redrawn(&self, within: Duration) -> Option<pleamar::scene::WindowPicture> {
+        let until = Instant::now() + within;
+        let mut last = self.pictures.recv_timeout(within).ok()?;
+        while let Some(left) = until.checked_duration_since(Instant::now()) {
+            match self.pictures.recv_timeout(left.min(Duration::from_millis(120))) {
+                Ok(p) => last = p,
+                Err(_) => break,
+            }
+        }
+        Some(last)
+    }
+}
+
+impl Drop for Shot {
+    fn drop(&mut self) {
+        let _ = self.to_render.send(ToRender::WatchWindow(self.slot, self.who, None));
+    }
+}
+
+/// A picture kept, and `c`'s answer: `picture PATH W H AGE [SCALE]`, and
+/// what follows.
+fn kept(picture: &image::RgbaImage, peer: u32, (w, h): (i32, i32), age: u128, scale: Option<f64>, after: &str) -> String {
+    match keep_picture(picture, peer) {
+        Ok(path) => format!("picture {path} {w} {h} {age}{}{after}", scale.map_or(String::new(), |s| format!(" {s:.3}"))),
+        Err(e) => format!("err {e}"),
+    }
+}
+
+/// `c TARGET @ID`: the element's box read, the element scrolled into view
+/// when it is not in the window (and its box read again once the window has
+/// drawn), and the picture cut to it there: nothing moves between the box
+/// and the picture. Its corner after, in look coordinates.
+fn look_element(shot: Shot, pid: u32, id: u32, pad: i32, run: Option<&str>) -> String {
+    let whole = [0, 0, shot.extent.0, shot.extent.1];
+    let Some(mut picture) = shot.first() else { return "err no-picture".to_owned() };
+    let mut age = shot.age;
+    let read = || crate::marks::element_box(pid, shot.slot, id, run);
+    let (mut b, showing) = match read() {
+        Ok(b) => b,
+        Err(e) => return format!("err {e}"),
+    };
+    if (!showing || !crate::marks::inside(b, whole)) && crate::marks::scroll_to(pid, shot.slot, id) {
+        if let Some(p) = shot.redrawn(Duration::from_millis(1200)) {
+            (picture, age) = (p, 0);
+        }
+        b = match read() {
+            Ok((b, _)) => b,
+            Err(e) => return format!("err {e}"),
+        };
+    }
+    let Some(cut) = crate::marks::meet(crate::marks::grow(b, pad), whole) else { return "err no-box".to_owned() };
+    let (image, scale) = look_picture(shot.slot, &picture, shot.geometry, shot.extent, shot.hidpi, Some(cut));
+    kept(&image, shot.peer, (cut[2], cut[3]), age, shot.hidpi.then_some(scale), &format!(" {} {}", cut[0], cut[1]))
+}
+
+/// `c TARGET marks [all]`: the window's tree read while its picture is
+/// taken, and the elements marked on the picture at its density: the
+/// answer is the picture, the read's version and the marked elements'
+/// records.
+fn look_marks(shot: Shot, pid: u32, title: String, all: bool) -> String {
+    let slot = shot.slot;
+    let tree = std::thread::spawn(move || crate::a11y_tree::read(slot, pid, &title, |p| in_family(p, pid) || in_family(pid, p), crate::a11y_tree::Ask::Tree(false)));
+    let picture = shot.first();
+    let read = tree.join().unwrap_or_else(|_| "err no-tree".to_owned());
+    let Some(picture) = picture else { return "err no-picture".to_owned() };
+    let mut parts = read.split(" | ");
+    let Some(version) = parts.next().and_then(|h| h.strip_prefix("nodes ")) else { return read };
+    let records: Vec<&str> = parts.collect();
+    let marked = crate::marks::pick(pid, slot, &records, all);
+    let (mut image, scale) = look_picture(slot, &picture, shot.geometry, shot.extent, shot.hidpi, None);
+    crate::marks::draw(&mut image, &marked.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>(), scale);
+    let more = records.iter().filter(|r| r.starts_with("... more"));
+    let after: String = marked.iter().map(|(_, r)| *r).chain(more.copied()).fold(format!(" {version}"), |s, r| s + " | " + r);
+    kept(&image, shot.peer, shot.extent, shot.age, shot.hidpi.then_some(scale), &after)
 }
 
 #[cfg(test)]

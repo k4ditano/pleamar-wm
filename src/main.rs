@@ -4,6 +4,9 @@
 //! pleamar's own.
 
 mod a11y;
+mod a11y_tree;
+mod a11y_act;
+mod marks;
 mod agent_cli;
 mod build;
 mod remote;

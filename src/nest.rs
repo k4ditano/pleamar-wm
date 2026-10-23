@@ -2802,6 +2802,7 @@ impl State {
             let screen = self.slots[slot].as_ref().map(|w| w.screen);
             self.order.iter().copied().find(|s| *s != slot && self.slots[*s].as_ref().is_some_and(|w| w.fullscreen && Some(w.screen) == screen))
         }).or_else(|| self.order.iter().copied().find(|s| *s != slot && monitor.is_some() && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref())));
+        crate::a11y_tree::forget(self.pid_of(slot), slot);
         if let Some(w) = self.slots[slot].take() {
             self.thumb_closed(&w.listed.identifier());
             self.toplevel_list.remove_toplevel(&w.listed);
