@@ -150,8 +150,15 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            // `config set agent on`, `a11y off`, `agent-pace fast`: the control centre's Agent page.
+            Some("set") if matches!(args.get(2).map(String::as_str), Some("agent" | "a11y" | "agent-pace")) && args.len() == 4 => {
+                if let Err(e) = config::write_setting(&args[2], &args[3]) {
+                    eprintln!("config · {e}");
+                    std::process::exit(1);
+                }
+            }
             Some(other) => {
-                eprintln!("config · '{other}': `pleamar-wm config`, `config layouts`, `config set layout MONITOR|* NAME` ({}), or `config set dock hide|magnify|dots|into|size|side VALUE`", config::LAYOUTS.join(", "));
+                eprintln!("config · '{other}': `pleamar-wm config`, `config layouts`, `config set agent|a11y on|off`, `config set agent-pace default|fast|instant`, `config set layout MONITOR|* NAME` ({}), or `config set dock hide|magnify|dots|into|size|side VALUE`", config::LAYOUTS.join(", "));
                 std::process::exit(1);
             }
             None => println!("{:#?}", config::get()),

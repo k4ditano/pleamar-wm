@@ -70,6 +70,13 @@
 # its cursors are drawn moving. Off unless said: what has it can type anywhere.
 #agent on
 
+# a11y on|off  the accessibility bus the window manager owns: programs publish
+# their trees (buttons, text) to it, and `pleamar-wm agent tree`, `press` and
+# `wait` read them. Off unless said, and apart from `agent on`: every toolkit
+# then keeps its tree up to date, which costs CPU. `a11y reader /usr/bin/orca`
+# lets one more program read them, named by its executable's full path.
+#a11y on
+
 # agent pace default|fast|instant  how fast its hands go when the session
 # starts: default glides as a hand would; fast glides quicker and presses at
 # once; instant goes there in one motion. The pill says it when not default;

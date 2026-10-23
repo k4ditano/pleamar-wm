@@ -110,8 +110,12 @@ pub struct Config {
     /// `agent pace fast`: how fast the agent's hands go when the session
     /// starts (`T` changes it).
     pub pace: Pace,
-    /// `a11y reader orca`: a program other than pleamar-wm that may read the
-    /// windows' accessibility trees, by its executable's name (see `a11y.rs`).
+    /// `a11y on`: the accessibility bus (see `a11y.rs`): every program then
+    /// publishes its tree, which costs them. Off unless said.
+    pub a11y: bool,
+    /// `a11y reader /usr/bin/orca`: a program other than pleamar-wm that may
+    /// read the windows' accessibility trees, by its executable's full path
+    /// (a bare name is taken as the executable's name, which is weaker).
     pub a11y_readers: Vec<String>,
     /// `terminals off`: the terminals the session starts get the user's
     /// shell as it is, without the layer that lets wired windows read and
@@ -454,6 +458,53 @@ pub fn write_dock_style(k: &str, v: &str) -> Result<(), String> {
     std::fs::write(&path, out.join("\n") + "\n").map_err(|e| format!("could not write {path}: {e}"))
 }
 
+/// session.conf's text with one setting made a line `PREFIX VALUE`
+/// (`agent on`, `a11y off`, `agent pace fast`): the line it replaces where it
+/// was, or a new one at the end. A line with the same words but another
+/// kind of value (`a11y reader orca`, `agent pace fast` for `agent`) is not it.
+fn with_setting(text: &str, prefix: &[&str], values: &[&str], value: &str) -> Result<String, String> {
+    if !values.contains(&value) {
+        return Err(format!("`{}` is {}, not '{value}'", prefix.join(" "), values.join(" or ")));
+    }
+    let line = format!("{} {value}", prefix.join(" "));
+    let mut out: Vec<String> = Vec::new();
+    let mut put = false;
+    for l in text.lines() {
+        let w = words(l.split('#').next().unwrap_or(""));
+        let same = w.len() == prefix.len() + 1 && w.iter().zip(prefix).all(|(a, b)| a == b) && values.contains(&w[prefix.len()].as_str());
+        if same {
+            if !put {
+                out.push(line.clone());
+                put = true;
+            }
+            continue;
+        }
+        out.push(l.to_owned());
+    }
+    if !put {
+        out.push(line);
+    }
+    Ok(out.join("\n") + "\n")
+}
+
+/// Writes one of the settings the control centre's Agent page has, for the next
+/// session: `agent on|off`, `a11y on|off`, `agent pace default|fast|instant`.
+pub fn write_setting(name: &str, value: &str) -> Result<(), String> {
+    let (prefix, values): (&[&str], &[&str]) = match name {
+        "agent" => (&["agent"], &["on", "off"]),
+        "a11y" => (&["a11y"], &["on", "off"]),
+        "agent-pace" => (&["agent", "pace"], &["default", "fast", "instant"]),
+        _ => return Err(format!("'{name}' is not one of agent, a11y, agent-pace")),
+    };
+    let path = std::env::var("PLEAMAR_WM_CONFIG").ok().or_else(|| user_dir().map(|d| format!("{d}/session.conf"))).ok_or("there is no configuration folder")?;
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let out = with_setting(&text, prefix, values, value)?;
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, out).map_err(|e| format!("could not write {path}: {e}"))
+}
+
 /// Writes how a monitor starts (`layout MONITOR NAME` in session.conf; `*`
 /// for every monitor): its line replaced where it was, or added at the end.
 pub fn write_layout(monitor: &str, name: &str) -> Result<(), String> {
@@ -693,7 +744,8 @@ pub fn parse(text: &str, c: &mut Config) {
             },
             "a11y" => match rest {
                 [w, name] if w == "reader" => c.a11y_readers.push(name.clone()),
-                _ => eprintln!("config · line {}: `a11y reader NAME` (an executable's name)", n + 1),
+                [v] if on(Some(v)).is_some() => c.a11y = on(Some(v)) == Some(true),
+                _ => eprintln!("config · line {}: `a11y on|off`, or `a11y reader /full/path/of/the/program`", n + 1),
             },
             "terminals" => c.terminals_off = !on(rest.first()).unwrap_or_else(|| {
                 eprintln!("config · line {}: `terminals on` or `terminals off`", n + 1);
@@ -976,10 +1028,28 @@ mod tests {
     }
 
     #[test]
+    fn a_setting_replaces_its_own_line_and_no_other() {
+        let on = ["on", "off"];
+        // Where it was, and the lines like it left alone.
+        let text = "agent on  # hands\nagent pace fast\na11y reader /usr/bin/orca\n";
+        assert_eq!(with_setting(text, &["agent"], &on, "off").unwrap(), "agent off\nagent pace fast\na11y reader /usr/bin/orca\n");
+        assert_eq!(with_setting(text, &["a11y"], &on, "on").unwrap(), "agent on  # hands\nagent pace fast\na11y reader /usr/bin/orca\na11y on\n");
+        assert_eq!(with_setting(text, &["agent", "pace"], &["default", "fast", "instant"], "instant").unwrap(), "agent on  # hands\nagent pace instant\na11y reader /usr/bin/orca\n");
+        // Not a value it takes.
+        assert!(with_setting(text, &["agent"], &on, "maybe").is_err());
+    }
+
+    #[test]
     fn a11y_readers() {
         let mut c = Config::default();
-        parse("a11y reader orca\na11y reader\na11y orca", &mut c);
-        assert_eq!(c.a11y_readers, ["orca"]);
+        parse("a11y reader orca\na11y reader\na11y orca\na11y reader /usr/bin/orca", &mut c);
+        assert_eq!(c.a11y_readers, ["orca", "/usr/bin/orca"]);
+        // The bus is off unless said, and its switch is not a reader.
+        assert!(!c.a11y);
+        parse("a11y on", &mut c);
+        assert!(c.a11y);
+        parse("a11y off", &mut c);
+        assert!(!c.a11y);
     }
 
     #[test]
