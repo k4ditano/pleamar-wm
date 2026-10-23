@@ -23,8 +23,10 @@ mod kind;
 mod look;
 mod pointer;
 mod record;
+mod run;
 mod scene;
 mod target;
+mod terminal;
 mod tree;
 mod versions;
 mod wait;
@@ -37,6 +39,7 @@ use kind::Kinds;
 use record::*;
 use scene::*;
 use target::*;
+use terminal::*;
 use versions::*;
 pub(crate) use conn::{tell, Line};
 pub(crate) use batch::{quote, seconds};
@@ -69,7 +72,7 @@ fn go(args: &[String]) -> R {
     }
     match what.as_str() {
         "windows" => windows::windows()?,
-        "can" => kind::can(&parse(rest, &PLAIN)?)?,
+        "can" => kind::can(&parse(rest, &SHELL)?)?,
         "layers" => windows::layers()?,
         "hide" | "show" => windows::hide(what, rest)?,
         "monitors" => windows::print_monitors()?,
@@ -83,6 +86,7 @@ fn go(args: &[String]) -> R {
         "key" => act::key(rest)?,
         "hotkey" => act::hotkey(rest)?,
         "look" => look::look(rest)?,
+        "run" => run::run(rest)?,
         "wait" => wait::wait(rest)?,
         "do" => batch::run(rest)?,
         "mcp" => crate::agent_mcp::run(),
@@ -162,7 +166,7 @@ mod tests {
         assert_eq!(go(&["tree", "4521", "all"]).unwrap_err().code, fail::USAGE);
         assert_eq!(go(&["press", "4521", "--shell", "7"]).unwrap_err().code, fail::USAGE);
         assert_eq!(go(&["find", "4521", "Save"]).unwrap_err().code, fail::USAGE);
-        assert_eq!(go(&["key", "7002:7044", "tab"]).unwrap_err().code, fail::USAGE);
+        assert_eq!(go(&["run", "7044:x", "ls"]).unwrap_err().code, fail::USAGE);
         assert_eq!(go(&["nonsense"]).unwrap_err().code, fail::USAGE);
     }
 }

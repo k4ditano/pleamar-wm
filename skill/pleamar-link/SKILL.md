@@ -28,7 +28,7 @@ pleamar-wm link delegate N "TASK" --wait # …or wait here for its answer (or fo
 pleamar-wm link wait N                   # until it is done: its answer, or what it asks
 pleamar-wm link ask N                    # what it asks its person now (a permission, a choice), with the options
 pleamar-wm link answer N 2               # answer it: an option's number or words, free words, yes/no
-pleamar-wm link read N [LINES]           # its terminal's last lines
+pleamar-wm link read N [LINES]           # its terminal's last lines, history included (kept when its agent redraws the whole screen)
 pleamar-wm link send N "text" --enter    # type into it (a shell, a program); for an agent, delegate
 pleamar-wm link keys N escape            # keys: enter tab escape up down ctrl+c 1 …
 pleamar-wm link label N tests            # name the wire to N
@@ -58,5 +58,9 @@ agent that runs there (`codex`) when only one does.
 - **Nothing wired**, or not the one they mean: say so, and tell the person
   how: on a free monitor (Super+W), drag the drop at the start of a window's
   title bar onto the other window.
+- **A terminal that is not wired** (a shell the person asked you to use, not
+  an agent to talk to) is used with the desktop's tools: `pleamar-wm agent
+  read|run|wait|type PID` (the pleamar-desktop skill). Handing a task to
+  another agent and getting its answer back still takes a wire.
 - Outside a terminal of the session (no `PLEAMAR_TERMINAL`) none of this
   applies.

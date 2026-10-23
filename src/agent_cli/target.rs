@@ -1,23 +1,28 @@
-//! A command line read as one grammar: a window (`PID`, `PID.N`), an
-//! element (`@24`, `@save`, `@=3`), `--text T`, `-o FILE`, `--first`,
-//! durations, `--` before text, and the words left.
+//! A command line read as one grammar: a window (`PID`, `PID.N`,
+//! `PID:SHELL`), an element (`@24`, `@save`, `@=3`), `--text T`, `-o FILE`,
+//! `--first`, durations, `--` before text, and the words left.
 
 use super::fail::{usage, R};
 
-/// A window as `windows` names it.
+/// A window as `windows` names it, and which of its terminal's shells.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Window {
     /// `4521`, or `4521.3` for one of a program's several windows.
     pub(super) pid: String,
+    pub(super) shell: Option<i32>,
 }
 
 impl Window {
-    pub(super) fn parse(pid: &str) -> Option<Window> {
+    pub(super) fn parse(s: &str) -> Option<Window> {
+        let (pid, shell) = match s.split_once(':') {
+            Some((p, sh)) => (p, Some(sh.parse::<i32>().ok().filter(|n| *n > 0)?)),
+            None => (s, None),
+        };
         let fine = match pid.split_once('.') {
             Some((a, b)) => a.parse::<u32>().is_ok() && b.parse::<u32>().is_ok(),
             None => pid.parse::<u32>().is_ok(),
         };
-        fine.then(|| Window { pid: pid.to_owned() })
+        fine.then(|| Window { pid: pid.to_owned(), shell })
     }
 
     /// Its process.
@@ -82,9 +87,13 @@ pub(super) struct Spec {
     pub(super) maybe: &'static [&'static str],
     /// Words after the window as they are (`say`, `raw`, `open`): no options read.
     pub(super) raw: bool,
+    /// Whether a terminal's shell may be named (`PID:SHELL`).
+    pub(super) shell: bool,
 }
 
-pub(super) const PLAIN: Spec = Spec { window: Needs::Yes, element: false, flags: &[], values: &[], maybe: &[], raw: false };
+pub(super) const PLAIN: Spec = Spec { window: Needs::Yes, element: false, flags: &[], values: &[], maybe: &[], raw: false, shell: false };
+/// The same, of a verb a terminal's shell takes.
+pub(super) const SHELL: Spec = Spec { shell: true, ..PLAIN };
 
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Args {
@@ -148,9 +157,19 @@ pub(super) fn parse(words: &[String], spec: &Spec) -> R<Args> {
                 a.window = Some(w);
                 k = 1;
             }
-            Some((w, None)) if spec.window == Needs::Yes => return Err(usage(format!("{w}: which window: PID or PID.N, as `pleamar-wm agent windows` names it"))),
+            Some((w, None)) if spec.window == Needs::Yes => {
+                return Err(usage(match w.split_once(':') {
+                    Some(_) => format!("{w}: a window and its shell are PID:SHELL (7002:7044), numbers both"),
+                    None => format!("{w}: which window: PID or PID.N, as `pleamar-wm agent windows` names it"),
+                }));
+            }
             None if spec.window == Needs::Yes => return Err(usage("which window: PID or PID.N, as `pleamar-wm agent windows` names it")),
             _ => {}
+        }
+    }
+    if let Some(Window { pid, shell: Some(s) }) = &a.window {
+        if !spec.shell {
+            return Err(usage(format!("{pid}:{s} names a terminal's shell: for tree, find, run, type, key, hotkey, wait and can; here say the window, {pid}")));
         }
     }
     if spec.raw {
@@ -237,16 +256,18 @@ mod tests {
         s.iter().map(|w| w.to_string()).collect()
     }
 
-    const TYPE: Spec = Spec { window: Needs::Yes, element: true, flags: &["--set"], values: &[], maybe: &[], raw: false };
-    const LOOK: Spec = Spec { window: Needs::Maybe, element: true, flags: &["--marks", "--hidpi", "--first"], values: &["--text", "-o", "--pad"], maybe: &[], raw: false };
+    const TYPE: Spec = Spec { window: Needs::Yes, element: true, flags: &["--set"], values: &[], maybe: &[], raw: false, shell: true };
+    const LOOK: Spec = Spec { window: Needs::Maybe, element: true, flags: &["--marks", "--hidpi", "--first"], values: &["--text", "-o", "--pad"], maybe: &[], raw: false, shell: false };
 
     #[test]
-    fn a_window_is_its_process_or_one_of_its_windows() {
-        assert_eq!(Window::parse("4521"), Some(Window { pid: "4521".into() }));
-        assert_eq!(Window::parse("4521.3"), Some(Window { pid: "4521.3".into() }));
-        assert_eq!(Window::parse("4521.3").unwrap().process(), 4521);
+    fn a_window_is_its_process_one_of_its_windows_or_a_shell() {
+        assert_eq!(Window::parse("4521"), Some(Window { pid: "4521".into(), shell: None }));
+        assert_eq!(Window::parse("4521.3"), Some(Window { pid: "4521.3".into(), shell: None }));
+        assert_eq!(Window::parse("7002:7044"), Some(Window { pid: "7002".into(), shell: Some(7044) }));
+        assert_eq!(Window::parse("7002.1:7044"), Some(Window { pid: "7002.1".into(), shell: Some(7044) }));
+        assert_eq!(Window::parse("7002.1:7044").unwrap().process(), 7002);
         assert_eq!(Window::parse("7002.1").unwrap().target(), "root:7002.1");
-        for bad in ["", "x", "4521.", ".3", "7002:7044", "45 21", "-3"] {
+        for bad in ["", "x", "4521.", ".3", "7002:", "7002:x", ":7044", "45 21", "-3"] {
             assert_eq!(Window::parse(bad), None, "{bad}");
         }
     }
@@ -312,7 +333,10 @@ mod tests {
     fn a_window_is_asked_for_in_the_right_form() {
         assert_eq!(parse(&words(&[]), &PLAIN).unwrap_err().code, 64);
         assert!(parse(&words(&["firefox"]), &PLAIN).unwrap_err().msg.contains("PID or PID.N"));
+        assert!(parse(&words(&["7002:x"]), &PLAIN).unwrap_err().msg.contains("PID:SHELL"));
+        // A shell only where a terminal's shell is meant.
         assert_eq!(parse(&words(&["7002:7044", "1", "1"]), &PLAIN).unwrap_err().code, 64);
+        assert_eq!(parse(&words(&["7002:7044", "ls"]), &SHELL).unwrap().window.unwrap().shell, Some(7044));
         let raw = Spec { raw: true, ..PLAIN };
         let a = parse(&words(&["8810", "drag", "knob", "0", "-40"]), &raw).unwrap();
         assert_eq!(a.words, words(&["drag", "knob", "0", "-40"]));
