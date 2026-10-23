@@ -54,6 +54,14 @@ const MAX_SIZE: usize = 8 << 20;
 const MAX_CALLS: usize = 256;
 /// Match rules a connection may keep.
 const MAX_RULES: usize = 512;
+/// Connections the bus takes at once: past it, the next is put out. A
+/// program holding sockets open must not use up the compositor's descriptors.
+const MAX_CONNECTIONS: usize = 256;
+/// How long a connection that authenticated may take to say its `Hello`.
+const HELLO_WITHIN: Duration = Duration::from_secs(10);
+/// The longest match rule and the longest object path taken.
+const MAX_RULE: usize = 1024;
+const MAX_PATH: usize = 512;
 /// Messages in a second past which a connection is put out.
 const FLOOD: u32 = 10_000;
 /// What a connection that does not read its socket may have queued to it.
@@ -237,10 +245,12 @@ impl Drop for Listener {
     }
 }
 
-/// The bus, if session.conf says `agent on`: its socket now, its thread, and
-/// `org.a11y.Bus` on the session bus.
+/// The bus, if session.conf says `agent on` and `a11y on`: its socket now,
+/// its thread, and `org.a11y.Bus` on the session bus. Its own switch, since
+/// every toolkit keeps its tree up to date for as long as it is there.
 pub fn start(display: &str) {
-    if !crate::config::get().agent {
+    let c = crate::config::get();
+    if !c.agent || !c.a11y {
         return;
     }
     // A socket in a directory others write to could be theirs first.
@@ -254,6 +264,19 @@ pub fn start(display: &str) {
 
 /// The broker, listening at that path: its address.
 fn broker_at(path: &str) -> Option<String> {
+    // A folder that is not the user's alone could have the socket replaced
+    // (or watched) by someone else.
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(dir) {
+            // SAFETY: getuid cannot fail.
+            Ok(m) if m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0 => {}
+            _ => {
+                eprintln!("a11y: {} is not yours alone: no accessibility bus", dir.display());
+                return None;
+            }
+        }
+    }
     let _ = std::fs::remove_file(&path);
     let listener = match std::os::unix::net::UnixListener::bind(path) {
         Ok(l) => l,
@@ -366,9 +389,6 @@ struct Peer {
     /// When its process started, as `started` says.
     start: Option<u64>,
     exe: String,
-    /// What the process calls itself (`/proc/PID/comm`): a script's name,
-    /// where `exe` is its interpreter.
-    comm: String,
     root: Option<(String, String)>,
     /// When it embedded `root`, in the order embeds came.
     embedded: u64,
@@ -452,6 +472,7 @@ async fn serve(ex: &'static async_executor::LocalExecutor<'static>, broker: Rc<R
             return;
         }
     };
+    let live = Rc::new(Cell::new(0usize));
     loop {
         let stream = match listener.accept().await {
             Ok((s, _)) => s,
@@ -462,7 +483,18 @@ async fn serve(ex: &'static async_executor::LocalExecutor<'static>, broker: Rc<R
             }
         };
         let Ok(stream) = stream.into_inner() else { continue };
-        ex.spawn(connection(ex, broker.clone(), stream)).detach();
+        if live.get() >= MAX_CONNECTIONS {
+            eprintln!("a11y: {MAX_CONNECTIONS} connections already: one put out");
+            continue;
+        }
+        live.set(live.get() + 1);
+        let live = live.clone();
+        let task = connection(ex, broker.clone(), stream);
+        ex.spawn(async move {
+            task.await;
+            live.set(live.get() - 1);
+        })
+        .detach();
     }
 }
 
@@ -525,7 +557,28 @@ async fn connection(ex: &'static async_executor::LocalExecutor<'static>, broker:
     })
     .detach();
     let id = broker.borrow_mut().add(pid, out);
-    while let Some(m) = stream.next().await {
+    let born = Instant::now();
+    loop {
+        // One that has not said its Hello in time is put out: it holds a
+        // descriptor and a task for nothing.
+        let next = if broker.borrow().said_hello(id) {
+            stream.next().await
+        } else {
+            let left = HELLO_WITHIN.saturating_sub(born.elapsed());
+            let waited = futures_lite::future::or(async { Some(stream.next().await) }, async {
+                async_io::Timer::after(left).await;
+                None
+            })
+            .await;
+            match waited {
+                Some(next) => next,
+                None => {
+                    eprintln!("a11y: pid {pid} did not say its Hello in {} s: put out", HELLO_WITHIN.as_secs());
+                    break;
+                }
+            }
+        };
+        let Some(m) = next else { break };
         let Ok(m) = m else { break };
         if !broker.borrow_mut().incoming(id, m) {
             break;
@@ -610,11 +663,16 @@ impl Broker {
         }
     }
 
+    /// Whether this connection has said its `Hello` (it has its name).
+    fn said_hello(&self, id: u64) -> bool {
+        self.peers.get(&id).is_some_and(|p| !p.name.is_empty())
+    }
+
     fn add(&mut self, pid: u32, out: async_channel::Sender<Message>) -> u64 {
         let id = self.next;
         self.next += 1;
-        let (exe, comm) = (read_proc(pid, "exe"), read_proc(pid, "comm"));
-        let p = Peer { name: String::new(), pid, start: started(pid), exe, comm, root: None, embedded: 0, reader: None, names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, signals: 0, out, queued: Default::default(), dropping: Cell::new(false) };
+        let exe = read_proc(pid, "exe");
+        let p = Peer { name: String::new(), pid, start: started(pid), exe, root: None, embedded: 0, reader: None, names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, signals: 0, out, queued: Default::default(), dropping: Cell::new(false) };
         self.peers.insert(id, p);
         id
     }
@@ -801,6 +859,11 @@ impl Broker {
             Some(REGISTRY) | Some(OWN) => self.registry_call(id, m),
             Some(d) => {
                 let Some(to) = self.names.get(d).copied() else {
+                    // A program is told the same for a name that is not there as for
+                    // one that is: it cannot tell which others are connected.
+                    if let Gate::Deny = self.gate(id) {
+                        return self.error(id, &hdr, BUS, ACCESS_DENIED, "a program cannot read another program's accessibility tree");
+                    }
                     return self.error(id, &hdr, BUS, "org.freedesktop.DBus.Error.ServiceUnknown", &format!("the name {d} is not on this bus"));
                 };
                 // A program calling into its own objects is not reading.
@@ -838,7 +901,7 @@ impl Broker {
             Some(Reader::Denied) => return Gate::Deny,
             None => (),
         }
-        let named = names_of(&p.exe, &p.comm).iter().any(|n| self.allowed.contains(n));
+        let named = names_of(&p.exe).iter().any(|n| self.allowed.contains(n));
         let label = self.label(id);
         let p = self.peers.get_mut(&id).unwrap();
         if named {
@@ -848,8 +911,8 @@ impl Broker {
             return Gate::Pass;
         }
         p.reader = Some(Reader::Denied);
-        let name = names_of(&p.exe, &p.comm).pop().unwrap_or_default();
-        eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {name}` in session.conf allows it)");
+        let path = p.exe.clone();
+        eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {path}` in session.conf allows it)");
         Gate::Deny
     }
 
@@ -1031,6 +1094,9 @@ impl Broker {
             }
             "AddMatch" => {
                 let Some(rule) = arg() else { return self.error(id, &hdr, BUS, INVALID_ARGS, "a match rule is a string") };
+                if rule.len() > MAX_RULE {
+                    return self.error(id, &hdr, BUS, LIMITS, "a match rule that long is not taken");
+                }
                 if self.peers[&id].rules.len() >= MAX_RULES {
                     return self.error(id, &hdr, BUS, LIMITS, "too many match rules");
                 }
@@ -1130,6 +1196,9 @@ impl Broker {
             (ROOT, "org.a11y.atspi.Socket", "Embed") => {
                 let plug = body.deserialize::<((String, OwnedObjectPath),)>().map(|t| t.0).or_else(|_| body.deserialize::<(String, OwnedObjectPath)>());
                 let Ok((_, plug)) = plug else { return self.error(id, &hdr, OWN, INVALID_ARGS, "Embed takes (so)") };
+                if plug.as_str().len() > MAX_PATH {
+                    return self.error(id, &hdr, OWN, INVALID_ARGS, "an object path that long is not taken");
+                }
                 self.embeds += 1;
                 let p = self.peers.get_mut(&id).unwrap();
                 // Its own tree only, whatever name it gave.
@@ -1229,12 +1298,14 @@ fn short(exe: &str) -> &str {
     exe.rsplit('/').next().unwrap_or(exe)
 }
 
-/// What a reader may be named by in session.conf: its executable's name,
-/// and its process's (a script's, and Nix's `.orca-wrapped` as `orca`).
-fn names_of(exe: &str, comm: &str) -> Vec<String> {
-    let mut out = vec![short(exe).to_owned()];
-    let plain = comm.trim_start_matches('.').trim_end_matches("-wrapped");
-    for n in [comm, plain] {
+/// What a reader may be named by in session.conf: its executable's full
+/// path (what `/proc/PID/exe` says, the one that cannot be a name a process
+/// gives itself), or its name: the executable's own, Nix's `.orca-wrapped`
+/// as `orca`. Its process's name (`comm`) is not one: any program sets that.
+fn names_of(exe: &str) -> Vec<String> {
+    let mut out = vec![exe.to_owned()];
+    let name = short(exe);
+    for n in [name, name.trim_start_matches('.').trim_end_matches("-wrapped")] {
         if !n.is_empty() && !out.iter().any(|o| o == n) {
             out.push(n.to_owned());
         }
@@ -1366,10 +1437,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_reader_is_named_by_its_program_or_its_script() {
-        assert_eq!(names_of("/usr/bin/python3.12", "orca"), ["python3.12", "orca"]);
-        assert_eq!(names_of("/nix/store/x/bin/python3.12", ".orca-wrapped"), ["python3.12", ".orca-wrapped", "orca"]);
-        assert_eq!(names_of("/usr/bin/orca", "orca"), ["orca"]);
+    fn a_reader_is_named_by_its_path_or_its_executable() {
+        // The full path first; the executable's name, and Nix's wrapped one as the program's.
+        assert_eq!(names_of("/usr/bin/orca"), ["/usr/bin/orca", "orca"]);
+        assert_eq!(names_of("/nix/store/x/bin/.orca-wrapped"), ["/nix/store/x/bin/.orca-wrapped", ".orca-wrapped", "orca"]);
+        // What a process calls itself is not a name it can be let in by: a script is its interpreter's.
+        assert_eq!(names_of("/usr/bin/python3.12"), ["/usr/bin/python3.12", "python3.12"]);
     }
 
     #[test]
@@ -1558,7 +1631,12 @@ mod tests {
 
     #[test]
     fn programs_publish_and_only_pleamar_wm_reads() {
-        let path = std::env::temp_dir().join(format!("pleamar-a11y-test-{}", std::process::id()));
+        // In a folder of its own, as the runtime directory is: the bus does not
+        // listen in one that others can write to (`/tmp`).
+        let dir = std::env::temp_dir().join(format!("pleamar-a11y-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let path = dir.join("bus");
         let address = broker_at(path.to_str().unwrap()).unwrap();
         let connect = || zbus::blocking::connection::Builder::address(address.as_str()).unwrap();
         let program = connect().serve_at(ROOT, Thing).unwrap().build().unwrap();
@@ -1609,6 +1687,7 @@ mod tests {
         });
         assert!(gone, "a program that leaves is forgotten");
         assert_eq!(call_blocking(&me, ROOT, "org.a11y.atspi.Accessible", "GetRole", &(), Duration::from_secs(2)).unwrap_err(), Error::Gone);
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }
