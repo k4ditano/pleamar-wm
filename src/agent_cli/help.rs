@@ -58,8 +58,11 @@ pictures only: `done`); --no-wait: what it did alone
   move PID X Y                    only the pointer there: nothing answered
 
 Look
-  look [PID] [-o FILE]            a picture of the window, cut from the screen where it is seen (or
-                                  of the desktop); prints the file
+  look [PID] [-o FILE]            a picture of the window (or of the desktop); prints the file. The
+                                  window's own: covered or on another workspace, with its menus
+  look PID X Y W H                a part of it, in the picture's coordinates
+  look PID @X|--text T [--pad N]  a scene's item only, N units around it; prints its corner
+  look ... --hidpi                at the window's own pixels; prints the scale
 
 Wait
   wait PID COND [DURATION] [--json]

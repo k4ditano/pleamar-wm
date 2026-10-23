@@ -52,6 +52,16 @@ impl Route {
     /// The pointer at that point of a monitor, in its pixels. Says whether it
     /// went from the scene to a program or back (the cursor changes hands).
     pub fn pointer(&mut self, on: &Screen, (mx, my): (f64, f64)) -> bool {
+        // The one holding it is no longer drawn (a menu whose window went to
+        // another workspace): it is let go, as if its buttons were.
+        if let Some(id) = self.grab {
+            if on.0.lock().unwrap().clients.iter().any(|c| c.id == id && !c.drawn) {
+                for code in std::mem::take(&mut self.client_held) {
+                    layers::tell(ToLayers::Button { code, down: false });
+                }
+                self.grab = None;
+            }
+        }
         let hit = {
             let st = on.0.lock().unwrap();
             // (Dragging something out of it, the pointer goes where it is:
@@ -343,5 +353,46 @@ impl Route {
             layers::tell(ToLayers::KeyboardBack);
         }
         self.key_client = id;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layers::ClientLayer;
+
+    struct Nowhere;
+    impl crate::screen::Output for Nowhere {
+        fn buffer(&mut self, _: &pleamar::wgpu::Device, _: &[u64]) -> Option<(usize, pleamar::wgpu::Texture)> {
+            None
+        }
+        fn show(&mut self, _: usize, _: pleamar::Sent, _: &pleamar::wgpu::Device, _: &pleamar::wgpu::Queue, _: bool) -> bool {
+            false
+        }
+    }
+
+    fn menu(drawn: bool) -> ClientLayer {
+        let piece = layers::ClientPiece { key: 1, at: (0, 0), size: (100, 100), px: (100, 100), content: None, buffer: None, opaque: false };
+        ClientLayer { id: 9, level: 3, rect: [10, 10, 100, 100], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn }
+    }
+
+    /// A menu pressed on keeps the pointer; once it is no longer drawn (its
+    /// window went to another workspace) it is let go of it.
+    #[test]
+    fn a_menu_no_longer_drawn_loses_its_grab() {
+        let _drag = layers::tests::DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut route = Route::new(tx);
+        let on = crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere));
+        on.0.lock().unwrap().clients.push(menu(true));
+        route.pointer(&on, (50.0, 50.0));
+        assert!(matches!(route.hit, Hit::Client(9, _)));
+        route.button(&[], 0x110, true);
+        route.pointer(&on, (500.0, 500.0));
+        assert!(matches!(route.hit, Hit::Client(9, _)), "held, it keeps the pointer");
+        on.0.lock().unwrap().clients[0].drawn = false;
+        route.pointer(&on, (50.0, 50.0));
+        assert!(!matches!(route.hit, Hit::Client(9, _)));
+        assert!(route.grab.is_none() && route.client_held.is_empty());
     }
 }

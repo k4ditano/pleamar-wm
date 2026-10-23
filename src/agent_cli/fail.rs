@@ -56,26 +56,35 @@ pub(super) fn stopped() -> Fail {
     Fail::new(STOPPED, "stopped: the user stopped the agent: stop here and tell them where you left it (`pleamar-wm agent done` lets the hands be used again)")
 }
 
-/// What an `err` was about: a window.
+/// What an `err` was about: a window, or one of its elements.
 pub(super) enum Of<'a> {
     Window(&'a str),
+    Element(&'a str, &'a str),
 }
 
 /// An `err REASON` of the window manager's, as its exit code and what it
 /// means: every one is told here.
 pub(super) fn answered(reason: &str, of: Of) -> Fail {
     let reason = reason.strip_prefix("err ").unwrap_or(reason).trim();
-    let Of::Window(w) = of;
+    let (w, e) = match of {
+        Of::Window(w) => (w, None),
+        Of::Element(w, e) => (w, Some(e)),
+    };
     match reason {
         "private" => Fail::new(PRIVATE, format!("private: {w} is private (a `private` rule in session.conf), or the screen is locked: ask the user, never another way around it")),
         "locked" => Fail::new(PRIVATE, "locked: the screen is locked: ask the user"),
         "stopped-by-user" => stopped(),
         "unknown-root-pid" | "target-not-found" | "unknown-pid" | "unknown-app-id" => Fail::new(WINDOW_GONE, format!("window gone: {w} is not open (`pleamar-wm agent windows` names them)")),
-        "gone" => Fail::new(WINDOW_GONE, format!("window gone: {w} closed")),
+        "gone" => match e {
+            Some(e) => Fail::new(GONE, format!("gone: {e} is no longer in {w}: read it again with `tree {w}`")),
+            None => Fail::new(WINDOW_GONE, format!("window gone: {w} closed")),
+        },
         "timeout" => Fail::new(TIMEOUT, "timeout: it did not happen in time"),
         r if r.starts_with("ambiguous") => Fail::new(AMBIGUOUS, format!("ambiguous: {w} names more than one window: PID.N, as `pleamar-wm agent windows` names them")),
+        "no-box" => Fail::new(OTHER, format!("no box: that is not in {w}")),
         "no-keyboard-resource" => Fail::new(OTHER, format!("no keyboard: keys cannot reach {w}, its program took no keyboard: use the pointer")),
         "no-pointer-resource" => Fail::new(OTHER, format!("no pointer: the pointer cannot reach {w}, its program took none here")),
+        "no-picture" =>Fail::new(OTHER, format!("no picture: {w} has not drawn anything to look at yet")),
         "unknown-key" | "unknown-hotkey" => usage("no key called that: enter tab escape backspace space up down left right delete home end pageup pagedown f1..f12, a letter after modifiers"),
         "bad-args" => usage(format!("the window manager did not take that: `pleamar-wm agent help`")),
         "unknown-command" => Fail::new(OTHER, "this session's pleamar-wm does not know that: an older one (log out and in again after an update)"),
@@ -102,18 +111,22 @@ mod tests {
     #[test]
     fn each_err_has_its_code() {
         let w = |r: &str| answered(r, Of::Window("4521")).code;
+        let e = |r: &str| answered(r, Of::Element("4521", "@24")).code;
         assert_eq!(w("err private"), PRIVATE);
         assert_eq!(w("err locked"), PRIVATE);
         assert_eq!(w("err stopped-by-user"), STOPPED);
         assert_eq!(w("err unknown-root-pid"), WINDOW_GONE);
         assert_eq!(w("err target-not-found"), WINDOW_GONE);
         assert_eq!(w("err gone"), WINDOW_GONE);
+        assert_eq!(e("err gone"), GONE);
         assert_eq!(w("err timeout"), TIMEOUT);
         assert_eq!(w("err ambiguous-root-pid"), AMBIGUOUS);
         assert_eq!(w("err bad-args"), USAGE);
+        assert_eq!(w("err no-picture"), OTHER);
         assert_eq!(w("err something-new"), OTHER);
         // What happened first, with no prefix.
         assert!(answered("err private", Of::Window("4521")).msg.starts_with("private: 4521"));
+        assert!(answered("err gone", Of::Element("4521", "@24")).msg.starts_with("gone: @24"));
         assert_eq!(scene_said("? not after 2.0 s: status is \"\"\n").code, TIMEOUT);
         assert_eq!(scene_said("? save is not there now").code, GONE);
         assert_eq!(scene_said("? there is nothing called 'x' on screen: `describe` says what there is").code, GONE);
