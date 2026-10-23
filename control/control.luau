@@ -54,31 +54,6 @@ local function dock_look()
     end
 end
 
-on("dk", function(v)
-    local k, x = v // 100, v % 100
-    if k >= 6 then return agent_set(k, x) end
-    local i = k + 1
-    if not DOCK[i] then return end
-    local value
-    if k <= 3 then
-        value = x == 1 and "on" or "off"
-    elseif k == 4 then
-        value = tostring(x)
-    else
-        value = SIDES[x]
-    end
-    if not value then return end
-    fact[MINE[i]] = x
-    -- At once, there…
-    wm({ "--say", "wm", "fact " .. FACT[i] .. " " .. x })
-    -- …and for the next session.
-    wm({ "config", "set", "dock", DOCK[i], value }, function(out, code)
-        local what = k <= 3 and (SAID[i] .. (x == 1 and " on" or " off")) or (SAID[i] .. ": " .. value)
-        text.toast = code == 0 and (what .. ", from now on") or ("Not saved: " .. out)
-        fact.toasted = fact.toasted + 1
-    end)
-end)
-
 -- ── Agent: what an AI agent may do (`agent`, `a11y`, `agent pace` in session.conf) ──
 -- Read from what the session was started with (`pleamar-wm config`); a change
 -- is written there and shows in the next session.
@@ -119,6 +94,31 @@ local function agent_set(k, x)
         end)
     end
 end
+
+on("dk", function(v)
+    local k, x = v // 100, v % 100
+    if k >= 6 then return agent_set(k, x) end
+    local i = k + 1
+    if not DOCK[i] then return end
+    local value
+    if k <= 3 then
+        value = x == 1 and "on" or "off"
+    elseif k == 4 then
+        value = tostring(x)
+    else
+        value = SIDES[x]
+    end
+    if not value then return end
+    fact[MINE[i]] = x
+    -- At once, there…
+    wm({ "--say", "wm", "fact " .. FACT[i] .. " " .. x })
+    -- …and for the next session.
+    wm({ "config", "set", "dock", DOCK[i], value }, function(out, code)
+        local what = k <= 3 and (SAID[i] .. (x == 1 and " on" or " off")) or (SAID[i] .. ": " .. value)
+        text.toast = code == 0 and (what .. ", from now on") or ("Not saved: " .. out)
+        fact.toasted = fact.toasted + 1
+    end)
+end)
 
 local open_build = nil   -- the Build page, below: wakes its engine up
 on("go", function(page)
