@@ -313,9 +313,17 @@ async fn name(k: &Key) -> String {
     ask::<(OwnedValue,), _>(k, PROPERTIES, "Get", &(ACCESSIBLE, "Name")).await.and_then(|t| String::try_from(t.0).ok()).unwrap_or_default()
 }
 
+/// A role as one word: what a program calls its element can be anything, and
+/// goes into a line of fields (a space a gap, a newline a line): letters,
+/// digits, `_` and `-`, the rest an `_`, and no more than 40 of them.
+fn role_word(role: &str) -> String {
+    let w: String = role.chars().take(40).map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    if w.is_empty() { "unknown".into() } else { w }
+}
+
 /// Its role, its name, its states and its interfaces, asked at once.
 async fn seen(k: Key, parent: Option<usize>) -> Seen {
-    let role = async { ask::<(String,), _>(&k, ACCESSIBLE, "GetRoleName", &()).await.map(|t| t.0.replace(' ', "_")).unwrap_or_else(|| "unknown".into()) };
+    let role = async { ask::<(String,), _>(&k, ACCESSIBLE, "GetRoleName", &()).await.map(|t| role_word(&t.0)).unwrap_or_else(|| "unknown".into()) };
     let states = async { ask::<(Vec<u32>,), _>(&k, ACCESSIBLE, "GetState", &()).await.map(|t| t.0.iter().take(2).enumerate().fold(0u64, |s, (i, w)| s | (*w as u64) << (32 * i))).unwrap_or(0) };
     let interfaces = async { ask::<(Vec<String>,), _>(&k, ACCESSIBLE, "GetInterfaces", &()).await.map(|t| t.0).unwrap_or_default() };
     let ((role, name), (states, interfaces)) = futures_lite::future::zip(futures_lite::future::zip(role, name(&k)), futures_lite::future::zip(states, interfaces)).await;
@@ -741,6 +749,14 @@ fn give(seen: &[Seen], ask: &Ask, kept: &mut Kept) -> (Vec<Node>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_role_is_one_word() {
+        assert_eq!(role_word("push button"), "push_button");
+        assert_eq!(role_word("a\nb | c\x1b[0m"), "a_b___c__0m");
+        assert_eq!(role_word(""), "unknown");
+        assert_eq!(role_word(&"x".repeat(100)).len(), 40);
+    }
 
     fn s(key: &str, parent: Option<usize>, role: &str, name: &str, rect: Option<[i32; 4]>) -> Seen {
         let states = (1u64 << SHOWING) | (1 << VISIBLE) | (1 << ENABLED);
