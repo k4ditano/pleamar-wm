@@ -3567,9 +3567,11 @@ scene Session {
         }
     }
     // Marea follows the mouse from monitor to monitor: she is told which.
-    repeat k in 0..4 {
-        on change mon while mon == k { launch "pleamar-wm --say marea 'emit pointer_monitor k'" }
-    }
+    // (Written out: a launch's text takes no `$k`, and `k` inside it went to Marea as the letter.)
+    on change mon while mon == 0 { launch "pleamar-wm --say marea 'emit pointer_monitor 0'" }
+    on change mon while mon == 1 { launch "pleamar-wm --say marea 'emit pointer_monitor 1'" }
+    on change mon while mon == 2 { launch "pleamar-wm --say marea 'emit pointer_monitor 2'" }
+    on change mon while mon == 3 { launch "pleamar-wm --say marea 'emit pointer_monitor 3'" }
     // Tiled or free, on the monitor under the mouse (Super+W; Marea's menu too).
     event toggle_free
     repeat k in 0..4 {
@@ -3699,7 +3701,9 @@ scene Session {
         zone box wmid.$k { at: wv.mx + 14, wv.my; size: wl.w + 52, 36; active: wv.on and not overview and wedit != k and wcut.$k < 0.01; role: region }
         zone box wnamez.$k { at: wv.mx, wv.my; size: wl.w, 24; cursor: text; active: wv.on and not overview and wedit != k and wcut.$k < 0.01; label: "Name this wire"; role: button }
         zone ellipse wcutz.$k { at: wv.mx + wl.w / 2 + 16, wv.my; radius: 11; cursor: pointer; active: wv.on and not overview and wedit != k and wcut.$k < 0.01; label: "Cut this wire"; role: button }
+        // (Under the windows, like the wire: a name over a window would cover what it shows.)
         group {
+            z: -1
             show: wv.on and wedit != k
             opacity: max(if(wl.has, 1, 0), wl.hov) * (1 - wcut.$k)
             body {
@@ -3711,11 +3715,15 @@ scene Session {
             box { at: wv.mx, wv.my; size: wl.w, 24; corner: 12; stroke: 1.2; color: if(wv.wait, amber, mint); opacity: 45% + 40% * wnamez.$k.hover }
             text "name it" { at: wv.mx, wv.my; anchor: center; size: 11; color: ink; opacity: 45%; show: not wl.has }
         }
-        text wire.$k.label { at: wv.mx, wv.my; anchor: center; size: 11; weight: 600; color: ink; lines: 1; opacity: 1 - wcut.$k; show: wv.on and wedit != k }
+        group {
+            z: -1
+            text wire.$k.label { at: wv.mx, wv.my; anchor: center; size: 11; weight: 600; color: ink; lines: 1; opacity: 1 - wcut.$k; show: wv.on and wedit != k }
+        }
         // (Measured always, off the screen, whether it is seen or not: an
         // empty name measures nothing.)
         text wire.$k.label { at: -4000, -4000; size: 11; weight: 600; color: ink; lines: 1; measure: wlm.$k }
         group {
+            z: -1
             show: wv.on and wedit != k and wl.hov > 0.01
             opacity: wl.hov * (1 - wcut.$k)
             body {
