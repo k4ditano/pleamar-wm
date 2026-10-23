@@ -859,7 +859,10 @@
   // A keyboard of its own on a phone or a tablet: its keys go home as they
   // are, from the first one, without opening the one on the screen.
   if (PHONE) window.addEventListener('keydown', (e) => {
-    if (e.target === keys || !phoneHere || !codeOf(e) || e.target.closest('button, input')) return;
+    // A button the focus was left on keeps only its own Enter and Space:
+    // the rest (Alt+arrows) went to the browser.
+    const own = e.target.closest('input') || (e.target.closest('button') && (e.key === 'Enter' || e.key === ' '));
+    if (e.target === keys || !phoneHere || !codeOf(e) || own) return;
     keys.value = SENTINEL; typed = SENTINEL;
     keys.focus({ preventScroll: true });
     keys.dispatchEvent(new KeyboardEvent('keydown', e));
@@ -1334,11 +1337,17 @@
   // goes up so that where the finger was is still seen above it.
   let lastTapY = innerHeight / 2, typed = '';
   const SENTINEL = '​​';
+  // Focused for a keyboard of its own too: the one on the screen only when
+  // asked for, or it (or its bar, beside a keyboard of its own) came up,
+  // and the system's bars with it.
+  if (PHONE) keys.inputMode = 'none';
   function kbdOpen() {
     keys.value = SENTINEL; typed = SENTINEL;
+    keys.inputMode = 'text';
     keys.focus({ preventScroll: true });
     kbd.classList.add('on');
   }
+  keys.addEventListener('blur', () => { if (PHONE) keys.inputMode = 'none'; });
   kbd.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (document.activeElement === keys) keys.blur(); else kbdOpen(); });
   keys.addEventListener('input', (e) => {
     if (!PHONE || e.isComposing) return;
@@ -1373,6 +1382,7 @@
       } else {
         applyZoom();
         kbd.classList.remove('on');
+        keys.inputMode = 'none';
       }
     });
   }
