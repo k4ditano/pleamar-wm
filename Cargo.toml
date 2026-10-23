@@ -32,6 +32,8 @@ sha2 = "0.10"
 hmac = "0.12"
 # …and its direct way: WebRTC (the system's OpenSSL for its encryption).
 str0m = { version = "0.24", default-features = false, features = ["openssl"] }
+# …and its sound, Opus: the system's libopus (not the copy it would build).
+opusic-sys = { version = "0.7", default-features = false }
 # Only the protocol side: the painting is pleamar's own, so no backend and no
 # renderer of smithay's.
 smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop", "xwayland", "backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev"] }

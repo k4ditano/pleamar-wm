@@ -130,7 +130,9 @@ back to the desk (by default `marea lock`; `phone lock none`, nothing). What
 brings it back is a key typed at the desk (letters, numbers, arrows, Super),
 a mouse button or the mouse moved: not the volume, media or power keys a
 headset or a remote sends by themselves. The session's log says which device
-did it (`session · at the desk:`). The
+did it (`session · at the desk:`). `phone output off` keeps the desk's
+own output while the session is on the phone (the phone hears it too); by
+default the phone is the output then, and the desk is silent. The
 page tells it is on a phone or a tablet by itself (an iPad's Safari, which
 says it is a Mac, by its fingers); `?phone=1` or `?phone=0` says so.
 

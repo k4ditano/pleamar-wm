@@ -1992,6 +1992,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "opusic-sys"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9d1ecdf206421bc74343ab3bb2f30ad2abbfee41fa341f7181fecbaf957769a"
+
+[[package]]
 name = "ordered-float"
 version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2162,6 +2168,7 @@ dependencies = [
  "hmac",
  "image",
  "libc",
+ "opusic-sys",
  "pipewire",
  "pleamar",
  "serde_json",

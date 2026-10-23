@@ -65,6 +65,11 @@
 # to the desk: `marea lock` if unsaid; `none`, nothing (docs/phone.md)
 #phone lock marea lock
 
+# phone output on|off  the phone as this computer's output while the session
+# is on it, all its sound there; off, the desk keeps playing and the phone
+# hears it too. On if unsaid.
+#phone output on
+
 # agent on|off  a computer-use agent (Cua Driver) may use the windows with a
 # pointer and a keyboard of its own: your mouse and your focus stay yours, and
 # its cursors are drawn moving. Off unless said: what has it can type anywhere.

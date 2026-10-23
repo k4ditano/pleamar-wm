@@ -529,7 +529,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
                     if let Some(relay) = relay_of(&who) {
                         println!("remote · {who} is {relay}'s relay (a browser hiding its address): the direct way will not reach that page");
                     }
-                    let set = format!("Set-Cookie: pleamar_remote={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}\r\nLocation: /\r\n", LIFE.as_secs());
+                    let set = format!("Set-Cookie: pleamar_remote={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}\r\nLocation: /\r\n", LIFE.as_secs());
                     respond(&mut stream, "303 See Other", html, &set, b"")
                 }
                 None => {
@@ -542,7 +542,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             if let Some(t) = token {
                 gate.lock().unwrap().sign_out(&t);
             }
-            respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0\r\nLocation: /\r\n", b"")
+            respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0\r\nLocation: /\r\n", b"")
         }
         // A home screen's app: what it is and its icon. Nothing of this desktop in
         // them, so before signing in (a browser asks for them without the cookie).
@@ -679,6 +679,9 @@ fn tell_the_session(gate: Arc<Mutex<Gate>>) {
 fn keep_phone(gate: Arc<Mutex<Gate>>) {
     loop {
         std::thread::sleep(Duration::from_secs(2));
+        // The phone as this computer's output while the session is on it.
+        let on = gate.lock().unwrap().phone_on;
+        crate::remote_rtc::phone_sink(on);
         let mut g = gate.lock().unwrap();
         if !g.phone_on {
             continue;
@@ -1286,6 +1289,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     };
     ws.send(Message::Text(format!("version {PAGE_VERSION:016x}").into())).map_err(|e| e.to_string())?;
     ws.send(Message::Text(mons(&monitors).into())).map_err(|e| e.to_string())?;
+    // The session still on the phone (its page closed by accident): a page of
+    // the phone takes it back by itself; at the desk, it offers to bring it.
+    let waits = gate.lock().unwrap().phone_on;
+    ws.send(Message::Text(if waits { "phonewaits" } else { "deskhas" }.into())).map_err(|e| e.to_string())?;
 
     let (mut want_tx, want_rx) = mpsc::channel::<Want>();
     let (frame_tx, mut frame_rx) = mpsc::channel::<Result<(usize, u32, u32, Vec<Vec<u8>>), String>>();
@@ -1311,6 +1318,8 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     }
     let phone_flag = std::rc::Rc::new(std::cell::Cell::new(false));
     let _phone_leave = PhoneLeave(gate, phone_flag.clone());
+    // `parked`, for the direct way: no sound while it is.
+    let hush = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let mut monitor = 0usize;
     let mut flow = Flow::new();
@@ -1582,6 +1591,9 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                                     g.phone_on = true;
                                     g.phone_pages += 1;
                                     g.phone_left = None;
+                                    drop(g);
+                                    // Its output at once (not at keep_phone's next look).
+                                    std::thread::spawn(|| crate::remote_rtc::phone_sink(true));
                                 }
                                 println!("remote · the session goes to the phone ({}×{} at {:.2})", *w as u32, *hh as u32, scale);
                                 let _ = ws.send(Message::Text(mons(&monitors).into()));
@@ -1693,8 +1705,13 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         }
                     }
                     ("rtc", _) => {
-                        // The page offers the direct way: the answer, by the socket.
-                        match crate::remote_rtc::answer(rest, flow.kbps) {
+                        // The page offers the direct way (again): by the socket until it opens.
+                        if direct {
+                            direct = false;
+                            whole = true;
+                            let _ = ws.send(Message::Text("indirect".into()));
+                        }
+                        match crate::remote_rtc::answer(rest, flow.kbps, hush.clone()) {
                             Ok((sdp, p)) => {
                                 peer = Some(p);
                                 let _ = ws.send(Message::Text(format!("rtcanswer {sdp}").into()));
@@ -1841,6 +1858,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             }
         }
         // Parked (the desk has the session): nothing to send until the phone asks again.
+        hush.store(parked, std::sync::atomic::Ordering::SeqCst);
         if parked {
             continue;
         }
