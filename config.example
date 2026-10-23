@@ -74,3 +74,9 @@
 # pointer and a keyboard of its own: your mouse and your focus stay yours, and
 # its cursors are drawn moving. Off unless said: what has it can type anywhere.
 #agent on
+
+# agent pace default|fast|instant  how fast its hands go when the session
+# starts: default glides as a hand would; fast glides quicker and presses at
+# once; instant goes there in one motion. The pill says it when not default;
+# `pleamar-wm agent pace` changes it while the session runs.
+#agent pace fast

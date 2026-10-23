@@ -606,9 +606,13 @@ Qt (Dolphin), Firefox, Vulkan, OpenGL and GTK on X11 all do.
   opens there without taking your keyboard —a program already running that
   opens it from its old process, or asks to come forward, included—. The
   agent's keys stay in the window it types in while it works there, as a
-  window you type in stays focused. `tools/agent/demo.py` moves the cursors over a
+  window you type in stays focused. How fast its hands go is the session's,
+  for every agent: `default` glides as a hand would, `fast` glides quicker and
+  presses at once, `instant` goes there in one motion (`agent pace fast` in
+  session.conf, or `pleamar-wm agent pace` while it runs); when not
+  `default`, the pill says which. `tools/agent/demo.py` moves the cursors over a
   window. `pleamar-wm agent windows | open | look | click | type | key | hotkey |
-  scroll | drag | focus | monitors | send | done | stop` is the same from a shell, for an agent or a script:
+  scroll | drag | focus | monitors | send | done | stop | pace` is the same from a shell, for an agent or a script:
   a window by its process, its coordinates those of `look`'s picture. Besides
   the protocol's commands, `l` lists the windows and `r PID` says the box the window
   is drawn in (what a picture of it is cut from): with it Cua Driver

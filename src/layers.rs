@@ -253,6 +253,10 @@ pub fn set_private(slot: usize, yes: bool) {
     p[slot] = yes;
 }
 
+pub fn private(slot: usize) -> bool {
+    PRIVATE.lock().unwrap().get(slot).copied().unwrap_or(false)
+}
+
 /// Where the private windows are seen on that monitor, in its pixels.
 pub fn private_on(monitor: &str) -> Vec<[i32; 4]> {
     let private = PRIVATE.lock().unwrap().clone();

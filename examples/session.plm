@@ -4573,6 +4573,8 @@ scene Session {
     fact agent.screen = -1
     fact agent.win = -1
     fact agent.active = 0
+    // How fast its hands go: 0 default, 1 fast, 2 instant (`agent pace`).
+    fact agent.pace = 0
     prop agent.on = 0 ~1600ms
     follow agent.on = agent.active
     prop agent.t = 0
@@ -4613,7 +4615,10 @@ scene Session {
         }
         ellipse { at: ag.px - 152, ag.py; radius: 4 + 2 * ag.breath; color: mint }
         ellipse { at: ag.px - 152, ag.py; radius: 9 * ag.breath + 4; stroke: 1.2; color: mint; opacity: 60% * (1 - ag.breath) }
-        text "An agent is using this monitor" { at: ag.px - 28, ag.py + 0.5; anchor: center; size: 11.5; weight: 600; color: ink }
+        text "An agent is using this monitor" { at: ag.px - 28 - 24 * min(agent.pace, 1), ag.py + 0.5; anchor: center; size: 11.5; weight: 600; color: ink }
+        // Not at the default pace, it says so: the hand is not seen travelling.
+        text "fast" { at: ag.px + 40, ag.py + 0.5; anchor: left center; size: 10; weight: 700; color: mint; show: agent.pace == 1 }
+        text "instant" { at: ag.px + 40, ag.py + 0.5; anchor: left center; size: 10; weight: 700; color: mint; show: agent.pace == 2 }
         box { at: ag.px + 130, ag.py; size: 64, 22; corner: 11; color: #ef7a66; opacity: 18% + 30% * ag.stop.hover }
         box { at: ag.px + 109, ag.py; size: 7, 7; corner: 1.5; color: #ef7a66 }
         text "Stop" { at: ag.px + 136, ag.py + 0.5; anchor: center; size: 11.5; weight: 700; color: #ffb3a6 }
