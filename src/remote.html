@@ -845,6 +845,7 @@
   // clipboard along, and home presses it.
   let pasteShift = false;
   const down = new Set();
+  let escAt = -1e9;
   // «Super» on the bar holds it at home until the next key is let go: a
   // browser keeps the Windows key for its own computer (unless full screen,
   // and not every browser then), and the desktops, the overview and the rest
@@ -887,6 +888,7 @@
     // AltGr on Windows comes as Ctrl and Alt together: sent as they are, home
     // would see Ctrl+AltGr+2, not «@». The Ctrl that came with it is let go.
     if (code === 100 && e.getModifierState('AltGraph') && down.has(29)) { down.delete(29); hand('k 29 0'); }
+    if (code === 1) escAt = performance.now();
     down.add(code); hand('k ' + code + ' 1');
   }
   function keyUp(e) {
@@ -1157,9 +1159,45 @@
   }
   window.addEventListener('resize', () => { if (!document.activeElement || document.activeElement !== keys) turned(); });
   if (screen.orientation) screen.orientation.addEventListener('change', turned);
+  // Android takes Escape for Back as well, and Back, at the start of an
+  // installed page's history, leaves it. Kept in hand while the session is
+  // here (a close watcher, or a step of history where there is none): Back
+  // goes home as Escape, unless the key itself just did. (Put in by a tap or
+  // a key: one put in without them, the browser would step over.)
+  let watcher = null;
+  const held = () => history.state && history.state.held;
+  const backHome = (how) => {
+    const key = performance.now() - escAt < 600;
+    plog('back by ' + how + (key ? ', from Escape' : ''));
+    if (!key) { hand('k 1 1'); hand('k 1 0'); }
+  };
+  const holdBack = () => {
+    if (!PHONE || !phoneHere) return;
+    if (!window.CloseWatcher) { if (!held()) history.pushState({ held: true }, ''); return; }
+    if (watcher) return;
+    try { watcher = new CloseWatcher(); } catch (e) { plog('no close watcher: ' + e.message); return; }
+    watcher.onclose = () => { watcher = null; backHome('the close watcher'); holdBack(); };
+  };
+  const letBack = () => {
+    if (watcher) { watcher.onclose = null; watcher.destroy(); watcher = null; }
+    letBack();
+  };
+  window.addEventListener('popstate', () => {
+    if (!PHONE || !phoneHere || window.CloseWatcher) return;
+    backHome('history');
+    holdBack();
+  });
+  if (PHONE) {
+    window.addEventListener('pointerdown', holdBack, true);
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Escape') plog('Escape here' + (watcher ? ', watched' : held() ? ', a step held' : ', nothing held'));
+      holdBack();
+    }, true);
+  }
   function phoneArrived() {
     phoneHere = true;
     takeKeys();
+    holdBack();
     // The orb dives into the water and the session rises out of it.
     setTimeout(() => { startSheet.classList.add('gone'); backSheet.classList.add('gone'); }, 450);
     setTimeout(() => startSheet.classList.remove('ph-arriving'), 1400);
@@ -1168,6 +1206,7 @@
   function phoneBack(why) {
     plog('back at the desk: ' + why);
     phoneHere = false;
+    if (held()) history.back();
     $('ph-back-why').textContent = why;
     kbd.classList.remove('on');
     keys.blur();
