@@ -1286,10 +1286,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     };
     ws.send(Message::Text(format!("version {PAGE_VERSION:016x}").into())).map_err(|e| e.to_string())?;
     ws.send(Message::Text(mons(&monitors).into())).map_err(|e| e.to_string())?;
-    // The session still on the phone (its page closed by accident): a page of the phone takes it back by itself.
-    if gate.lock().unwrap().phone_on {
-        ws.send(Message::Text("phonewaits".into())).map_err(|e| e.to_string())?;
-    }
+    // The session still on the phone (its page closed by accident): a page of
+    // the phone takes it back by itself; at the desk, it offers to bring it.
+    let waits = gate.lock().unwrap().phone_on;
+    ws.send(Message::Text(if waits { "phonewaits" } else { "deskhas" }.into())).map_err(|e| e.to_string())?;
 
     let (mut want_tx, want_rx) = mpsc::channel::<Want>();
     let (frame_tx, mut frame_rx) = mpsc::channel::<Result<(usize, u32, u32, Vec<Vec<u8>>), String>>();

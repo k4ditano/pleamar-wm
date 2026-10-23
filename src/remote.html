@@ -88,6 +88,9 @@
   @keyframes ph-breathe { 0%, 100% { transform: scale(1) translateY(0); } 50% { transform: scale(1.06) translateY(-3px); } }
   .ph-go { margin-top: 6px; border: 0; border-radius: 28px; padding: 15px 30px; font: inherit; font-size: 16px; font-weight: 650; color: #062421; background: linear-gradient(135deg, #c8f1e1, #9ed6bd); box-shadow: 0 10px 30px #9ed6bd44; }
   .ph-go:active { transform: scale(.97); }
+  /* Until home says where the session is: it may be waiting on this phone. */
+  #ph-start .ph-go { transition: opacity .3s ease; }
+  #ph-start.asking .ph-go { visibility: hidden; opacity: 0; }
   .ph-small { font-size: 12.5px !important; opacity: .8; }
   .ph-arriving .ph-orb::before { animation: ph-dive 1.1s cubic-bezier(.6,0,.3,1) forwards; }
   @keyframes ph-dive { to { transform: scale(9); opacity: 0; } }
@@ -176,7 +179,7 @@
   <div id="edge"><div class="glow"></div><div class="line"></div><div class="chip"></div></div>
   <div id="update"><span id="update-what">A new version is ready</span><button id="update-go">Update</button></div>
   <div id="ph">
-    <div class="ph-sheet" id="ph-start">
+    <div class="ph-sheet asking" id="ph-start">
       <div class="ph-orb"><i></i><i></i><i></i></div>
       <h1>pleamar</h1>
       <p id="ph-what">Your desktop, with everything open, as a phone.</p>
@@ -559,6 +562,8 @@
         if (again) turnedDone(); else phoneArrived();
       } else if (verb === 'phonewaits') {
         if (PHONE && !phoneWanted) { plog('the session waits on the phone: taken back'); bringHere(); }
+      } else if (verb === 'deskhas') {
+        $('ph-start').classList.remove('asking');
       } else if (verb === 'phonelocked') {
         // The desk, as it is (its lock screen), to unlock it from here.
         current = 0;
