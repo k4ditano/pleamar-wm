@@ -1697,7 +1697,12 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         }
                     }
                     ("rtc", _) => {
-                        // The page offers the direct way: the answer, by the socket.
+                        // The page offers the direct way (again): by the socket until it opens.
+                        if direct {
+                            direct = false;
+                            whole = true;
+                            let _ = ws.send(Message::Text("indirect".into()));
+                        }
                         match crate::remote_rtc::answer(rest, flow.kbps) {
                             Ok((sdp, p)) => {
                                 peer = Some(p);

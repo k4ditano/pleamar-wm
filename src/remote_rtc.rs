@@ -37,6 +37,8 @@ const PIECE: usize = 16 * 1024;
 /// More than this waiting to go on the channel: the way is full, the frames
 /// are dropped until it empties, and then a whole one.
 const CHANNEL_FULL: usize = 1 << 20;
+/// How long the page may be unreachable on the direct way before it ends.
+const LOST_GRACE: Duration = Duration::from_secs(6);
 
 /// What the connection says to the viewer.
 pub enum PeerEvent {
@@ -129,7 +131,13 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     // Frames dropped because the channel was full, told every few seconds.
     let (mut dropped, mut told) = (0u32, Instant::now());
     let mut backlog_told = Instant::now();
+    // Not reachable since then: often a moment (the wifi, a phone waking), so
+    // given a while to come back before it ends.
+    let mut lost: Option<Instant> = None;
     while alive.load(Ordering::Relaxed) {
+        if lost.is_some_and(|t| t.elapsed() > LOST_GRACE) || !rtc.is_alive() {
+            return Ok("the page is not reachable any more");
+        }
         if let Some(id) = channel.filter(|_| backlog_told.elapsed() >= Duration::from_millis(250)) {
             backlog_told = Instant::now();
             if let Some(mut ch) = rtc.channel(id) {
@@ -206,8 +214,13 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
             }
             Output::Event(e) => {
                 match e {
-                    Event::IceConnectionStateChange(IceConnectionState::Disconnected) => return Ok("the page is not reachable any more"),
-                    Event::IceConnectionStateChange(state) => println!("remote · the direct way: {state:?}"),
+                    Event::IceConnectionStateChange(state) => {
+                        println!("remote · the direct way: {state:?}");
+                        lost = match state {
+                            IceConnectionState::Disconnected => lost.or(Some(Instant::now())),
+                            _ => None,
+                        };
+                    }
                     Event::Connected => {
                         let _ = events.send(PeerEvent::Connected);
                     }
