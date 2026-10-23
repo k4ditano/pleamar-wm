@@ -642,6 +642,10 @@ struct State {
     dropping: Option<Dropping>,
     /// The surface that holds the pointer (locked or confined), if any.
     constrained: Option<WlSurface>,
+    /// The pointers programs asked their holds with: a program may bind a
+    /// pointer of another seat than the compositor's own, and smithay keys a
+    /// hold by the one it was asked with.
+    hold_pointers: Vec<PointerHandle<State>>,
     /// Who watches a monitor's power (wlr-output-power-management), and which.
     powers: Vec<(ZwlrOutputPowerV1, usize)>,
     socket: String,
@@ -819,6 +823,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         last_under: None,
         dropping: None,
         constrained: None,
+        hold_pointers: Vec::new(),
         powers: Vec::new(),
         seats,
         seat,
@@ -2213,16 +2218,21 @@ impl State {
             ToLayers::Relative { dx, dy, ux, uy, utime } => {
                 // A hold its program let go of (it unlocked): the pointer is free again.
                 if let Some(s) = self.constrained.clone() {
-                    if !s.alive() || !with_pointer_constraint(&s, &self.pointer, |c| c.is_some_and(|c| c.is_active())) {
+                    if !s.alive() || !self.with_hold(&s, |c| c.is_some_and(|c| c.is_active())) {
                         self.constrained = None;
+                        self.hold_pointers_enter(false);
                         layers::set_pointer_hold(None);
                     }
                 }
                 let focus = self.last_under.clone().filter(|(s, _)| s.alive() && self.pointer.current_focus().as_ref() == Some(s));
                 if focus.is_some() {
-                    let p = self.pointer.clone();
-                    p.relative_motion(self, focus, &RelativeMotionEvent { delta: (dx, dy).into(), delta_unaccel: (ux, uy).into(), utime });
-                    p.frame(self);
+                    let event = RelativeMotionEvent { delta: (dx, dy).into(), delta_unaccel: (ux, uy).into(), utime };
+                    let mut pointers = vec![self.pointer.clone()];
+                    pointers.extend(self.hold_pointers.iter().filter(|p| **p != self.pointer).cloned());
+                    for p in pointers {
+                        p.relative_motion(self, focus.clone(), &event);
+                        p.frame(self);
+                    }
                 }
             }
             ToLayers::Activity => self.activity(),
@@ -2253,18 +2263,55 @@ impl State {
     /// in a subsurface that lets the mouse through, so the pointer's focus is
     /// the window's own surface while the hold is asked on the subsurface: it
     /// is looked for in the whole window, the focused surface first.
+    /// Runs `f` on a surface's hold, whichever pointer it was asked with.
+    fn with_hold<R>(&self, surface: &WlSurface, f: impl FnOnce(Option<smithay::wayland::pointer_constraints::PointerConstraintRef<'_, State>>) -> R) -> R {
+        let mut f = Some(f);
+        for p in std::iter::once(&self.pointer).chain(&self.hold_pointers) {
+            if with_pointer_constraint(surface, p, |c| c.is_some()) {
+                return with_pointer_constraint(surface, p, |c| (f.take().unwrap())(c));
+            }
+        }
+        (f.take().unwrap())(None)
+    }
+
+    /// A hold asked with a pointer of another seat (an agent's cursor is one) is
+    /// heard by a program only while that pointer is on its window: its relative
+    /// motion is dropped otherwise. So those pointers enter the window while the
+    /// hold lasts, and leave it when it is let go.
+    fn hold_pointers_enter(&mut self, enter: bool) {
+        let (serial, time) = (SERIAL_COUNTER.next_serial(), self.time());
+        let under = if enter { self.last_under.clone() } else { None };
+        if enter && under.is_none() {
+            return;
+        }
+        let location = under.as_ref().map_or((0.0, 0.0).into(), |u| u.1);
+        let ours = self.pointer.clone();
+        let others: Vec<_> = self.hold_pointers.iter().filter(|p| **p != ours).cloned().collect();
+        // Let go, the cursor is shown again (the program sets its own through the
+        // pointer you have, when it moves).
+        if !enter {
+            layers::hide_cursor(false);
+        }
+        for p in others {
+            p.motion(self, under.clone(), &MotionEvent { location, serial, time });
+            p.frame(self);
+        }
+    }
+
     fn update_constraint(&mut self) {
         let focus = self.pointer.current_focus();
         if let Some(s) = self.constrained.clone() {
             if !focus.as_ref().is_some_and(|f| same_window(f, &s)) {
                 if s.alive() {
-                    with_pointer_constraint(&s, &self.pointer, |c| {
+                    self.with_hold(&s, |c| {
                         if let Some(c) = c {
                             c.deactivate();
                         }
                     });
                 }
                 self.constrained = None;
+                println!("windows · the pointer hold is let go (the pointer left the window)");
+                self.hold_pointers_enter(false);
                 layers::set_pointer_hold(None);
             }
         }
@@ -2272,9 +2319,8 @@ impl State {
         if self.constrained.is_some() {
             return;
         }
-        let pointer = self.pointer.clone();
-        let Some(holder) = window_surfaces(&f).into_iter().find(|s| with_pointer_constraint(s, &pointer, |c| c.is_some())) else { return };
-        let locked = with_pointer_constraint(&holder, &self.pointer, |c| {
+        let Some(holder) = window_surfaces(&f).into_iter().find(|s| self.with_hold(s, |c| c.is_some())) else { return };
+        let locked = self.with_hold(&holder, |c| {
             let c = c?;
             if !c.is_active() {
                 c.activate();
@@ -2282,7 +2328,15 @@ impl State {
             Some(matches!(&*c, PointerConstraint::Locked(_)))
         });
         let Some(locked) = locked else { return };
+        println!("windows · the pointer is {} ({} of the window's surfaces, found on the {})", if locked { "locked" } else { "confined" }, window_surfaces(&f).len(), if holder == f { "focused one" } else { "window's other surfaces" });
         self.constrained = Some(holder);
+        self.hold_pointers_enter(true);
+        // Locked, the pointer stays where it was: drawn there it would be a cursor
+        // that does not move. Whoever locks it means it unseen (a game, a browser's
+        // page), through whichever pointer it asks, so it is hidden here.
+        if locked {
+            layers::hide_cursor(true);
+        }
         let monitors = layers::monitors();
         let rect = self.pointer_on.and_then(|s| self.slots.get(s)).and_then(Option::as_ref).and_then(|w| w.shown.clone()).and_then(|(name, r)| {
             monitors.iter().find(|m| m.name == name).map(|m| [r[0] + m.x, r[1] + m.y, r[2], r[3]])
@@ -3946,8 +4000,13 @@ impl SeatHandler for State {
     /// The cursor the program asks for, by its name: pleamar draws its own of
     /// the same kind. One drawn by the program itself is taken as the arrow.
     fn cursor_image(&mut self, seat: &Seat<Self>, image: CursorImageStatus) {
-        // The agent's cursor is the scene's to draw, not yours to change.
+        // The agent's cursor is the scene's to draw, not yours to change. Except
+        // for a hold asked with its seat's pointer (a browser takes the first seat
+        // it finds): the program hides the cursor there, and it is yours that goes.
         if agent::is_agent_seat(seat) {
+            if self.constrained.is_some() && matches!(image, CursorImageStatus::Hidden) {
+                layers::hide_cursor(true);
+            }
             return;
         }
         // None at all (a game, a film full screen): hidden, over a window too.
@@ -4686,7 +4745,10 @@ impl InputMethodHandler for State {
 }
 
 impl PointerConstraintsHandler for State {
-    fn new_constraint(&mut self, _: &WlSurface, _: &PointerHandle<Self>) {
+    fn new_constraint(&mut self, _: &WlSurface, pointer: &PointerHandle<Self>) {
+        if !self.hold_pointers.contains(pointer) {
+            self.hold_pointers.push(pointer.clone());
+        }
         self.update_constraint();
     }
 
