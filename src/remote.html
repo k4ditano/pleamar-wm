@@ -857,22 +857,28 @@
   // On an iPad's keyboard, ⌘ is what Ctrl is at home: ⌘C copies, ⌘T a tab.
   const codeOf = (e) => APPLE_TOUCH && PHONE && (e.code === 'MetaLeft' || e.code === 'MetaRight') ? (e.code === 'MetaLeft' ? 29 : 97) : CODES[e.code];
   // A keyboard of its own on a phone or a tablet: its keys go home as they
-  // are, from the first one, without opening the one on the screen.
-  if (PHONE) window.addEventListener('keydown', (e) => {
+  // are, taken by the picture, not a field (the keyboard app would keep
+  // some for itself: Alt+D, its voice). The field only with the one on the
+  // screen open.
+  // (The picture may be the video, the canvas hidden: then the page itself.)
+  const takeKeys = () => {
+    if (!PHONE) return keys.focus({ preventScroll: true });
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    canvas.focus({ preventScroll: true });
+  };
+  const phoneKey = (e) => {
     // A button the focus was left on keeps only its own Enter and Space:
     // the rest (Alt+arrows) went to the browser.
     const own = e.target.closest('input') || (e.target.closest('button') && (e.key === 'Enter' || e.key === ' '));
-    if (e.target === keys || !phoneHere || !codeOf(e) || own) return;
-    keys.value = SENTINEL; typed = SENTINEL;
-    keys.focus({ preventScroll: true });
-    keys.dispatchEvent(new KeyboardEvent('keydown', e));
-    // (The first one, a character, pressed and let go at once: its own
-    // letting go may come late, while the browser moves the focus, and home
-    // would take it for one held and repeat it.)
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) keys.dispatchEvent(new KeyboardEvent('keyup', e));
-    e.preventDefault();
-  });
-  keys.addEventListener('keydown', (e) => {
+    return e.target !== keys && phoneHere && codeOf(e) && !own;
+  };
+  if (PHONE) {
+    window.addEventListener('keydown', (e) => { if (phoneKey(e)) keyDown(e); });
+    window.addEventListener('keyup', (e) => { if (phoneKey(e)) keyUp(e); });
+  }
+  keys.addEventListener('keydown', keyDown);
+  keys.addEventListener('keyup', keyUp);
+  function keyDown(e) {
     const code = codeOf(e);
     if (!code) return;
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyV') { pasteShift = e.shiftKey; return; } // the paste event follows
@@ -882,8 +888,8 @@
     // would see Ctrl+AltGr+2, not «@». The Ctrl that came with it is let go.
     if (code === 100 && e.getModifierState('AltGraph') && down.has(29)) { down.delete(29); hand('k 29 0'); }
     down.add(code); hand('k ' + code + ' 1');
-  });
-  keys.addEventListener('keyup', (e) => {
+  }
+  function keyUp(e) {
     const code = codeOf(e);
     if (!code) return;
     e.preventDefault();
@@ -891,8 +897,9 @@
     down.delete(code); hand('k ' + code + ' 0');
     // Super held from the bar goes with this key, and is let go with it.
     if (superHeld && !MODIFIERS.has(code)) superUp();
-  });
-  keys.addEventListener('paste', (e) => {
+  }
+  document.addEventListener('paste', (e) => {
+    if (e.target.closest && e.target.closest('input')) return;
     e.preventDefault();
     pasteAtHome(e.clipboardData.getData('text/plain'), pasteShift);
     pasteShift = false;
@@ -947,7 +954,7 @@
     }
   });
   handle.addEventListener('pointerdown', (e) => e.stopPropagation());
-  handle.addEventListener('click', (e) => { e.stopPropagation(); showBar(); keys.focus({ preventScroll: true }); });
+  handle.addEventListener('click', (e) => { e.stopPropagation(); showBar(); takeKeys(); });
   bar.addEventListener('pointerleave', hideBar);
 
   document.getElementById('full').onclick = async () => {
@@ -955,7 +962,7 @@
     await document.documentElement.requestFullscreen();
     // Windows, Alt+Tab, Ctrl+W… home's, not this browser's.
     if (navigator.keyboard && navigator.keyboard.lock) { try { await navigator.keyboard.lock(); } catch (_) {} }
-    keys.focus({ preventScroll: true });
+    takeKeys();
   };
   document.addEventListener('fullscreenchange', () => {
     document.getElementById('full').classList.toggle('on', !!document.fullscreenElement);
@@ -964,7 +971,7 @@
   superBtn.onclick = () => {
     if (superHeld) superUp();
     else { superHeld = true; hand('k 125 1'); superBtn.classList.add('on'); }
-    keys.focus({ preventScroll: true });
+    takeKeys();
   };
   document.getElementById('pastebtn').onclick = async () => {
     try {
@@ -973,9 +980,9 @@
       if (text) synced = text;
       send('paste -' + (text ? ' ' + text : ''));
     } catch (_) { toast('The browser did not let it read your clipboard'); }
-    keys.focus({ preventScroll: true });
+    takeKeys();
   };
-  document.getElementById('copybtn').onclick = () => { send('copy'); keys.focus({ preventScroll: true }); };
+  document.getElementById('copybtn').onclick = () => { send('copy'); takeKeys(); };
 
   // Files, from here to home: one request each, into «Remote» in the
   // downloads folder there. Dropped on the desktop, where it was let go
@@ -1024,7 +1031,7 @@
   document.getElementById('xfer-stop').onclick = () => { if (sending) { sending.stopped = true; if (sending.xhr) sending.xhr.abort(); } };
   const pick = document.getElementById('sendpick');
   document.getElementById('sendbtn').onclick = () => pick.click();
-  pick.onchange = () => { sendFiles([...pick.files].map((file) => ({ file, path: file.name })), null); pick.value = ''; keys.focus({ preventScroll: true }); };
+  pick.onchange = () => { sendFiles([...pick.files].map((file) => ({ file, path: file.name })), null); pick.value = ''; takeKeys(); };
   // What was dropped, folders and all (their files with the folders they are in).
   const gather = async (entries, loose) => {
     const out = [];
@@ -1087,9 +1094,9 @@
     a.download = '';
     document.body.appendChild(a); a.click(); a.remove();
     offer.classList.remove('on');
-    keys.focus({ preventScroll: true });
+    takeKeys();
   };
-  document.getElementById('offer-no').onclick = () => { offer.classList.remove('on'); keys.focus({ preventScroll: true }); };
+  document.getElementById('offer-no').onclick = () => { offer.classList.remove('on'); takeKeys(); };
 
 
   // ── the phone ──
@@ -1152,6 +1159,7 @@
   if (screen.orientation) screen.orientation.addEventListener('change', turned);
   function phoneArrived() {
     phoneHere = true;
+    takeKeys();
     // The orb dives into the water and the session rises out of it.
     setTimeout(() => { startSheet.classList.add('gone'); backSheet.classList.add('gone'); }, 450);
     setTimeout(() => startSheet.classList.remove('ph-arriving'), 1400);
@@ -1337,9 +1345,8 @@
   // goes up so that where the finger was is still seen above it.
   let lastTapY = innerHeight / 2, typed = '';
   const SENTINEL = '​​';
-  // Focused for a keyboard of its own too: the one on the screen only when
-  // asked for, or it (or its bar, beside a keyboard of its own) came up,
-  // and the system's bars with it.
+  // Asked for only: focused otherwise, the one on the screen (or its bar,
+  // beside a keyboard of its own) would come up, and the system's bars with it.
   if (PHONE) keys.inputMode = 'none';
   function kbdOpen() {
     keys.value = SENTINEL; typed = SENTINEL;
@@ -1348,7 +1355,7 @@
     kbd.classList.add('on');
   }
   keys.addEventListener('blur', () => { if (PHONE) keys.inputMode = 'none'; });
-  kbd.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (document.activeElement === keys) keys.blur(); else kbdOpen(); });
+  kbd.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); if (document.activeElement === keys) takeKeys(); else kbdOpen(); });
   keys.addEventListener('input', (e) => {
     if (!PHONE || e.isComposing) return;
     flushTyped();
@@ -1385,7 +1392,7 @@
       } else {
         applyZoom();
         kbd.classList.remove('on');
-        if (kbdUp) keys.inputMode = 'none';
+        if (kbdUp && document.activeElement === keys) takeKeys();
         kbdUp = false;
       }
     });
