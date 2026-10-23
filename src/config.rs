@@ -101,6 +101,9 @@ pub struct Config {
     /// What locks the session when it comes back from the phone to the desk
     /// (`phone lock COMMAND`; `none`, nothing). By default, Marea's lock.
     pub phone_lock: Option<String>,
+    /// `phone output off`: the desk keeps its own output while the session
+    /// is on the phone, which hears it too. On unless said.
+    pub phone_output_off: bool,
     /// What some windows do when they open: `window app=… [float] [size WxH]
     /// [monitor N|NAME] [workspace N] [private]`.
     pub windows: Vec<WindowRule>,
@@ -655,7 +658,8 @@ pub fn parse(text: &str, c: &mut Config) {
             }),
             "phone" => match rest.split_first() {
                 Some((w, cmd)) if w == "lock" && !cmd.is_empty() => c.phone_lock = Some(cmd.join(" ")),
-                _ => eprintln!("config · line {}: `phone lock COMMAND` (or `phone lock none`)", n + 1),
+                Some((w, [v])) if w == "output" && on(Some(v)).is_some() => c.phone_output_off = on(Some(v)) == Some(false),
+                _ => eprintln!("config · line {}: `phone lock COMMAND` (or `phone lock none`), or `phone output on|off`", n + 1),
             },
             other => eprintln!("config · line {}: '{other}' is not something it knows (monitor, layout, keyboard, pointer, touchpad, idle, agent, terminals, phone)", n + 1),
         }
