@@ -84,6 +84,15 @@ its elements numbered (@ID) and boxed in the picture's coordinates:
   look PID \"TEXT\" [--pad N] [FILE]
                                   the same, of the first element that says TEXT (in a longer text,
                                   only those words); a FILE has a / or ends in .png
+  wait PID CONDITION [SECONDS]    `ok` as soon as it holds (in 30 s, or SECONDS up to 60), and the element that
+                                  met it; instead of looking again and again. A Stop ends it. CONDITION:
+                                  has \"TEXT\", gone \"TEXT\", @ID gone, @ID STATE, @ID not STATE (enabled, busy,
+                                  checked, a state `tree` gives), focus @ID, focus \"NAME\", changed (anything
+                                  shown), settled MS (neither the tree nor the picture changed for MS), dialog
+  listen PID [SECONDS]            what a screen reader would say, a line each as it happens (for 30 s, or
+                                  SECONDS up to 600): focus (where it starts, then each move), text (of the
+                                  focused element), live (a live region's news), announce, dialog. Ends at
+                                  its time, when the window closes, or at a Stop
 
 A terminal (`pleamar-wm term list`: its shell has pleamar-wm's layer) is read as text, history and all:
   read PID [N] [--since M]        its last N lines (200); the first says `mark M`, the newest line's
@@ -91,9 +100,12 @@ A terminal (`pleamar-wm term list`: its shell has pleamar-wm's layer) is read as
                                   screen, if what was read was written over: a TUI)
   tree PID                        what runs in it, where, its size, how long it has been quiet; its screen
   wait PID has \"TEXT\"|output|quiet MS|prompt [SECONDS]
-                                  `ok` and what came out meanwhile, as soon as it holds (in 30 s, or SECONDS)
+                                  `ok` and what came out meanwhile, as soon as it holds (in 30 s, or SECONDS); a Stop ends it
   run PID \"COMMAND\" [SECONDS]     typed, Enter, and what it printed once the shell waits again
   type PID TEXT, key PID NAME     through the terminal (ctrl+c too): it need not be seen nor have the keyboard
+                                  (a key it does not know, as any other window's)
+  ... PID --shell ID ...          a terminal with several shells (tabs, or one process with several
+                                  windows) is refused until one is named: ID from `pleamar-wm term list`
 
 Look before each click: a page moves under you. A pleamar window does not need it: ask it.";
 
@@ -364,18 +376,42 @@ enum Until {
 impl Term {
     /// That window's terminal, if its process has a layer, once the window
     /// manager has let the agent at it (`i`): it says no for a private
-    /// window or a locked session, and for typing while stopped.
-    fn of(pid: &str, types: bool) -> Result<Option<Term>, String> {
+    /// window or a locked session, and for typing while stopped. A process
+    /// with several shells (tabs, a terminal that serves many windows) does
+    /// not say which is the window's: refused, with the shells, unless one
+    /// is named (`--shell ID`, a layer whose terminal is this process).
+    fn of(pid: &str, types: bool, shell: Option<i32>) -> Result<Option<Term>, String> {
         let n: u32 = pid.split('.').next().and_then(|p| p.parse().ok()).ok_or("which window: its number")?;
-        let Some((id, _)) = crate::term::layer_of(n, &crate::term::layers()) else { return Ok(None) };
+        let all = crate::term::layers();
+        let mut shells = crate::term::shells_of(n, &all);
+        if let Some(id) = shell {
+            let (_, info) = all.iter().find(|(i, _)| *i == id).ok_or_else(|| format!("no shell {id}: `pleamar-wm term list` gives them"))?;
+            if info.get("terminal").and_then(|t| t.parse::<u32>().ok()) != Some(n) {
+                return Err(format!("shell {id} is not in {pid}'s terminal: `pleamar-wm term list` says the terminal of each"));
+            }
+            shells.retain(|(i, _)| *i == id);
+        }
+        let Some(id) = shells.first().map(|(id, _)| *id) else { return Ok(None) };
         Term::allowed(pid, types)?;
+        if shells.len() > 1 {
+            let list: Vec<String> = shells
+                .iter()
+                .map(|(id, i)| {
+                    let g = |k: &str| i.get(k).map_or("", String::as_str);
+                    format!("  --shell {id}  {}  {}  {:?}", g("cwd"), g("command"), g("title"))
+                })
+                .collect();
+            return Err(format!("{pid}'s terminal has {} shells (tabs, or windows of one terminal) and which is this window's is not known: name one\n{}", shells.len(), list.join("\n")));
+        }
         Ok(Some(Term { pid: pid.to_owned(), id, socket: format!("{}/{id}.sock", crate::term::socket_dir()) }))
     }
 
-    fn allowed(pid: &str, types: bool) -> Result<(), String> {
+    /// While the agent is stopped: how long ago the user stopped it, in ms.
+    fn allowed(pid: &str, types: bool) -> Result<Option<u64>, String> {
         let line = format!("i {pid}{}", if types { " w" } else { "" });
         match Hands::open()?.say(&line)?.as_str() {
-            "ok" => Ok(()),
+            "ok" => Ok(None),
+            r if r.starts_with("ok stopped ") => Ok(r["ok stopped ".len()..].parse().ok()),
             "err private" => Err(format!("{pid} is private (a `private` rule in session.conf), or the session is locked: its terminal is not read nor typed into")),
             "err stopped-by-user" => Err(STOPPED.to_owned()),
             r => Err(format!("{line}: {r}")),
@@ -389,10 +425,29 @@ impl Term {
         }
     }
 
-    /// The number of its newest line (`mark` in a read).
-    fn mark(&self) -> Result<u64, String> {
+    /// The number of its newest line (`mark` in a read), and what it says.
+    fn mark(&self) -> Result<(u64, String), String> {
         let reply = self.ask("lines 1")?;
-        reply.lines().next().and_then(|l| l.strip_prefix("mark ")).and_then(|m| m.parse().ok()).ok_or(reply)
+        let mut lines = reply.lines();
+        let mark = lines.next().and_then(|l| l.strip_prefix("mark ")).and_then(|m| m.parse().ok()).ok_or(reply.clone())?;
+        Ok((mark, lines.next().unwrap_or_default().to_owned()))
+    }
+
+    /// Whether what came after the mark `from` (whose line said `last`) has
+    /// that text: the new lines, and of the mark's line only what was written
+    /// on it since; the screen when that was written over (`screen`).
+    fn has(&self, text: &str, from: u64, last: &str) -> Result<bool, String> {
+        let reply = self.ask(&format!("lines {} {from} peek", crate::term::HISTORY))?;
+        let mut lines = reply.lines();
+        let mark = lines.next().and_then(|l| l.strip_prefix("mark ")).and_then(|m| m.parse::<u64>().ok()).unwrap_or(from);
+        let body: Vec<&str> = lines.collect();
+        Ok(match body.split_first() {
+            Some((&"screen", screen)) => screen.iter().any(|l| l.contains(text)),
+            _ => body.iter().enumerate().any(|(k, l)| {
+                let again = k == 0 && body.len() as u64 == mark.saturating_sub(from) + 1;
+                if again { l.strip_prefix(last).unwrap_or(l) } else { l }.contains(text)
+            }),
+        })
     }
 
     fn go(&self, what: &str, rest: &[String]) -> Result<(), String> {
@@ -425,14 +480,14 @@ impl Term {
                     _ => return Err("wait PID has \"TEXT\" | output | quiet MS | prompt [SECONDS]".into()),
                 };
                 let (start, from) = (std::time::Instant::now(), self.mark()?);
-                self.follow(&until, seconds(secs)?, start, from, false)?;
+                self.follow(&until, seconds(secs)?, start, &from, false)?;
             }
             "run" => {
                 let command = rest.first().filter(|c| !c.trim().is_empty()).ok_or("run what: run PID \"ls -l\"")?;
                 let (start, from) = (std::time::Instant::now(), self.mark()?);
                 self.ask(&format!("paste {}", hex(command)))?;
                 self.ask("keys enter")?;
-                self.follow(&Until::Prompt, seconds(rest.get(1))?, start, from, true)?;
+                self.follow(&Until::Prompt, seconds(rest.get(1))?, start, &from, true)?;
             }
             "type" => {
                 self.ask(&format!("paste {}", hex(&typed(rest)?)))?;
@@ -449,33 +504,41 @@ impl Term {
     /// after the mark `from` (as a read's answer). `run`: without the `ok`,
     /// and the prompt counts only once something came out (the command was
     /// taken).
-    fn follow(&self, until: &Until, secs: f64, start: std::time::Instant, from: u64, run: bool) -> Result<(), String> {
+    fn follow(&self, until: &Until, secs: f64, start: std::time::Instant, (from, last): &(u64, String), run: bool) -> Result<(), String> {
+        let from = *from;
         let mut asked = std::time::Instant::now();
+        // The shell in the foreground for so many looks in a row: between the
+        // commands of `a; b` it is, for a moment.
+        let mut at_shell = 0;
         loop {
             let info = crate::term::info(&self.socket)?;
             let number = |k: &str| info.get(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
             let quiet = number("quiet");
             let came = quiet < start.elapsed().as_millis() as u64;
+            at_shell = if number("foreground") == number("shell") { at_shell + 1 } else { 0 };
             let holds = match until {
-                Until::Has(text) => self.ask(&format!("lines {} {from} peek", crate::term::HISTORY))?.lines().skip(1).any(|l| l.contains(text.as_str())) || self.ask("screen")?.contains(text.as_str()),
+                Until::Has(text) => self.has(text, from, last)?,
                 Until::Output => came,
                 Until::Quiet(ms) => quiet >= *ms,
-                Until::Prompt => number("foreground") == number("shell") && quiet >= 300 && (came || !run),
+                Until::Prompt => at_shell >= 2 && quiet >= 300 && (came || !run),
             };
             let late = start.elapsed().as_secs_f64() >= secs;
-            if holds || late {
+            // A window made private, a session locked or a Stop meanwhile ends it.
+            let stopped = asked.elapsed() >= std::time::Duration::from_secs(1) && {
+                asked = std::time::Instant::now();
+                Term::allowed(&self.pid, false)?.is_some_and(|ago| ago < start.elapsed().as_millis() as u64)
+            };
+            if holds || late || stopped {
                 print!("{}{}", if holds && !run { "ok\n" } else { "" }, self.ask(&format!("lines {} {from}", crate::term::HISTORY))?);
             }
             if holds {
                 return Ok(());
             }
+            if stopped {
+                return Err(format!("{STOPPED} (what came out meanwhile is above)"));
+            }
             if late {
                 return Err(format!("timeout: it did not happen in {secs} s (what came out meanwhile is above)"));
-            }
-            // A window made private or a session locked meanwhile ends it.
-            if asked.elapsed() >= std::time::Duration::from_secs(1) {
-                Term::allowed(&self.pid, false)?;
-                asked = std::time::Instant::now();
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -785,6 +848,77 @@ fn print_changes(reply: &str, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// `agent wait`'s words, as `W` says them after its MS: the condition, and
+/// the seconds (30 unless given).
+fn wait_line(words: &[String]) -> Result<(String, f64), String> {
+    let id = |s: &str| s.strip_prefix('@').and_then(|n| n.parse::<u32>().ok());
+    let w: Vec<&str> = words.iter().map(String::as_str).collect();
+    let (line, rest) = match w[..] {
+        ["has" | "gone", text, ..] => (format!("{} {}", w[0], hex(text)), &w[2..]),
+        ["focus", at, ..] => (id(at).map_or_else(|| format!("focus {}", hex(at)), |n| format!("{n} focused")), &w[2..]),
+        ["changed" | "dialog", ..] => (w[0].to_owned(), &w[1..]),
+        ["settled", ms, ..] => (format!("settled {}", ms.parse::<u64>().map_err(|_| "settled MS: milliseconds")?), &w[2..]),
+        [at, "not", state, ..] if id(at).is_some() => (format!("{} not {state}", id(at).unwrap_or(0)), &w[3..]),
+        [at, state, ..] if id(at).is_some() => (format!("{} {state}", id(at).unwrap_or(0)), &w[2..]),
+        _ => return Err("wait PID has \"TEXT\" | gone \"TEXT\" | @ID gone | @ID [not] STATE | focus @ID|\"NAME\" | changed | settled MS | dialog [SECONDS]".into()),
+    };
+    let secs = match rest {
+        [] => 30.0,
+        [s] => s.parse::<f64>().ok().filter(|s| *s > 0.0 && *s <= 60.0).ok_or(format!("{s}: seconds, a number up to 60"))?,
+        _ => return Err(format!("{}: one number of seconds after the condition", rest.join(" "))),
+    };
+    Ok((line, secs))
+}
+
+/// `W`'s answer, as a person reads it.
+fn print_waited(reply: &str) -> Result<(), String> {
+    let Some(met) = reply.strip_prefix("ok") else {
+        return Err(match reply {
+            "err timeout" => "timeout: it did not happen in time".to_owned(),
+            "err stopped-by-user" => STOPPED.to_owned(),
+            "err no-tree" => "that window's program publishes nothing for screen readers: only `settled` and `dialog` can be waited for on it".to_owned(),
+            "err unknown-id" => "no element of that window has that @ID: `tree PID` numbers them".to_owned(),
+            "err unknown-state" => "a state is focused, focusable, checked, pressed, selected, expanded, collapsed, editable, disabled, enabled, required, invalid or busy".to_owned(),
+            "err gone" => "the window closed".to_owned(),
+            "err private" => "that window is private (a rule says so), or the screen is locked: it is not read".to_owned(),
+            r => r.to_owned(),
+        });
+    };
+    println!("ok");
+    let met = met.trim();
+    if let Some(r) = Rec::parse(met) {
+        println!("{}", r.line());
+    } else if let [pid, slot, title] = met.split_whitespace().collect::<Vec<&str>>()[..] {
+        println!("dialog {:?} (window {pid}.{slot})", unhex(title));
+    }
+    Ok(())
+}
+
+/// A line of `O`'s, read.
+#[derive(Debug, PartialEq)]
+enum Listened {
+    /// What to print: `focus role @ID ...`, `announce "TEXT" (role @ID ...)`, `dialog "TITLE" (window PID.SLOT)`.
+    Say(String),
+    /// How it ended: why, the program's events heard and the elements read.
+    End(String, u64, u64),
+}
+
+fn listened(line: &str) -> Listened {
+    let (what, rest) = line.split_once(' ').unwrap_or((line, ""));
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    Listened::Say(match (what, &f[..]) {
+        ("focus" | "text" | "live", _) => Rec::parse(rest).map_or_else(|| line.to_owned(), |r| format!("{what} {}", r.line())),
+        ("announce", [said, record @ ..]) => match Rec::parse(&record.join(" ")) {
+            Some(r) => format!("announce {:?} ({})", unhex(said), r.line()),
+            None => format!("announce {:?}", unhex(said)),
+        },
+        ("dialog", [pid, slot, title]) => format!("dialog {:?} (window {pid}.{slot})", unhex(title)),
+        ("no-tree", _) => "(its program publishes nothing for screen readers: only dialogs are heard)".to_owned(),
+        ("end", [why, heard, read]) => return Listened::End(why.to_string(), heard.parse().unwrap_or(0), read.parse().unwrap_or(0)),
+        _ => line.to_owned(),
+    })
+}
+
 /// Who the agent is: `PLEAMAR_AGENT_NAME`, `agent` otherwise.
 fn agent_name() -> String {
     std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "agent".to_owned())
@@ -807,6 +941,13 @@ fn keep_version(pid: &str, reply: &str) {
     let Some(v) = head.strip_prefix("nodes ").or_else(|| head.strip_prefix("changes ")) else { return };
     let Some(path) = versions_file() else { return };
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(path.parent().unwrap());
+    // One `tree` at a time reads and writes it (two at once lost a window's
+    // line): held until this returns.
+    let lock = std::fs::OpenOptions::new().write(true).create(true).truncate(false).mode(0o600).open(path.with_extension("lock"));
+    if let Ok(f) = &lock {
+        // SAFETY: flock on a file this holds open.
+        unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(f), libc::LOCK_EX) };
+    }
     let mut kept: Vec<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter(|l| l.split(' ').next() != Some(pid)).map(str::to_owned).collect();
     kept.push(format!("{pid} {v}"));
     // Written aside and moved over it: a reader never sees half of it.
@@ -845,11 +986,13 @@ fn look_at(p: &str, rest: &[&str], hidpi: bool, default_out: impl Fn() -> String
             let mut h = Hands::open()?;
             let found = h.say(&format!("A {target} find {}", hex(text)))?;
             let head = found.split(" | ").next().unwrap_or_default();
-            if !head.starts_with("nodes ") {
+            match head {
+                "err no-tree" | "err no-frame" => return Err(format!("\"{text}\" was taken as a text to find, and that window has no tree to find it in: a FILE to save to needs a / or .png (./{text}.png)")),
                 // As `read` says it.
-                print_nodes(&found, false)?;
+                _ if !head.starts_with("nodes ") => print_nodes(&found, false)?,
+                _ => {}
             }
-            let id = first_match(&found, text).ok_or_else(|| format!("nothing in that window says \"{text}\" (a file to save to has a / or ends in .png)"))?;
+            let id = first_match(&found, text).ok_or_else(|| format!("nothing in that window says \"{text}\": a word without a / or .png is a text to find, and a FILE to save to needs one (./{text}.png)"))?;
             (h.say(&format!("c {target}{hi} @{id} {pad} {}", hex(text)))?, more.first().map(|f| f.to_string()))
         }
         _ => return Ok(false),
@@ -929,6 +1072,19 @@ fn go(args: &[String]) -> Result<(), String> {
         println!("{HELP}");
         return Ok(());
     };
+    // `--shell ID`: which of a terminal's shells. Anywhere, but in `type`'s
+    // text only right after the window.
+    let mut args = args.to_vec();
+    let shell = match args.iter().position(|a| a == "--shell") {
+        Some(k) if k == 2 || (k > 2 && what != "type") => {
+            let id = args.get(k + 1).and_then(|s| s.parse::<i32>().ok()).ok_or("--shell ID: a shell's number, as `pleamar-wm term list` gives it")?;
+            args.drain(k..k + 2);
+            Some(id)
+        }
+        _ => None,
+    };
+    let args = &args[..];
+    let what = &args[0];
     // A window: its process (`4521`), or one of a program's several windows (`4521.3`), as `windows` names it.
     let pid = || {
         args.get(1)
@@ -941,18 +1097,27 @@ fn go(args: &[String]) -> Result<(), String> {
     };
     let target = |pid: &str| format!("root:{pid}");
     // A terminal with pleamar-wm's layer is read, followed and typed into
-    // through it; a pleamar window keeps its scene's `tree` and `wait`.
+    // through it; a pleamar window keeps its scene's `tree` and `wait`. A
+    // key the layer does not know goes as the window manager types it.
     let terminal = match what.as_str() {
         "read" => !matches!(args.get(2).map(String::as_str), Some("focus" | "at" | "find")),
-        "run" | "key" => true,
+        "run" => true,
+        "key" => shell.is_some() || args.get(2).is_some_and(|k| crate::term::knows_key(k)),
         "type" => element(args.get(2)).is_none(),
         "hotkey" => args.get(2).is_some_and(|k| k == "shift+tab" || k.strip_prefix("ctrl+").is_some_and(|c| c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic())),
-        "tree" | "wait" => pid().is_ok_and(|p| scene_of(&p).is_err()),
+        "tree" | "wait" => shell.is_some() || pid().is_ok_and(|p| scene_of(&p).is_err()),
         _ => false,
     };
+    if shell.is_some() && !terminal {
+        return Err("--shell ID names a terminal's shell: for read, tree, wait, run, type, key and hotkey".into());
+    }
     if terminal {
-        if let Some(t) = Term::of(&pid()?, matches!(what.as_str(), "run" | "type" | "key" | "hotkey"))? {
-            return t.go(what, &args[2..]);
+        if let Some(t) = Term::of(&pid()?, matches!(what.as_str(), "run" | "type" | "key" | "hotkey"), shell)? {
+            match t.go(what, &args[2..]) {
+                // An older layer that does not know it.
+                Err(e) if shell.is_none() && what == "key" && e.starts_with("no key called") => {}
+                done => return done,
+            }
         }
     }
     match what.as_str() {
@@ -1082,14 +1247,22 @@ fn go(args: &[String]) -> Result<(), String> {
                 "err no-picture" | "err timeout" => "that window has not drawn anything to look at yet".to_owned(),
                 _ => reply.clone(),
             })?.split_whitespace().collect();
-            let [path, _, _, age, ref scale @ ..] = f[..] else { return Err(reply) };
+            let [path, _, _, age, ref rest @ ..] = f[..] else { return Err(reply) };
+            // SCALE only with hidpi; X Y only when a menu reaches above or left of the window.
+            let (scale, corner) = if hidpi { (rest.first(), rest.get(1..)) } else { (None, Some(rest)) };
             let out = out.unwrap_or_else(default_out);
             std::fs::copy(path, &out).map_err(|e| format!("{out}: {e}"))?;
             let (w, h) = image::image_dimensions(&out).map_err(|e| e.to_string())?;
-            let scale = scale.first().map_or(String::new(), |s| format!(" scale {s}"));
+            let corner = match corner {
+                Some([x, y]) => format!(" at {x},{y} (a menu reaches past the window: add these to the picture's coordinates for click)"),
+                _ => String::new(),
+            };
+            let scale = scale.map_or(String::new(), |s| format!(" scale {s}")) + &corner;
             // A window that has not drawn for a while may be behind what it would show now.
             let old = age.parse::<u64>().ok().filter(|a| *a > 10_000).map_or(String::new(), |a| format!(" (drawn {}s ago)", a / 1000));
-            println!("{out} {w}x{h}{scale}{old}");
+            // A name that could have been a text to find: which it was taken for.
+            let named = if [".png", ".jpg", ".jpeg"].iter().any(|e| out.to_lowercase().ends_with(e)) { String::new() } else { format!(" (saved to the file {out:?}: a number, or a word with a /, is a FILE, not a text to find)") };
+            println!("{out} {w}x{h}{scale}{old}{named}");
         }
         "move" => {
             let p = pid()?;
@@ -1225,6 +1398,51 @@ fn go(args: &[String]) -> Result<(), String> {
                 _ => Hands::open()?.press_element(&p, &args[2..])?,
             }
         }
+        // Any other window: until its tree, or the window manager, says so.
+        "wait" if scene_of(&pid()?).is_err() => {
+            let (condition, secs) = wait_line(&args[2..])?;
+            let mut h = Hands::open()?;
+            let _ = h.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs_f64(secs + 1.0)));
+            print_waited(&h.say(&format!("W {} {} {condition}", target(&pid()?), (secs * 1000.0) as u64))?)?;
+        }
+        // Any other window: a line for each thing it says, as it comes.
+        "listen" => {
+            let p = pid()?;
+            let secs = match args.get(2) {
+                None => 30.0,
+                Some(s) => s.parse::<f64>().ok().filter(|s| *s > 0.0 && *s <= 600.0).ok_or(format!("{s}: seconds, a number up to 600"))?,
+            };
+            let mut h = Hands::open()?;
+            let _ = h.reader.get_ref().set_read_timeout(Some(std::time::Duration::from_secs_f64(secs + 5.0)));
+            writeln!(h.writer, "O {} {}", target(&p), (secs * 1000.0) as u64).map_err(|e| e.to_string())?;
+            let start = std::time::Instant::now();
+            loop {
+                let mut line = String::new();
+                if h.reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+                    return Err("the session hung up".into());
+                }
+                let line = line.trim_end();
+                if line.starts_with("err ") {
+                    return Err(tree_err(line));
+                }
+                let (why, heard, read) = match listened(line) {
+                    Listened::Say(s) => {
+                        println!("{s}");
+                        let _ = std::io::stdout().flush();
+                        continue;
+                    }
+                    Listened::End(why, heard, read) => (why, heard, read),
+                };
+                let took = start.elapsed().as_secs_f64();
+                eprintln!("listened {took:.1} s: {heard} events from it ({:.0} a second), {read} elements read", heard as f64 / took.max(0.001));
+                return match why.as_str() {
+                    "stopped-by-user" => Err(STOPPED.to_owned()),
+                    "private" => Err(tree_err("err private")),
+                    "gone" => Ok(println!("(the window closed)")),
+                    _ => Ok(()),
+                };
+            }
+        }
         "wait" | "watch" | "say" => {
             let p = pid()?;
             let (_, sock) = scene_of(&p)?;
@@ -1302,5 +1520,35 @@ mod tests {
         assert_eq!(named(&reply, "save"), Some(5));
         assert_eq!(named(&reply, "Save as"), Some(1));
         assert_eq!(named(&reply, "Open"), None);
+    }
+
+    #[test]
+    fn a_listen_is_read_a_line_at_a_time() {
+        let say = |s: &str| match listened(s) {
+            Listened::Say(s) => s,
+            end => panic!("{end:?}"),
+        };
+        assert_eq!(say(&format!("focus 12 0 push_button 10 20 80 30 focused,focusable {} -", hex("Close"))), "focus push_button @12 \"Close\" 10,20 80x30 focused,focusable");
+        assert_eq!(say(&format!("text 5 0 entry 0 0 200 30 focused,editable - {}", hex("12*3"))), "text entry @5 text \"12*3\" 0,0 200x30 focused,editable");
+        assert_eq!(say(&format!("announce {} 3 0 label - - - - - - -", hex("Saved"))), "announce \"Saved\" (label @3)");
+        assert_eq!(say(&format!("announce {}", hex("Saved"))), "announce \"Saved\"");
+        assert_eq!(say(&format!("dialog 4521 3 {}", hex("About"))), "dialog \"About\" (window 4521.3)");
+        assert!(say("no-tree").contains("only dialogs"));
+        assert_eq!(listened("end time 812 40"), Listened::End("time".into(), 812, 40));
+    }
+
+    #[test]
+    fn a_wait_says_its_condition_as_the_socket_does() {
+        let w = |s: &[&str]| wait_line(&s.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(w(&["has", "Saved"]), Ok(("has 5361766564".into(), 30.0)));
+        assert_eq!(w(&["@24", "gone", "5"]), Ok(("24 gone".into(), 5.0)));
+        assert_eq!(w(&["@24", "not", "busy"]), Ok(("24 not busy".into(), 30.0)));
+        assert_eq!(w(&["focus", "@3"]), Ok(("3 focused".into(), 30.0)));
+        assert_eq!(w(&["focus", "OK"]), Ok(("focus 4f4b".into(), 30.0)));
+        assert_eq!(w(&["settled", "500", "10"]), Ok(("settled 500".into(), 10.0)));
+        assert_eq!(w(&["dialog"]), Ok(("dialog".into(), 30.0)));
+        assert!(w(&["settled", "soon"]).is_err());
+        assert!(w(&["dialog", "90"]).is_err());
+        assert!(w(&["24", "gone"]).is_err());
     }
 }

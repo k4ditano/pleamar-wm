@@ -4,6 +4,7 @@
 //! `err gone` once the element is no longer there.
 
 use crate::a11y;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
@@ -19,6 +20,24 @@ const DEFUNCT: u32 = 6;
 const SHOWING: u32 = 25;
 /// How long one call to a program is waited for.
 const CALL: Duration = Duration::from_secs(1);
+
+/// The user's Stops, counted: what was begun before one is not done.
+static STOPS: AtomicU64 = AtomicU64::new(0);
+
+/// The user stopped the agent.
+pub fn stop() {
+    STOPS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The Stops so far, for `stopped_since`.
+pub fn stops() -> u64 {
+    STOPS.load(Ordering::Relaxed)
+}
+
+/// Whether the user stopped the agent after `stops` said that.
+pub fn stopped_since(stops: u64) -> bool {
+    STOPS.load(Ordering::Relaxed) != stops
+}
 
 /// What is done to an element.
 #[derive(Clone, Debug, PartialEq)]
@@ -76,20 +95,24 @@ fn done(said: Result<(bool,), &'static str>, missing: &'static str) -> Result<St
 }
 
 /// That element of the window, as `A` numbered it: `ok`, or for `Box`
-/// `box X Y W H shown|hidden` (`- - - -` without one).
-pub fn act(pid: u32, slot: usize, id: u32, act: Act) -> Result<String, &'static str> {
+/// `box X Y W H shown|hidden` (`- - - -` without one). `stops`: the user's
+/// Stops when it was asked; one since refuses it right before it is done.
+pub fn act(pid: u32, slot: usize, id: u32, act: Act, stops: u64) -> Result<String, &'static str> {
     let k = crate::a11y_tree::key_of(pid, slot, id).ok_or("gone")?;
     let (states,) = ask::<(Vec<u32>,), _>(&k, ACCESSIBLE, "GetState", &(), "gone")?;
     let has = |bit: u32| states.get(bit as usize / 32).is_some_and(|w| w & (1 << (bit % 32)) != 0);
     if has(DEFUNCT) {
         return Err("gone");
     }
+    if act != Act::Box && stopped_since(stops) {
+        return Err("stopped-by-user");
+    }
     match act {
         Act::Box => {
             let shown = if has(SHOWING) { "shown" } else { "hidden" };
             Ok(match ask::<((i32, i32, i32, i32),), _>(&k, COMPONENT, "GetExtents", &(WINDOW,), "no-box") {
-                Ok(((x, y, w, h),)) if w > 0 && h > 0 => format!("box {x} {y} {w} {h} {shown}"),
-                Ok(_) | Err("no-box") => format!("box - - - - {shown}"),
+                Ok(((x, y, w, h),)) => crate::a11y_tree::sane([x, y, w, h]).map_or(format!("box - - - - {shown}"), |[x, y, w, h]| format!("box {x} {y} {w} {h} {shown}")),
+                Err("no-box") => format!("box - - - - {shown}"),
                 Err(e) => return Err(e),
             })
         }
@@ -116,6 +139,15 @@ mod tests {
 
     #[test]
     fn an_element_never_given_is_gone() {
-        assert_eq!(act(1, 0, 7, Act::Press), Err("gone"));
+        assert_eq!(act(1, 0, 7, Act::Press, stops()), Err("gone"));
+    }
+
+    #[test]
+    fn a_stop_after_the_ask_is_seen() {
+        let before = stops();
+        assert!(!stopped_since(before));
+        stop();
+        assert!(stopped_since(before));
+        assert!(!stopped_since(stops()));
     }
 }

@@ -20,8 +20,8 @@
 //! `PLEAMAR_A11Y_LOG=1` says every message a connection sends.
 
 use futures_lite::StreamExt;
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroU32;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
@@ -58,8 +58,13 @@ const MAX_RULES: usize = 512;
 const FLOOD: u32 = 10_000;
 /// What a connection that does not read its socket may have queued to it.
 const QUEUE: usize = 4096;
+/// The bytes a queue (a connection's, a listener's, a reader's held calls)
+/// may hold: a few of the largest messages. Past it what comes is dropped.
+const QUEUE_BYTES: usize = 32 << 20;
 /// How long a call of pleamar-wm's own is waited for at most.
 const OWN_DEADLINE: Duration = Duration::from_secs(60);
+/// How long a call between connections is waited for, as dbus-daemon's.
+const PEER_DEADLINE: Duration = Duration::from_secs(25);
 /// How long a reader is held for the user's answer.
 const ASK_DEADLINE: Duration = Duration::from_secs(60);
 
@@ -111,10 +116,20 @@ enum Cmd {
 
 static TO_BROKER: OnceLock<async_channel::Sender<Cmd>> = OnceLock::new();
 static ADDRESS: OnceLock<String> = OnceLock::new();
-static PROGRAMS: Mutex<Vec<Program>> = Mutex::new(Vec::new());
+static PROGRAMS: Mutex<Vec<Known>> = Mutex::new(Vec::new());
 /// Who asks the user about a reader that is not in session.conf; without
 /// one, such a reader is refused at once.
-static ASK: Mutex<Option<Box<dyn Fn(&Program) + Send>>> = Mutex::new(None);
+static ASK: Mutex<Option<Asker>> = Mutex::new(None);
+
+type Asker = std::sync::Arc<dyn Fn(&Program) + Send + Sync>;
+
+/// A connection as `programs` keeps it: when its process started, to tell
+/// it from a later one with its pid, and when it embedded its tree.
+struct Known {
+    program: Program,
+    start: Option<u64>,
+    embedded: u64,
+}
 
 fn tell(c: Cmd) -> bool {
     TO_BROKER.get().is_some_and(|tx| tx.try_send(c).is_ok())
@@ -125,10 +140,10 @@ fn logging() -> bool {
     *LOG.get_or_init(|| std::env::var_os("PLEAMAR_A11Y_LOG").is_some_and(|v| v != "0"))
 }
 
-/// Where the socket goes, for the display it serves.
-pub fn socket_path(display: &str) -> String {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    format!("{dir}/pleamar-a11y-{display}")
+/// Where the socket goes, for the display it serves: the user's runtime
+/// directory, or nowhere.
+pub fn socket_path(display: &str) -> Option<String> {
+    std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| !d.is_empty()).map(|dir| format!("{dir}/pleamar-a11y-{display}"))
 }
 
 /// The bus's address (`unix:path=...`), once it listens.
@@ -154,12 +169,26 @@ pub fn environment() -> Vec<(&'static str, String)> {
 
 /// Every connection on the bus now, readers too.
 pub fn programs() -> Vec<Program> {
-    PROGRAMS.lock().unwrap().clone()
+    PROGRAMS.lock().unwrap().iter().map(|k| k.program.clone()).collect()
 }
 
-/// The connection of that process that embedded a tree, if any did.
+/// The connection of that process that embedded a tree, if any did: of
+/// several, the last to embed.
 pub fn program_of(pid: u32) -> Option<Program> {
-    PROGRAMS.lock().unwrap().iter().find(|p| p.pid == pid && p.root.is_some() && !p.reader).cloned()
+    pick(&PROGRAMS.lock().unwrap(), pid, started(pid))
+}
+
+/// Of the connections, those of the process with that pid that started
+/// then; one made by an earlier process with its pid is not it.
+fn pick(known: &[Known], pid: u32, start: Option<u64>) -> Option<Program> {
+    let p = known.iter().filter(|k| k.program.pid == pid && k.program.root.is_some() && !k.program.reader && start.is_some() && k.start == start);
+    p.max_by_key(|k| k.embedded).map(|k| k.program.clone())
+}
+
+/// When the process started (`/proc/PID/stat`, the 22nd field).
+fn started(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
 }
 
 /// Calls a method on a program's object and waits for its answer: `name` is
@@ -209,15 +238,19 @@ pub fn listen(events: &[&str]) -> Option<Listener> {
 }
 
 impl Drop for Listener {
+    /// Waited for when the broker's queue is full: events let go of are
+    /// never left registered.
     fn drop(&mut self) {
-        tell(Cmd::Events(std::mem::take(&mut self.events), false));
+        if let Some(tx) = TO_BROKER.get() {
+            let _ = tx.send_blocking(Cmd::Events(std::mem::take(&mut self.events), false));
+        }
     }
 }
 
 /// Who asks the user when a reader that session.conf does not name wants
 /// in: it is held until `answer`, or refused after a minute.
-pub fn on_ask(f: impl Fn(&Program) + Send + 'static) {
-    *ASK.lock().unwrap() = Some(Box::new(f));
+pub fn on_ask(f: impl Fn(&Program) + Send + Sync + 'static) {
+    *ASK.lock().unwrap() = Some(std::sync::Arc::new(f));
 }
 
 /// The user's answer about the reader of that process: allowed (for this
@@ -233,7 +266,11 @@ pub fn start(display: &str) {
     if !crate::config::get().agent {
         return;
     }
-    if let Some(address) = broker_at(&socket_path(display)) {
+    // A socket in a directory others write to could be theirs first.
+    let Some(path) = socket_path(display) else {
+        return eprintln!("a11y: XDG_RUNTIME_DIR is not set: no accessibility bus");
+    };
+    if let Some(address) = broker_at(&path) {
         let _ = std::thread::Builder::new().name("a11y-session".into()).spawn(move || publish(address));
     }
 }
@@ -258,6 +295,7 @@ fn broker_at(path: &str) -> Option<String> {
         let ex: &'static async_executor::LocalExecutor<'static> = Box::leak(Box::default());
         let broker = Rc::new(RefCell::new(Broker::new(ex)));
         ex.spawn(commands(broker.clone(), rx)).detach();
+        ex.spawn(expiry(broker.clone())).detach();
         futures_lite::future::block_on(ex.run(serve(ex, broker, listener)));
     });
     if started.is_err() {
@@ -349,11 +387,15 @@ struct Peer {
     /// `:1.N`, from its `Hello`; empty before it.
     name: String,
     pid: u32,
+    /// When its process started, as `started` says.
+    start: Option<u64>,
     exe: String,
     /// What the process calls itself (`/proc/PID/comm`): a script's name,
     /// where `exe` is its interpreter.
     comm: String,
     root: Option<(String, String)>,
+    /// When it embedded `root`, in the order embeds came.
+    embedded: u64,
     reader: Option<Reader>,
     /// Calls held while the user is asked.
     held: Vec<Message>,
@@ -364,18 +406,44 @@ struct Peer {
     events: Vec<String>,
     /// Its calls still waiting for an answer.
     calls: usize,
-    /// Messages since `since`, for floods.
+    /// Messages since `since`, for floods: calls and replies, and signals.
     since: Instant,
     count: u32,
+    signals: u32,
     out: async_channel::Sender<Message>,
-    conn: zbus::Connection,
+    queued: RefCell<Budget>,
+    /// Whether what it is sent is being dropped (said once).
+    dropping: Cell<bool>,
 }
 
-/// Who waits for the answer to a call that was passed on.
+/// Who waits for the answer to a call that was passed on, since when.
 enum Waiter {
     /// A connection, and the serial of its call.
-    Peer(u64, NonZeroU32),
+    Peer(u64, NonZeroU32, Instant),
     Own(async_channel::Sender<Result<Message, Error>>, Instant),
+}
+
+/// The bytes in a queue: the sizes of what was put in it, oldest first. Its
+/// reader takes from the front, so what is still in it is the last of them.
+#[derive(Default)]
+struct Budget {
+    sizes: VecDeque<usize>,
+    bytes: usize,
+}
+
+impl Budget {
+    /// Whether `size` more fits, with `len` messages still in the queue.
+    fn fits(&mut self, len: usize, size: usize) -> bool {
+        while self.sizes.len() > len {
+            self.bytes -= self.sizes.pop_front().unwrap_or(0);
+        }
+        self.bytes + size <= QUEUE_BYTES
+    }
+
+    fn put(&mut self, size: usize) {
+        self.sizes.push_back(size);
+        self.bytes += size;
+    }
 }
 
 enum Gate {
@@ -392,11 +460,12 @@ struct Broker {
     waiting: HashMap<(u64, u32), Waiter>,
     /// The events pleamar-wm's reader wants, and how many want each.
     own_events: HashMap<String, usize>,
-    listeners: Vec<async_channel::Sender<Message>>,
+    listeners: Vec<(async_channel::Sender<Message>, Budget)>,
     /// Readers let in, by name: session.conf's and the user's answers.
     allowed: Vec<String>,
     guid: zbus::OwnedGuid,
     next: u64,
+    embeds: u64,
     ex: &'static async_executor::LocalExecutor<'static>,
     /// Methods answered `NotSupported` that were said already.
     unsupported: std::collections::HashSet<String>,
@@ -483,7 +552,7 @@ async fn connection(ex: &'static async_executor::LocalExecutor<'static>, broker:
         }
     })
     .detach();
-    let id = broker.borrow_mut().add(pid, out, conn.clone());
+    let id = broker.borrow_mut().add(pid, out);
     while let Some(m) = stream.next().await {
         let Ok(m) = m else { break };
         if !broker.borrow_mut().incoming(id, m) {
@@ -497,13 +566,29 @@ async fn connection(ex: &'static async_executor::LocalExecutor<'static>, broker:
 /// What other threads ask, in order.
 async fn commands(broker: Rc<RefCell<Broker>>, rx: async_channel::Receiver<Cmd>) {
     while let Ok(c) = rx.recv().await {
-        let mut b = broker.borrow_mut();
-        match c {
-            Cmd::Call(m, reply) => b.own_call(m, reply),
-            Cmd::Events(events, on) => b.own_events(events, on),
-            Cmd::Listen(tx) => b.listeners.push(tx),
-            Cmd::Answer(pid, allow) => b.answered(pid, allow),
+        let call = matches!(c, Cmd::Call(..));
+        {
+            let mut b = broker.borrow_mut();
+            match c {
+                Cmd::Call(m, reply) => b.own_call(m, reply),
+                Cmd::Events(events, on) => b.own_events(events, on),
+                Cmd::Listen(tx) => b.listeners.push((tx, Budget::default())),
+                Cmd::Answer(pid, allow) => b.answered(pid, allow),
+            }
         }
+        // A walk asks thousands at once: the connections' writers send
+        // between them, or their queues fill.
+        if call {
+            futures_lite::future::yield_now().await;
+        }
+    }
+}
+
+/// Calls whose answers did not come in time.
+async fn expiry(broker: Rc<RefCell<Broker>>) {
+    loop {
+        async_io::Timer::after(Duration::from_secs(1)).await;
+        broker.borrow_mut().expire(Instant::now());
     }
 }
 
@@ -550,32 +635,72 @@ impl Broker {
             allowed: crate::config::get().a11y_readers.clone(),
             guid: zbus::Guid::generate().into(),
             next: 1,
+            embeds: 0,
             unsupported: Default::default(),
         }
     }
 
-    fn add(&mut self, pid: u32, out: async_channel::Sender<Message>, conn: zbus::Connection) -> u64 {
+    fn add(&mut self, pid: u32, out: async_channel::Sender<Message>) -> u64 {
         let id = self.next;
         self.next += 1;
         let (exe, comm) = (read_proc(pid, "exe"), read_proc(pid, "comm"));
-        self.peers.insert(id, Peer { name: String::new(), pid, exe, comm, root: None, reader: None, held: Vec::new(), names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, out, conn });
+        let p = Peer { name: String::new(), pid, start: started(pid), exe, comm, root: None, embedded: 0, reader: None, held: Vec::new(), names: Vec::new(), rules: Vec::new(), events: Vec::new(), calls: 0, since: Instant::now(), count: 0, signals: 0, out, queued: Default::default(), dropping: Cell::new(false) };
+        self.peers.insert(id, p);
         id
     }
 
     /// What pleamar-wm's reader sees: every connection with its name.
     fn snapshot(&self) {
-        let list = self.peers.values().filter(|p| !p.name.is_empty()).map(|p| Program { name: p.name.clone(), pid: p.pid, exe: p.exe.clone(), root: p.root.clone(), reader: p.reader == Some(Reader::Allowed) }).collect();
-        *PROGRAMS.lock().unwrap() = list;
+        let list = self.peers.values().filter(|p| !p.name.is_empty());
+        let list = list.map(|p| Known { program: Program { name: p.name.clone(), pid: p.pid, exe: p.exe.clone(), root: p.root.clone(), reader: p.reader == Some(Reader::Allowed) }, start: p.start, embedded: p.embedded });
+        *PROGRAMS.lock().unwrap() = list.collect();
     }
 
     fn label(&self, id: u64) -> String {
         self.peers.get(&id).map(|p| format!("{} (pid {}, {})", if p.name.is_empty() { "-" } else { &p.name }, p.pid, short(&p.exe))).unwrap_or_default()
     }
 
-    fn send(&self, to: u64, m: Message) {
-        if let Some(p) = self.peers.get(&to) {
-            if p.out.try_send(m).is_err() {
-                eprintln!("a11y: {} does not read what it is sent: dropped", self.label(to));
+    /// Whether it was queued: not to a connection that does not read what
+    /// it is sent, past `QUEUE` messages or `QUEUE_BYTES`.
+    fn send(&self, to: u64, m: Message) -> bool {
+        let Some(p) = self.peers.get(&to) else { return false };
+        let size = m.data().len();
+        let sent = p.queued.borrow_mut().fits(p.out.len(), size) && p.out.try_send(m).is_ok();
+        if sent {
+            p.queued.borrow_mut().put(size);
+            p.dropping.set(false);
+        } else if !p.dropping.replace(true) {
+            eprintln!("a11y: {} does not read what it is sent: dropped until it does", self.label(to));
+        }
+        sent
+    }
+
+    /// The caller of a call passed on is told no answer comes.
+    fn unwait(&mut self, from: u64, their: NonZeroU32, text: &str) {
+        if let Some(f) = self.peers.get_mut(&from) {
+            f.calls = f.calls.saturating_sub(1);
+        }
+        let to = self.name_of(from).to_owned();
+        let built = Message::method_call(BUS_PATH, "Gone").and_then(|b| b.serial(their).build(&())).and_then(|call| Message::error(&call.header(), NO_REPLY).and_then(|b| b.sender(BUS)).and_then(|b| b.destination(to)).and_then(|b| b.build(&(text,))));
+        if let Ok(m) = built {
+            self.send(from, m);
+        }
+    }
+
+    /// The calls waited for too long, or whose callers stopped waiting.
+    fn expire(&mut self, now: Instant) {
+        let late = |w: &Waiter| match w {
+            Waiter::Peer(_, _, at) => now.duration_since(*at) > PEER_DEADLINE,
+            Waiter::Own(tx, at) => tx.is_closed() || now.duration_since(*at) > OWN_DEADLINE,
+        };
+        let late: Vec<(u64, u32)> = self.waiting.iter().filter(|(_, w)| late(w)).map(|(&k, _)| k).collect();
+        for key in late {
+            match self.waiting.remove(&key) {
+                Some(Waiter::Peer(from, their, _)) => self.unwait(from, their, "the program called did not answer in time"),
+                Some(Waiter::Own(tx, _)) => {
+                    let _ = tx.try_send(Err(Error::Timeout));
+                }
+                None => (),
             }
         }
     }
@@ -604,7 +729,9 @@ impl Broker {
         }
         let built = Message::method_return(hdr).and_then(|b| b.sender(from)).and_then(|b| b.destination(self.name_of(to).to_owned())).and_then(|b| b.build(body));
         match built {
-            Ok(m) => self.send(to, m),
+            Ok(m) => {
+                self.send(to, m);
+            }
             Err(e) => eprintln!("a11y: an answer to {} could not be made: {e}", self.label(to)),
         }
     }
@@ -647,15 +774,30 @@ impl Broker {
     }
 
     fn incoming(&mut self, id: u64, m: Message) -> bool {
+        // Answers to what it was asked are the asker's pace, not its own.
+        let answer = matches!(m.message_type(), Type::MethodReturn | Type::Error) && m.header().reply_serial().is_some_and(|s| self.waiting.contains_key(&(id, s.get())));
         let Some(p) = self.peers.get_mut(&id) else { return false };
         if m.data().len() > MAX_SIZE {
             eprintln!("a11y: {} sent {} bytes at once: put out", self.label(id), m.data().len());
             return false;
         }
         if p.since.elapsed() > Duration::from_secs(1) {
-            (p.since, p.count) = (Instant::now(), 0);
+            (p.since, p.count, p.signals) = (Instant::now(), 0, 0);
         }
-        p.count += 1;
+        // A program's events are what readers asked for (a listen on a page
+        // that changes all the time): past the limit they are let go, and
+        // the program stays.
+        if m.message_type() == Type::Signal {
+            p.signals += 1;
+            if p.signals > FLOOD {
+                if p.signals == FLOOD + 1 {
+                    eprintln!("a11y: {} sent over {FLOOD} signals in a second: the rest of it dropped", self.label(id));
+                }
+                return true;
+            }
+        } else if !answer {
+            p.count += 1;
+        }
         if p.count > FLOOD {
             eprintln!("a11y: {} sent over {FLOOD} messages in a second: put out", self.label(id));
             return false;
@@ -664,7 +806,7 @@ impl Broker {
         if logging() {
             println!("a11y: {} {:?} {} {} {}.{} {}", self.label(id), m.message_type(), hdr.destination().map(|d| d.as_str()).unwrap_or("-"), hdr.path().map(|d| d.as_str()).unwrap_or("-"), hdr.interface().map(|d| d.as_str()).unwrap_or("-"), hdr.member().map(|d| d.as_str()).or(hdr.error_name().map(|e| e.as_str())).unwrap_or("-"), hdr.signature());
         }
-        let hello = m.message_type() == Type::MethodCall && hdr.member().is_some_and(|n| n == "Hello");
+        let hello = m.message_type() == Type::MethodCall && hdr.member().is_some_and(|n| n == "Hello") && hdr.destination().is_some_and(|d| d == BUS);
         if self.peers[&id].name.is_empty() && !hello {
             eprintln!("a11y: {} spoke before its Hello: put out", self.label(id));
             return false;
@@ -705,11 +847,14 @@ impl Broker {
                 let Ok(out) = relay(m, &hdr, &self.peers[&id].name, None, None) else {
                     return self.error(id, &hdr, BUS, INVALID_ARGS, "a call without a path or a member");
                 };
+                let serial = out.primary_header().serial_num().get();
+                if !self.send(to, out) {
+                    return self.error(id, &hdr, BUS, LIMITS, "the program called has too much it has not read");
+                }
                 if !hdr.primary().flags().contains(Flags::NoReplyExpected) {
-                    self.waiting.insert((to, out.primary_header().serial_num().get()), Waiter::Peer(id, hdr.primary().serial_num()));
+                    self.waiting.insert((to, serial), Waiter::Peer(id, hdr.primary().serial_num(), Instant::now()));
                     self.peers.get_mut(&id).unwrap().calls += 1;
                 }
-                self.send(to, out);
             }
         }
     }
@@ -717,54 +862,53 @@ impl Broker {
     /// Whether this connection may read: it is a program until it does
     /// what only a reader does (call into a program, register for events).
     fn gate(&mut self, id: u64, m: &Message) -> Gate {
-        let allowed = &self.allowed;
-        let p = self.peers.get_mut(&id).unwrap();
+        let p = &self.peers[&id];
         match p.reader {
-            Some(Reader::Allowed) => Gate::Pass,
-            Some(Reader::Denied) => Gate::Deny,
-            Some(Reader::Asking) => {
-                p.held.push(m.clone());
-                Gate::Held
-            }
-            None => {
-                let named = names_of(&p.exe, &p.comm).iter().any(|n| allowed.contains(n));
-                let ask = ASK.lock().unwrap();
-                if named {
-                    p.reader = Some(Reader::Allowed);
-                } else if ask.is_some() {
-                    p.reader = Some(Reader::Asking);
-                    p.held.push(m.clone());
-                } else {
-                    p.reader = Some(Reader::Denied);
-                }
-                let (pid, reader) = (p.pid, p.reader);
-                let label = self.label(id);
-                match reader {
-                    Some(Reader::Allowed) => {
-                        println!("a11y: {label} reads the windows (session.conf allows it)");
-                        self.snapshot();
-                        Gate::Pass
-                    }
-                    Some(Reader::Asking) => {
-                        println!("a11y: {label} wants to read the windows: the user is asked");
-                        if let Some(f) = ask.as_ref() {
-                            f(&Program { name: self.peers[&id].name.clone(), pid, exe: self.peers[&id].exe.clone(), root: None, reader: false });
-                        }
-                        self.ex.spawn(async move {
-                            async_io::Timer::after(ASK_DEADLINE).await;
-                            tell(Cmd::Answer(pid, false));
-                        })
-                        .detach();
-                        Gate::Held
-                    }
-                    _ => {
-                        let name = names_of(&self.peers[&id].exe, &self.peers[&id].comm).pop().unwrap_or_default();
-                        eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {name}` in session.conf allows it)");
-                        Gate::Deny
-                    }
-                }
-            }
+            Some(Reader::Allowed) => return Gate::Pass,
+            Some(Reader::Denied) => return Gate::Deny,
+            Some(Reader::Asking) => return self.hold(id, m),
+            None => (),
         }
+        let named = names_of(&p.exe, &p.comm).iter().any(|n| self.allowed.contains(n));
+        let asker = ASK.lock().unwrap().clone();
+        let label = self.label(id);
+        let p = self.peers.get_mut(&id).unwrap();
+        if named {
+            p.reader = Some(Reader::Allowed);
+            println!("a11y: {label} reads the windows (session.conf allows it)");
+            self.snapshot();
+            return Gate::Pass;
+        }
+        let Some(asker) = asker else {
+            p.reader = Some(Reader::Denied);
+            let name = names_of(&p.exe, &p.comm).pop().unwrap_or_default();
+            eprintln!("a11y: {label} tried to read another program's tree: refused (`a11y reader {name}` in session.conf allows it)");
+            return Gate::Deny;
+        };
+        p.reader = Some(Reader::Asking);
+        let program = Program { name: p.name.clone(), pid: p.pid, exe: p.exe.clone(), root: None, reader: false };
+        println!("a11y: {label} wants to read the windows: the user is asked");
+        // Asked once the broker is free: the asker may answer at once.
+        self.ex.spawn(async move {
+            asker(&program);
+            async_io::Timer::after(ASK_DEADLINE).await;
+            tell(Cmd::Answer(program.pid, false));
+        })
+        .detach();
+        self.hold(id, m)
+    }
+
+    /// A call of a reader the user is asked about, kept for the answer, as
+    /// many as it may have waiting.
+    fn hold(&mut self, id: u64, m: &Message) -> Gate {
+        let p = self.peers.get_mut(&id).unwrap();
+        let bytes: usize = p.held.iter().map(|h| h.data().len()).sum();
+        if p.held.len() >= MAX_CALLS || bytes + m.data().len() > QUEUE_BYTES {
+            self.error(id, &m.header(), BUS, LIMITS, "too many calls waiting for the user's answer");
+        } else {
+            p.held.push(m.clone());
+        }
+        Gate::Held
     }
 
     /// The user answered about the reader of that process.
@@ -797,13 +941,15 @@ impl Broker {
         let hdr = m.header();
         let Some(serial) = hdr.reply_serial() else { return };
         match self.waiting.remove(&(id, serial.get())) {
-            Some(Waiter::Peer(from, their)) => {
+            Some(Waiter::Peer(from, their, _)) => {
                 if let Some(p) = self.peers.get_mut(&from) {
                     p.calls = p.calls.saturating_sub(1);
                 }
                 let to = self.name_of(from).to_owned();
                 match relay(m, &hdr, self.name_of(id), Some(their), Some(&to)) {
-                    Ok(out) => self.send(from, out),
+                    Ok(out) => {
+                        self.send(from, out);
+                    }
                     Err(e) => eprintln!("a11y: an answer from {} could not be passed on: {e}", self.label(id)),
                 }
             }
@@ -845,23 +991,30 @@ impl Broker {
         }
     }
 
+    /// To pleamar-wm's listeners, those that keep up: past `QUEUE_BYTES` not
+    /// read, dropped.
     fn to_listeners(&mut self, m: &Message) {
-        self.listeners.retain(|tx| !tx.is_closed());
-        for tx in &self.listeners {
-            let _ = tx.try_send(m.clone());
+        self.listeners.retain(|(tx, _)| !tx.is_closed());
+        let size = m.data().len();
+        for (tx, queued) in &mut self.listeners {
+            if queued.fits(tx.len(), size) && tx.try_send(m.clone()).is_ok() {
+                queued.put(size);
+            }
         }
     }
 
     fn own_call(&mut self, m: Message, reply: async_channel::Sender<Result<Message, Error>>) {
-        // Calls whose callers stopped waiting.
-        self.waiting.retain(|_, w| !matches!(w, Waiter::Own(tx, at) if tx.is_closed() || at.elapsed() > OWN_DEADLINE));
         let to = m.header().destination().and_then(|d| self.names.get(d.as_str()).copied()).filter(|&to| to != 0);
         let Some(to) = to else {
             let _ = reply.try_send(Err(Error::Gone));
             return;
         };
-        self.waiting.insert((to, m.primary_header().serial_num().get()), Waiter::Own(reply, Instant::now()));
-        self.send(to, m);
+        let serial = m.primary_header().serial_num().get();
+        if self.send(to, m) {
+            self.waiting.insert((to, serial), Waiter::Own(reply, Instant::now()));
+        } else {
+            let _ = reply.try_send(Err(Error::Failed(LIMITS.into(), "the program has too much it has not read".into())));
+        }
     }
 
     fn own_events(&mut self, events: Vec<String>, on: bool) {
@@ -880,6 +1033,13 @@ impl Broker {
                 }
             }
         }
+        // atk-bridge, once anyone registered an event, sends every event it
+        // has until that one leaves the bus (its registry's answers never
+        // all come: it waits for three and asks two). With nothing wanted
+        // here, it is told the reader left, and goes quiet.
+        if !on && self.own_events.is_empty() {
+            self.emit(BUS, BUS_PATH, BUS, "NameOwnerChanged", &(OWN, OWN, ""), |_, p| p.reader.is_none());
+        }
     }
 
     /// A connection went: what it owned, what it was asked and what it asked.
@@ -889,23 +1049,14 @@ impl Broker {
         let gone: Vec<(u64, u32)> = self.waiting.keys().filter(|(to, _)| *to == id).copied().collect();
         for key in gone {
             match self.waiting.remove(&key) {
-                Some(Waiter::Peer(from, their)) => {
-                    if let Some(f) = self.peers.get_mut(&from) {
-                        f.calls = f.calls.saturating_sub(1);
-                    }
-                    let to = self.name_of(from).to_owned();
-                    let built = zbus::message::Message::method_call(BUS_PATH, "Gone").and_then(|b| b.serial(their).build(&())).and_then(|call| Message::error(&call.header(), NO_REPLY).and_then(|b| b.sender(BUS)).and_then(|b| b.destination(to)).and_then(|b| b.build(&("the program went away before answering",))));
-                    if let Ok(m) = built {
-                        self.send(from, m);
-                    }
-                }
+                Some(Waiter::Peer(from, their, _)) => self.unwait(from, their, "the program went away before answering"),
                 Some(Waiter::Own(tx, _)) => {
                     let _ = tx.try_send(Err(Error::Gone));
                 }
                 None => (),
             }
         }
-        self.waiting.retain(|_, w| !matches!(w, Waiter::Peer(from, _) if *from == id));
+        self.waiting.retain(|_, w| !matches!(w, Waiter::Peer(from, ..) if *from == id));
         for n in p.names.iter().chain(std::iter::once(&p.name)) {
             if self.names.get(n) == Some(&id) {
                 self.names.remove(n);
@@ -921,7 +1072,6 @@ impl Broker {
             println!("a11y: {} (pid {}) left", p.name, p.pid);
         }
         self.snapshot();
-        drop(p.conn);
     }
 
     /// The programs' roots, the desktop's children, in the order they came.
@@ -1063,9 +1213,11 @@ impl Broker {
             (ROOT, "org.a11y.atspi.Socket", "Embed") => {
                 let plug = body.deserialize::<((String, OwnedObjectPath),)>().map(|t| t.0).or_else(|_| body.deserialize::<(String, OwnedObjectPath)>());
                 let Ok((_, plug)) = plug else { return self.error(id, &hdr, OWN, INVALID_ARGS, "Embed takes (so)") };
+                self.embeds += 1;
                 let p = self.peers.get_mut(&id).unwrap();
                 // Its own tree only, whatever name it gave.
                 p.root = Some((p.name.clone(), plug.to_string()));
+                p.embedded = self.embeds;
                 println!("a11y: {} embedded its tree", self.label(id));
                 self.reply(id, &hdr, OWN, &(root(),));
                 self.snapshot();
@@ -1323,6 +1475,167 @@ mod tests {
         assert!(!Rule::parse("sender='org.a11y.atspi.Registry'").unwrap().matches(&changed, Some(":1.4"), &registry));
         assert!(Rule::parse("path_namespace='/org/a11y'").unwrap().matches(&changed, Some(":1.4"), &none));
         assert!(Rule::parse("type='nonsense'").is_none() && Rule::parse("member='open").is_none());
+    }
+
+    fn broker() -> (&'static async_executor::LocalExecutor<'static>, Broker) {
+        let ex: &'static async_executor::LocalExecutor<'static> = Box::leak(Box::default());
+        (ex, Broker::new(ex))
+    }
+
+    /// A connection that said its Hello, and what it is sent.
+    fn peer(b: &mut Broker, room: usize) -> (u64, String, async_channel::Receiver<Message>) {
+        let (out, rx) = async_channel::bounded(room);
+        let id = b.add(std::process::id(), out);
+        let name = format!(":1.{id}");
+        b.peers.get_mut(&id).unwrap().name = name.clone();
+        b.names.insert(name.clone(), id);
+        (id, name, rx)
+    }
+
+    fn reader(b: &mut Broker) -> (u64, async_channel::Receiver<Message>) {
+        let (id, _, rx) = peer(b, QUEUE);
+        b.peers.get_mut(&id).unwrap().reader = Some(Reader::Allowed);
+        (id, rx)
+    }
+
+    fn get_role(to: &str) -> Message {
+        Message::method_call(ROOT, "GetRole").unwrap().interface("org.a11y.atspi.Accessible").unwrap().destination(to).unwrap().build(&()).unwrap()
+    }
+
+    fn error_of(m: &Message) -> Option<String> {
+        m.header().error_name().map(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_call_not_answered_in_time_is_answered_no_reply() {
+        let (_, mut b) = broker();
+        let (reader, from_bus) = reader(&mut b);
+        let (_, program, _to_program) = peer(&mut b, QUEUE);
+        let call = get_role(&program);
+        assert!(b.incoming(reader, call.clone()));
+        b.expire(Instant::now());
+        assert_eq!((b.waiting.len(), b.peers[&reader].calls), (1, 1), "not yet");
+        b.expire(Instant::now() + PEER_DEADLINE + Duration::from_secs(1));
+        let e = from_bus.try_recv().unwrap();
+        assert_eq!(error_of(&e).as_deref(), Some(NO_REPLY));
+        assert_eq!(e.header().reply_serial(), Some(call.primary_header().serial_num()));
+        assert_eq!((b.waiting.len(), b.peers[&reader].calls), (0, 0));
+    }
+
+    #[test]
+    fn a_call_that_does_not_fit_is_refused_and_forgotten() {
+        let (_, mut b) = broker();
+        let (reader, from_bus) = reader(&mut b);
+        let (_, program, _to_program) = peer(&mut b, 1);
+        assert!(b.incoming(reader, get_role(&program)) && b.incoming(reader, get_role(&program)));
+        assert_eq!(error_of(&from_bus.try_recv().unwrap()).as_deref(), Some(LIMITS));
+        assert_eq!((b.waiting.len(), b.peers[&reader].calls), (1, 1));
+        let (reply, answer) = async_channel::bounded(1);
+        b.own_call(get_role(&program).clone(), reply);
+        assert!(matches!(answer.try_recv(), Ok(Err(Error::Failed(name, _))) if name == LIMITS));
+        assert_eq!(b.waiting.len(), 1);
+    }
+
+    #[test]
+    fn a_walk_of_more_calls_than_a_queue_holds() {
+        let (ex, mut b) = broker();
+        let (_, program, to_program) = peer(&mut b, QUEUE);
+        let (tx, rx) = async_channel::unbounded();
+        let answers: Vec<_> = (0..QUEUE * 2)
+            .map(|_| {
+                let (reply, answer) = async_channel::bounded(1);
+                assert!(tx.try_send(Cmd::Call(get_role(&program), reply)).is_ok());
+                answer
+            })
+            .collect();
+        drop(tx);
+        let sent = Rc::new(Cell::new(0));
+        let n = sent.clone();
+        ex.spawn(async move {
+            while to_program.recv().await.is_ok() {
+                n.set(n.get() + 1);
+            }
+        })
+        .detach();
+        let b = Rc::new(RefCell::new(b));
+        futures_lite::future::block_on(ex.run(commands(b.clone(), rx)));
+        assert!(answers.iter().all(|a| a.is_empty()), "none refused");
+        assert_eq!(b.borrow().waiting.len(), QUEUE * 2);
+        assert!(sent.get() >= QUEUE);
+    }
+
+    #[test]
+    fn answers_asked_for_are_not_a_flood() {
+        let (_, mut b) = broker();
+        let (reader, from_bus) = reader(&mut b);
+        let (program_id, program, to_program) = peer(&mut b, QUEUE);
+        assert!(b.incoming(reader, get_role(&program)));
+        let call = to_program.try_recv().unwrap();
+        let p = b.peers.get_mut(&program_id).unwrap();
+        (p.since, p.count) = (Instant::now(), FLOOD);
+        let answer = || Message::method_return(&call.header()).unwrap().build(&(43u32,)).unwrap();
+        assert!(b.incoming(program_id, answer()));
+        assert_eq!(from_bus.try_recv().unwrap().body().deserialize::<(u32,)>().unwrap().0, 43);
+        assert!(!b.incoming(program_id, answer()), "one nobody asked for counts");
+    }
+
+    #[test]
+    fn queues_hold_so_many_bytes() {
+        let mut q = Budget::default();
+        assert!(q.fits(0, QUEUE_BYTES));
+        q.put(QUEUE_BYTES);
+        assert!(!q.fits(1, 1) && q.fits(0, 1), "what was read is not counted");
+
+        let (_, mut b) = broker();
+        let (id, _, to_it) = peer(&mut b, QUEUE);
+        let big = Message::signal(ROOT, "org.a11y.atspi.Event.Object", "TextChanged").unwrap().build(&("x".repeat(1 << 20),)).unwrap();
+        let fit = QUEUE_BYTES / big.data().len();
+        for _ in 0..fit + 8 {
+            b.send(id, big.clone());
+        }
+        assert_eq!(to_it.len(), fit);
+        while to_it.try_recv().is_ok() {}
+        assert!(b.send(id, big.clone()), "once read, more is taken");
+
+        let (tx, signals) = async_channel::bounded(1024);
+        b.listeners.push((tx, Budget::default()));
+        for _ in 0..fit + 8 {
+            b.to_listeners(&big);
+        }
+        assert_eq!(signals.len(), fit);
+
+        // A reader the user is asked about has as many held as it may wait for.
+        let (asking, from_bus) = reader(&mut b);
+        b.peers.get_mut(&asking).unwrap().reader = Some(Reader::Asking);
+        let (_, program, _to_program) = peer(&mut b, QUEUE);
+        for _ in 0..=MAX_CALLS {
+            assert!(b.incoming(asking, get_role(&program)));
+        }
+        assert_eq!(b.peers[&asking].held.len(), MAX_CALLS);
+        assert_eq!(error_of(&from_bus.try_recv().unwrap()).as_deref(), Some(LIMITS));
+    }
+
+    #[test]
+    fn before_a_name_only_hello_to_the_bus() {
+        let (_, mut b) = broker();
+        let (_, program, _to_program) = peer(&mut b, QUEUE);
+        let hello = |to: &str| Message::method_call(BUS_PATH, "Hello").unwrap().interface(BUS).unwrap().destination(to).unwrap().build(&()).unwrap();
+        let (out, _from_bus) = async_channel::bounded(QUEUE);
+        let id = b.add(std::process::id(), out);
+        assert!(!b.incoming(id, hello(&program)));
+        let (out, _from_bus) = async_channel::bounded(QUEUE);
+        let id = b.add(std::process::id(), out);
+        assert!(b.incoming(id, hello(BUS)) && !b.peers[&id].name.is_empty());
+    }
+
+    #[test]
+    fn a_pid_is_the_process_that_has_it_now() {
+        let known = |name: &str, start, embedded| Known { program: Program { name: name.into(), pid: 7, exe: String::new(), root: Some((name.into(), ROOT.into())), reader: false }, start, embedded };
+        let list = [known(":1.1", Some(100), 1), known(":1.3", Some(200), 3), known(":1.2", Some(200), 2)];
+        assert_eq!(pick(&list, 7, Some(200)).unwrap().name, ":1.3", "the last to embed");
+        assert_eq!(pick(&list, 7, Some(100)).unwrap().name, ":1.1");
+        assert!(pick(&list, 7, Some(300)).is_none() && pick(&list, 7, None).is_none());
+        assert!(started(std::process::id()).is_some());
     }
 
     struct Thing;

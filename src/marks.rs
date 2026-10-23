@@ -14,6 +14,8 @@ const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const COMPONENT: &str = "org.a11y.atspi.Component";
 const TEXT: &str = "org.a11y.atspi.Text";
 const ACTION: &str = "org.a11y.atspi.Action";
+const APPLICATION: &str = "org.a11y.atspi.Application";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Firefox's action for what is inside something that is clicked: not its own.
 const ANCESTORS: &str = "click ancestor";
 /// `Component.GetExtents` in the window's coordinates.
@@ -56,16 +58,29 @@ pub struct Mark {
     pub acting: bool,
 }
 
+/// A box's corners, far as they may be.
+fn corners(a: [i32; 4]) -> [i64; 4] {
+    let a = a.map(i64::from);
+    [a[0], a[1], a[0] + a[2], a[1] + a[3]]
+}
+
+/// The box between those corners, cut to what an `i32` holds.
+fn from_corners(c: [i64; 4]) -> [i32; 4] {
+    let n = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    [n(c[0]), n(c[1]), n(c[2] - c[0]), n(c[3] - c[1])]
+}
+
 /// `a` grown by `pad` on every side.
 pub fn grow(a: [i32; 4], pad: i32) -> [i32; 4] {
-    [a[0] - pad, a[1] - pad, a[2] + 2 * pad, a[3] + 2 * pad]
+    let (c, p) = (corners(a), i64::from(pad));
+    from_corners([c[0] - p, c[1] - p, c[2] + p, c[3] + p])
 }
 
 /// What two boxes have in common, if anything.
 pub fn meet(a: [i32; 4], b: [i32; 4]) -> Option<[i32; 4]> {
-    let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
-    let (x1, y1) = ((a[0] + a[2]).min(b[0] + b[2]), (a[1] + a[3]).min(b[1] + b[3]));
-    (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+    let (a, b) = (corners(a), corners(b));
+    let (x0, y0, x1, y1) = (a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3]));
+    (x1 > x0 && y1 > y0).then(|| from_corners([x0, y0, x1, y1]))
 }
 
 /// Whether `a` is all within `b`.
@@ -74,15 +89,27 @@ pub fn inside(a: [i32; 4], b: [i32; 4]) -> bool {
 }
 
 /// Where a run of `text` says `run` (case folded): its first and last
-/// character but one, as the program counts them.
-fn run_in(text: &str, run: &str) -> Option<(i32, i32)> {
+/// character but one, as the program counts them (`utf16`: in UTF-16
+/// units, as Qt does; else in characters).
+fn run_in(text: &str, run: &str, utf16: bool) -> Option<(i32, i32)> {
     let (text, run): (Vec<char>, Vec<char>) = (text.chars().collect(), run.chars().collect());
     let same = |a: char, b: char| a.to_lowercase().eq(b.to_lowercase());
     if run.is_empty() || run.len() > text.len() {
         return None;
     }
     let at = (0..=text.len() - run.len()).find(|&i| run.iter().zip(&text[i..]).all(|(r, t)| same(*r, *t)))?;
-    Some((at as i32, (at + run.len()) as i32))
+    let count = |cs: &[char]| if utf16 { cs.iter().map(|c| c.len_utf16()).sum::<usize>() } else { cs.len() };
+    let start = count(&text[..at]);
+    Some((start as i32, (start + count(&text[at..at + run.len()])) as i32))
+}
+
+/// Whether the element's program counts text in UTF-16 units (Qt), asked
+/// of its application.
+fn utf16(k: &(String, String)) -> bool {
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+    let Ok(((_, app),)) = call::<((String, OwnedObjectPath),), _>(k, ACCESSIBLE, "GetApplication", &()) else { return false };
+    let app = (k.0.clone(), app.to_string());
+    call::<(OwnedValue,), _>(&app, PROPERTIES, "Get", &(APPLICATION, "ToolkitName")).ok().and_then(|(v,)| String::try_from(v).ok()).is_some_and(|t| t.eq_ignore_ascii_case("qt"))
 }
 
 /// One call to an element: its answer, or `gone` if the element (or its
@@ -99,27 +126,31 @@ where
     }
 }
 
-/// An element of that window, as `A` numbered it: its box, and whether it is
+/// An element of that window, as `A` numbered it: its box (none when its
+/// program gives none, or one of no size or far away), and whether it is
 /// shown. With `run`, the box of the run of its text that says it, when its
 /// text says more than that (a word in a paragraph).
-pub fn element_box(pid: u32, slot: usize, id: u32, run: Option<&str>) -> Result<([i32; 4], bool), &'static str> {
+pub fn element_box(pid: u32, slot: usize, id: u32, run: Option<&str>) -> Result<(Option<[i32; 4]>, bool), &'static str> {
     let k = a11y_tree::key_of(pid, slot, id).ok_or("gone")?;
     let (states,): (Vec<u32>,) = call(&k, ACCESSIBLE, "GetState", &())?;
     let ((x, y, w, h),): ((i32, i32, i32, i32),) = call(&k, COMPONENT, "GetExtents", &(WINDOW,))?;
     let showing = states.first().is_some_and(|s| s & (1 << SHOWING) != 0);
     let words = run.and_then(|run| {
         let (text,): (String,) = call(&k, TEXT, "GetText", &(0i32, -1i32)).ok()?;
-        let (start, end) = run_in(&text, run).filter(|_| text.trim().chars().count() > run.chars().count())?;
+        // Characters past the first plane are two units to Qt, one to the others.
+        let wide = text.chars().any(|c| c.len_utf16() > 1) && utf16(&k);
+        let (start, end) = run_in(&text, run, wide).filter(|_| text.trim().chars().count() > run.chars().count())?;
         // Firefox answers an empty box the first time it is asked for a run.
-        let range = || call::<((i32, i32, i32, i32),), _>(&k, TEXT, "GetRangeExtents", &(start, end, WINDOW)).ok().map(|((x, y, w, h),)| [x, y, w, h]).filter(|b| b[2] > 0 && b[3] > 0);
+        let range = || call::<((i32, i32, i32, i32),), _>(&k, TEXT, "GetRangeExtents", &(start, end, WINDOW)).ok().and_then(|((x, y, w, h),)| a11y_tree::sane([x, y, w, h]));
         range().or_else(range)
     });
-    Ok((words.unwrap_or([x, y, w, h]), showing))
+    Ok((words.or(a11y_tree::sane([x, y, w, h])), showing))
 }
 
 /// The element scrolled into view by its program: whether it says it did.
-pub fn scroll_to(pid: u32, slot: usize, id: u32) -> bool {
-    a11y_tree::key_of(pid, slot, id).is_some_and(|k| call::<(bool,), _>(&k, COMPONENT, "ScrollTo", &(ANYWHERE,)).is_ok_and(|t| t.0))
+/// Not once the user stopped the agent after `stops`.
+pub fn scroll_to(pid: u32, slot: usize, id: u32, stops: u64) -> bool {
+    !crate::a11y_act::stopped_since(stops) && a11y_tree::key_of(pid, slot, id).is_some_and(|k| call::<(bool,), _>(&k, COMPONENT, "ScrollTo", &(ANYWHERE,)).is_ok_and(|t| t.0))
 }
 
 /// What a record says that marking needs: id, depth, role, box, states and
@@ -184,7 +215,8 @@ fn label_size(digits: usize, k: i32) -> (i32, i32) {
 }
 
 fn overlap(a: [i32; 4], b: [i32; 4]) -> bool {
-    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+    let (a, b) = (corners(a), corners(b));
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 /// Where each label goes (its box's pixels and its size given): above the
@@ -195,10 +227,10 @@ fn place(labels: &[([i32; 4], (i32, i32))], size: (i32, i32)) -> Vec<Option<[i32
     labels
         .iter()
         .map(|(r, (w, h))| {
-            let x = r[0].min(size.0 - w).max(0);
-            let above = [x, r[1] - h, *w, *h];
+            let x = r[0].min(size.0.saturating_sub(*w)).max(0);
+            let above = [x, r[1].saturating_sub(*h), *w, *h];
             let within = [x, r[1].max(0), *w, *h];
-            let fits = |l: &[i32; 4]| l[1] >= 0 && l[1] + l[3] <= size.1 && !put.iter().any(|p| overlap(*p, *l));
+            let fits = |l: &[i32; 4]| l[1] >= 0 && i64::from(l[1]) + i64::from(l[3]) <= i64::from(size.1) && !put.iter().any(|p| overlap(*p, *l));
             let at = [above, within].into_iter().find(|l| fits(l))?;
             put.push(at);
             Some(at)
@@ -209,18 +241,19 @@ fn place(labels: &[([i32; 4], (i32, i32))], size: (i32, i32)) -> Vec<Option<[i32
 /// A box filled with a colour, cut where the picture ends.
 fn fill(picture: &mut image::RgbaImage, r: [i32; 4], c: [u8; 3]) {
     let (w, h) = (picture.width() as i32, picture.height() as i32);
-    for y in r[1].max(0)..(r[1] + r[3]).min(h) {
-        for x in r[0].max(0)..(r[0] + r[2]).min(w) {
+    for y in r[1].max(0)..r[1].saturating_add(r[3]).min(h) {
+        for x in r[0].max(0)..r[0].saturating_add(r[2]).min(w) {
             picture.put_pixel(x as u32, y as u32, image::Rgba([c[0], c[1], c[2], 255]));
         }
     }
 }
 
 fn outline(picture: &mut image::RgbaImage, r: [i32; 4], t: i32, c: [u8; 3]) {
+    let (right, bottom) = (r[0].saturating_add(r[2]).saturating_sub(t), r[1].saturating_add(r[3]).saturating_sub(t));
     fill(picture, [r[0], r[1], r[2], t], c);
-    fill(picture, [r[0], r[1] + r[3] - t, r[2], t], c);
+    fill(picture, [r[0], bottom, r[2], t], c);
     fill(picture, [r[0], r[1], t, r[3]], c);
-    fill(picture, [r[0] + r[2] - t, r[1], t, r[3]], c);
+    fill(picture, [right, r[1], t, r[3]], c);
 }
 
 /// A label: its plate, edged in its mark's colour, and its digits on it.
@@ -242,16 +275,24 @@ fn label(picture: &mut image::RgbaImage, at: [i32; 4], id: u32, k: i32, c: [u8; 
 }
 
 /// The marks drawn on a picture at `density` pixels a unit: every outline,
-/// then the labels over them.
+/// then the labels over them. A box not on the picture (a row scrolled out)
+/// is not drawn.
 pub fn draw(picture: &mut image::RgbaImage, marks: &[Mark], density: f64) {
     let k = (density.round() as i32).max(1);
-    let px = |v: i32| (v as f64 * density).round() as i32;
-    let boxes: Vec<[i32; 4]> = marks.iter().map(|m| [px(m.rect[0]), px(m.rect[1]), px(m.rect[0] + m.rect[2]) - px(m.rect[0]), px(m.rect[1] + m.rect[3]) - px(m.rect[1])]).collect();
+    let px = |v: i64| (v as f64 * density).round() as i32;
+    let size = (picture.width() as i32, picture.height() as i32);
+    let (marks, boxes): (Vec<&Mark>, Vec<[i32; 4]>) = marks
+        .iter()
+        .map(|m| {
+            let c = corners(m.rect);
+            (m, [px(c[0]), px(c[1]), px(c[2]).saturating_sub(px(c[0])), px(c[3]).saturating_sub(px(c[1]))])
+        })
+        .filter(|(_, b)| meet(*b, [0, 0, size.0, size.1]).is_some())
+        .unzip();
     let colour = |m: &Mark| if m.acting { ACTING } else { READING };
     for (m, b) in marks.iter().zip(&boxes) {
         outline(picture, *b, LINE * k, colour(m));
     }
-    let size = (picture.width() as i32, picture.height() as i32);
     let at = place(&marks.iter().zip(&boxes).map(|(m, b)| (*b, label_size(m.id.to_string().len(), k))).collect::<Vec<_>>(), size);
     for (m, at) in marks.iter().zip(at) {
         if let Some(at) = at {
@@ -342,10 +383,40 @@ mod tests {
 
     #[test]
     fn a_run_is_found_case_folded_and_counted_in_characters() {
-        assert_eq!(run_in("Hello World", "world"), Some((6, 11)));
-        assert_eq!(run_in("a\u{f1}o nuevo", "NUEVO"), Some((4, 9)));
-        assert_eq!(run_in("short", "longer text"), None);
-        assert_eq!(run_in("abc", ""), None);
+        assert_eq!(run_in("Hello World", "world", false), Some((6, 11)));
+        assert_eq!(run_in("a\u{f1}o nuevo", "NUEVO", false), Some((4, 9)));
+        assert_eq!(run_in("short", "longer text", false), None);
+        assert_eq!(run_in("abc", "", false), None);
+        // Past the first plane: a character to GTK, two units to Qt.
+        assert_eq!(run_in("\u{1f600} ok \u{1f600}", "ok", false), Some((2, 4)));
+        assert_eq!(run_in("\u{1f600} ok \u{1f600}", "ok", true), Some((3, 5)));
+        assert_eq!(run_in("a \u{1f600}b", "\u{1f600}b", true), Some((2, 5)));
+    }
+
+    #[test]
+    fn boxes_far_away_do_not_overflow() {
+        let none = [i32::MIN, i32::MIN, -1, -1];
+        assert_eq!(meet(grow(none, 400), [0, 0, 100, 100]), None);
+        assert_eq!(meet([i32::MAX, i32::MAX, i32::MAX, i32::MAX], [0, 0, 100, 100]), None);
+        assert!(!inside(none, [0, 0, 100, 100]));
+        assert!(!overlap(none, [0, 0, 10, 10]));
+        let size = (100, 100);
+        assert_eq!(place(&[([i32::MIN, i32::MIN, 10, 10], (14, 18))], size), vec![Some([0, 0, 14, 18])]);
+        let mut p = image::RgbaImage::new(10, 10);
+        fill(&mut p, [i32::MAX - 1, i32::MAX - 1, i32::MAX, i32::MAX], ACTING);
+        outline(&mut p, [i32::MIN, i32::MIN, i32::MAX, i32::MAX], 2, ACTING);
+    }
+
+    #[test]
+    fn what_is_off_the_picture_is_not_drawn() {
+        let mut p = image::RgbaImage::new(100, 50);
+        let marks = [Mark { id: 3, rect: [10, -80, 40, 20], acting: true }, Mark { id: 4, rect: [10, 60, 40, 20], acting: true }, Mark { id: 5, rect: [i32::MIN, i32::MIN, i32::MAX, 5], acting: true }];
+        draw(&mut p, &marks, 1.0);
+        assert!(p.pixels().all(|c| c.0 == [0, 0, 0, 0]));
+        draw(&mut p, &[Mark { id: 6, rect: [10, -10, 40, 20], acting: false }], 1.0);
+        // Its outline's bottom edge, and its label inside from the top.
+        assert_eq!(p.get_pixel(40, 8).0, [30, 150, 255, 255]);
+        assert_eq!(p.get_pixel(11, 1).0, [18, 18, 18, 255]);
     }
 
     #[test]

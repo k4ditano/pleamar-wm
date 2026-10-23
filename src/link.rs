@@ -102,8 +102,42 @@ impl Here {
         self.wires.iter().find(|w| w.0 == k).map_or("", |w| w.3.as_str())
     }
 
+    /// The shell of that window's terminal. Of several, the one that moved
+    /// last: the wire is the person's word for the window, and a terminal's
+    /// tabs are all in it. But a process with several windows (foot's
+    /// server, kitty's single instance) may be at a window not wired, and
+    /// is not read nor typed in unless its shell is named (`--shell ID`).
+    fn shell_of(&self, w: &Win, shell: Option<i32>) -> Result<Option<(i32, Info)>, String> {
+        let shells = crate::term::shells_of(w.pid, &self.layers);
+        if let Some(id) = shell {
+            // A shell named in a process with several windows may be at any of
+            // them: none may be private (the window manager answers for all of
+            // that process's windows).
+            if self.wins.iter().filter(|o| o.pid == w.pid).count() > 1 {
+                match crate::agent_cli::tell(&format!("i {}.{}", w.pid, w.slot)) {
+                    Ok(r) if r.starts_with("ok") => {}
+                    Ok(r) if r == "err private" => return Err(format!("window {}'s terminal has a private window (or the screen is locked): its shells are not named", w.slot)),
+                    Ok(r) => return Err(format!("window {}: the window manager answered {r:?}", w.slot)),
+                    Err(e) => return Err(format!("which of window {}'s shells is not private cannot be asked ({e}): name none", w.slot)),
+                }
+            }
+            return shells.into_iter().find(|(i, _)| *i == id).map(Some).ok_or_else(|| format!("shell {id} is not in window {}'s terminal: `pleamar-wm term list` says the terminal of each", w.slot));
+        }
+        if shells.len() > 1 && self.wins.iter().filter(|o| o.pid == w.pid).count() > 1 {
+            let list: Vec<String> = shells
+                .iter()
+                .map(|(id, i)| {
+                    let g = |k: &str| i.get(k).map_or("", String::as_str);
+                    format!("  --shell {id}  {}  {}  {:?}", tilde(g("cwd")), g("command"), g("title"))
+                })
+                .collect();
+            return Err(format!("window {}'s terminal has {} shells in several windows, and which is this one's is not known: name one\n{}", w.slot, shells.len(), list.join("\n")));
+        }
+        Ok(shells.into_iter().next())
+    }
+
     /// The one named: by its number, or by what runs in it if only one is that.
-    fn target(&self, name: &str) -> Result<(usize, &Win, bool, Option<(i32, Info)>), String> {
+    fn target(&self, name: &str) -> Result<(usize, &Win, bool), String> {
         let wired = self.wired();
         let found: Vec<&(usize, &Win, bool)> = match name.trim_start_matches('#').parse::<usize>() {
             Ok(n) => wired.iter().filter(|(_, w, _)| w.slot == n).collect(),
@@ -118,7 +152,7 @@ impl Here {
                 .collect(),
         };
         match found.as_slice() {
-            [(k, w, a)] => Ok((*k, w, *a, layer_of(w.pid, &self.layers))),
+            [(k, w, a)] => Ok((*k, w, *a)),
             [] if name.parse::<usize>().is_ok() => Err(format!("window {name} isn't wired to yours. Ask the person to wire them: on a free monitor (Super+W), drag the drop at the start of one's title bar onto the other.")),
             [] => Err(format!("no window wired to yours is «{name}». `pleamar-wm link list` says which are.")),
             _ => Err(format!("more than one window wired to yours is «{name}»: name it by its number (`pleamar-wm link list`).")),
@@ -794,7 +828,8 @@ const USAGE: &str = "pleamar-wm link — the windows wired to yours (on a canvas
                                   way— is typed into your terminal; with --wait, it is what
                                   this prints.
 N is a window's number from `list`, its wire's name (`tests`), or the agent that runs there
-(`codex`) if only one is.";
+(`codex`) if only one is. A terminal whose one process has several windows (foot's server)
+has a shell named for each of those: `--shell ID`, its number in `pleamar-wm term list`.";
 
 /// Which window the caller is and what is wired to it: what an agent is told
 /// when it starts (`link mcp`).
@@ -834,16 +869,27 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         "label" => {
             let name = rest.first().ok_or(USAGE)?;
             let h = here()?;
-            let (k, w, _, _) = h.target(name)?;
+            let (k, w, _) = h.target(name)?;
             let text = words(&rest[1..]).replace(['\n', '\t'], " ");
             say(&[format!("text wire.{k}.label {text}")]);
             Ok(if text.is_empty() { format!("the wire to window {} has no name now", w.slot) } else { format!("the wire to window {} is «{text}»", w.slot) })
         }
         "read" | "send" | "keys" | "wait" | "ask" | "answer" | "delegate" => {
+            // `--shell ID`: which of its terminal's shells (see `shell_of`).
+            let mut rest = rest.to_vec();
+            let shell = match rest.iter().position(|a| a == "--shell") {
+                Some(k) => {
+                    let id = rest.get(k + 1).and_then(|s| s.parse::<i32>().ok()).ok_or("--shell ID: a shell's number, as `pleamar-wm term list` gives it")?;
+                    rest.drain(k..k + 2);
+                    Some(id)
+                }
+                None => None,
+            };
+            let rest = &rest[..];
             let name = rest.first().ok_or(USAGE)?;
             let h = here()?;
-            let (k, w, mine_is_a, layer) = h.target(name)?;
-            let (id, tinfo) = layer.ok_or_else(|| format!("window {} «{}» has no terminal of its own (through pleamar-wm's layer) to read or type in", w.slot, w.title))?;
+            let (k, w, mine_is_a) = h.target(name)?;
+            let (id, tinfo) = h.shell_of(w, shell)?.ok_or_else(|| format!("window {} «{}» has no terminal of its own (through pleamar-wm's layer) to read or type in", w.slot, w.title))?;
             match verb {
                 "read" => Ok(read(id, rest.get(1).and_then(|n| n.parse().ok()).unwrap_or(200))),
                 "send" => {
@@ -1335,6 +1381,7 @@ fn agent_marker(name: &str) -> bool {
 /// are there. `quiet`: the keyboard stays where the person has it.
 pub(crate) fn open_terminal(exe: &str, cwd: &str, quiet: bool) -> Result<(usize, i32), String> {
     let before: Vec<usize> = windows()?.iter().map(|w| w.slot).collect();
+    let known: Vec<i32> = crate::term::layers().iter().map(|(id, _)| *id).collect();
     let pid = start(exe, cwd, quiet)?;
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
@@ -1344,7 +1391,8 @@ pub(crate) fn open_terminal(exe: &str, cwd: &str, quiet: bool) -> Result<(usize,
         // its own— the new one that opened.
         let new = wins.iter().find(|w| w.pid == pid).or_else(|| wins.iter().find(|w| !before.contains(&w.slot)));
         let Some(w) = new else { continue };
-        if let Some((id, _)) = layer_of(w.pid, &crate::term::layers()) {
+        // Its new shell: one that serves many windows has others, at work.
+        if let Some((id, _)) = crate::term::shells_of(w.pid, &crate::term::layers()).into_iter().find(|(id, _)| !known.contains(id)) {
             return Ok((w.slot, id));
         }
     }

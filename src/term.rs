@@ -299,15 +299,26 @@ fn keep_erased(p: &mut vt100::Parser<Seen>) {
 }
 
 /// Where a program that prints everything again after a clear (its
-/// transcript) begins to do it in what was there before: the last place
-/// its first three lines that say something are, one after the other.
+/// transcript) begins to do it in what was there before: the first place
+/// from which all that was kept comes again: three lines that say something
+/// at least, one after the other from where it starts, and what does not
+/// follow them (a box it draws again under what is new), whole, further
+/// down. Output that differs before that (a build run again) is not one,
+/// nor a reprint not done yet: what was kept is never hidden.
 fn reprint_at<'a>(before: impl Iterator<Item = &'a str>, again: impl Iterator<Item = &'a str>) -> Option<usize> {
-    let first: Vec<&str> = again.map(str::trim_end).filter(|l| !l.trim().is_empty()).take(3).collect();
-    if first.len() < 3 {
+    let again: Vec<&str> = again.map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    if again.len() < 3 {
         return None;
     }
     let said: Vec<(usize, &str)> = before.map(str::trim_end).enumerate().filter(|(_, l)| !l.trim().is_empty()).collect();
-    said.windows(3).rev().find(|w| w.iter().zip(&first).all(|((_, a), b)| a == b)).map(|w| w[0].0)
+    (0..said.len())
+        .find(|&p| {
+            let tail = &said[p..];
+            let same = tail.iter().zip(&again).take_while(|((_, a), b)| a == *b).count();
+            let rest: Vec<&str> = tail[same..].iter().map(|(_, l)| *l).collect();
+            same >= 3 && (rest.is_empty() || again[same..].windows(rest.len()).any(|w| w == rest.as_slice()))
+        })
+        .map(|p| said[p].0)
 }
 
 /// Kitty's text sizing (`OSC 66 ; w=1 ; á ST`), which `vt100` does not know
@@ -1003,9 +1014,20 @@ pub fn info(socket: &str) -> Result<std::collections::BTreeMap<String, String>, 
 /// The layer whose terminal is that process, if one. A terminal with
 /// several shells (tabs) speaks for the one that moved last.
 pub fn layer_of(pid: u32, layers: &[(i32, std::collections::BTreeMap<String, String>)]) -> Option<(i32, std::collections::BTreeMap<String, String>)> {
-    let mut of: Vec<&(i32, std::collections::BTreeMap<String, String>)> = layers.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(pid)).collect();
+    shells_of(pid, layers).into_iter().next()
+}
+
+/// Every layer whose terminal is that process: its tabs, or the windows of
+/// a terminal that serves many (foot's server). The one that moved last first.
+pub fn shells_of(pid: u32, layers: &[(i32, std::collections::BTreeMap<String, String>)]) -> Vec<(i32, std::collections::BTreeMap<String, String>)> {
+    let mut of: Vec<(i32, std::collections::BTreeMap<String, String>)> = layers.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(pid)).cloned().collect();
     of.sort_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX));
-    of.first().map(|l| (*l).clone())
+    of
+}
+
+/// Whether the layer types that key by its name (`keys`).
+pub fn knows_key(name: &str) -> bool {
+    key_bytes(&name.to_lowercase(), false).is_some()
 }
 
 /// A question an agent's screen asks the person: what it says, and its
@@ -1484,6 +1506,41 @@ Enter to select · ↑/↓ to navigate · Esc to cancel";
         feed(&mut p, &mut erases, b"\x1b[2J\x1b[3J\x1b[Hsomething\r\nelse\r\nentirely\r\n", 64);
         let text = last_lines(&mut p, HISTORY);
         assert!(text.starts_with("> hello") && text.contains("[input]\nsomething\nelse\nentirely"), "{text}");
+    }
+
+    #[test]
+    fn a_build_run_again_after_clear_keeps_both_runs() {
+        let mut p = parser(8, 40);
+        let mut erases = Erases::default();
+        let run = |error: &str| format!("$ make\r\nCompiling x\r\nwarning: unused\r\nerror: {error}\r\nfailed\r\n");
+        // `clear` (ncurses: `ESC[H ESC[2J ESC[3J`), and the same build again.
+        feed(&mut p, &mut erases, format!("{}$ clear\r\n\x1b[H\x1b[2J\x1b[3J", run("A")).as_bytes(), 7);
+        // Three lines as the first run's: not one yet.
+        feed(&mut p, &mut erases, b"$ make\r\nCompiling x\r\nwarning: unused\r\n", 64);
+        assert_eq!(last_lines(&mut p, HISTORY).matches("$ make").count(), 2);
+        feed(&mut p, &mut erases, b"error: B\r\nfailed\r\n$ ", 64);
+        let text = last_lines(&mut p, HISTORY);
+        assert!(text.contains("error: A") && text.contains("error: B") && text.matches("Compiling x").count() == 2, "{text}");
+        // Kept so after the next clear too.
+        feed(&mut p, &mut erases, format!("clear\r\n\x1b[H\x1b[2J\x1b[3J{}$ ", run("C")).as_bytes(), 64);
+        let text = last_lines(&mut p, HISTORY);
+        assert_eq!((text.matches("error: A").count(), text.matches("error: B").count(), text.matches("error: C").count()), (1, 1, 1), "{text}");
+    }
+
+    #[test]
+    fn a_reprint_is_one_only_once_all_that_was_kept_came_again() {
+        let kept = ["> hello", "", "Hi there.", "> list", "a b", "[input]"];
+        let read = |again: &[&str]| reprint_at(kept.iter().copied(), again.iter().copied());
+        // The transcript again, more after it, its box last: from the start.
+        assert_eq!(read(&["> hello", "Hi there.", "> list", "a b", "> thanks", "[input]"]), Some(0));
+        assert_eq!(read(&["> hello", "Hi there.", "> list", "a b", "[input]"]), Some(0));
+        // Its box with more under it: once it exits, the shell's prompt.
+        assert_eq!(read(&["> hello", "Hi there.", "> list", "a b", "> thanks", "[input]", "$"]), Some(0));
+        // Not done yet, or its box another: kept whole.
+        assert_eq!(read(&["> hello", "Hi there.", "> list"]), None);
+        assert_eq!(read(&["> hello", "Hi there.", "> list", "a b", "> thanks", "[busy]"]), None);
+        // From further down: only from there.
+        assert_eq!(read(&["> list", "a b", "[input]"]), Some(3));
     }
 
     #[test]

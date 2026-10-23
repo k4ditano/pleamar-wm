@@ -7,6 +7,7 @@ mod a11y;
 mod a11y_tree;
 mod a11y_act;
 mod marks;
+mod a11y_wait;
 mod agent_cli;
 mod build;
 mod remote;

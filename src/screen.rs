@@ -754,7 +754,8 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                 eprintln!("screen · {}: {} surfaces of the scene, {} of programs, {} new", st.name, st.layers.len(), st.clients.len(), arrived.len());
             }
             let anew = std::mem::take(&mut st.anew);
-            let drew_clients = !st.clients.is_empty();
+            // (One not drawn is not told it was: a hidden window's menu.)
+            let drew_clients = st.clients.iter().any(|c| c.drawn);
             // What changed, as one box (none: all of it).
             // `PLEAMAR_FULL_COMPOSE=1`: all of it every time, to compare.
             // `PLEAMAR_FULL_COMPOSE=1`: all of it every time, to compare.
@@ -1434,19 +1435,13 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
     queue.submit(Some(encoder.finish()));
-    let mapped = Arc::new(std::sync::atomic::AtomicU8::new(0));
-    let flag = mapped.clone();
-    out.slice(..).map_async(wgpu::MapMode::Read, move |r| flag.store(if r.is_ok() { 1 } else { 2 }, Release));
+    let mapped = map_read(&out);
     let t_sub = std::time::Instant::now();
     let direct = direct.is_some();
     let device = device.clone();
     std::thread::spawn(move || {
-        let start = std::time::Instant::now();
-        while mapped.load(Acquire) == 0 && start.elapsed() < Duration::from_secs(2) {
-            let _ = device.poll(wgpu::PollType::Poll);
-            std::thread::sleep(Duration::from_micros(100));
-        }
-        if mapped.load(Acquire) != 1 {
+        wait_mapped(&device, std::slice::from_ref(&mapped), Duration::from_secs(2));
+        if mapped.load(Acquire) != MAPPED {
             // (Still mapping, or it failed: that buffer is not used again.)
             layers::tell(ToLayers::Captured { id, pixels: None });
             return;
@@ -1542,26 +1537,12 @@ fn read_clients(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &wgpu::Ren
         return;
     }
     queue.submit(Some(encoder.finish()));
-    use std::sync::atomic::Ordering::{AcqRel, Acquire};
-    let left = Arc::new(std::sync::atomic::AtomicUsize::new(reads.len()));
-    for (.., out) in &reads {
-        let left = left.clone();
-        out.slice(..).map_async(wgpu::MapMode::Read, move |_| {
-            left.fetch_sub(1, AcqRel);
-        });
-    }
+    let mapped: Vec<_> = reads.iter().map(|(.., out)| map_read(out)).collect();
     let device = device.clone();
     std::thread::spawn(move || {
-        let start = std::time::Instant::now();
-        while left.load(Acquire) > 0 && start.elapsed() < Duration::from_secs(2) {
-            let _ = device.poll(wgpu::PollType::Poll);
-            std::thread::sleep(Duration::from_micros(100));
-        }
-        if left.load(Acquire) > 0 {
-            let _ = to.send(Vec::new());
-            return;
-        }
-        let pictures = reads.into_iter().filter_map(|(id, (w, h), row, out)| {
+        wait_mapped(&device, &mapped, Duration::from_secs(2));
+        // Each one that came: one late or failed leaves out only itself.
+        let pictures = reads.into_iter().zip(&mapped).filter(|(_, m)| m.load(std::sync::atomic::Ordering::Acquire) == MAPPED).filter_map(|((id, (w, h), row, out), _)| {
             let pixels = {
                 let data = out.slice(..).get_mapped_range().ok()?;
                 (0..h).flat_map(|y| data[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
@@ -1571,6 +1552,32 @@ fn read_clients(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &wgpu::Ren
         });
         let _ = to.send(pictures.collect());
     });
+}
+
+/// A mapping asked for: 0 while it is on its way, `MAPPED`, or `FAILED`.
+const MAPPED: u8 = 1;
+const FAILED: u8 = 2;
+
+/// A buffer the card copies into, mapped to be read once it has.
+fn map_read(out: &wgpu::Buffer) -> Arc<std::sync::atomic::AtomicU8> {
+    let flag = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let set = flag.clone();
+    out.slice(..).map_async(wgpu::MapMode::Read, move |r| set.store(if r.is_ok() { MAPPED } else { FAILED }, std::sync::atomic::Ordering::Release));
+    flag
+}
+
+/// Until none of those mappings is on its way, or that long. The card is
+/// asked less often the longer it takes (from a fifth of a millisecond to
+/// two): asking costs, and a picture takes it a few milliseconds.
+fn wait_mapped(device: &wgpu::Device, mapped: &[Arc<std::sync::atomic::AtomicU8>], most: Duration) {
+    let start = std::time::Instant::now();
+    let mut step = Duration::from_micros(200);
+    let _ = device.poll(wgpu::PollType::Poll);
+    while mapped.iter().any(|m| m.load(std::sync::atomic::Ordering::Acquire) == 0) && start.elapsed() < most {
+        std::thread::sleep(step);
+        step = (step * 2).min(Duration::from_millis(2));
+        let _ = device.poll(wgpu::PollType::Poll);
+    }
 }
 
 /// Where a program's video frame is painted as RGB, to be put together from.

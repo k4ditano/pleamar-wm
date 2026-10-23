@@ -259,24 +259,49 @@ pub fn set_menus(slot: usize, size: (u32, u32), menus: Vec<WindowMenu>) {
     m[slot] = (size, menus);
 }
 
+/// Whether a window has menus on a monitor (`window_menus` has something to read).
+pub fn has_menus(slot: usize) -> bool {
+    MENUS.lock().unwrap().get(slot).is_some_and(|(_, m)| !m.is_empty())
+}
+
+/// How many times each program's surface has changed its look (`show`).
+static GENERATIONS: Mutex<std::collections::BTreeMap<u64, u64>> = Mutex::new(std::collections::BTreeMap::new());
+
+/// Each menu's last picture read back, and the look it had then.
+static READ: Mutex<std::collections::BTreeMap<u64, (u64, ClientPicture)>> = Mutex::new(std::collections::BTreeMap::new());
+
 /// A window's menus read back from their monitors, with the window's size
-/// in units, bottom to top; none if it has none. Waits for the monitors (a
-/// frame, or a second at most): not on the compositor's loop.
+/// in units, bottom to top; none if it has none. Only those whose look
+/// changed since they were last read are read again, each monitor putting
+/// itself together for them (a frame, a second at most in all; one that is
+/// paused, not at all: the last picture of them stays). Not on the
+/// compositor's loop.
 pub fn window_menus(slot: usize) -> Option<((u32, u32), Vec<(WindowMenu, ClientPicture)>)> {
     let (size, menus) = MENUS.lock().unwrap().get(slot).cloned().filter(|(_, m)| !m.is_empty())?;
-    let mut monitors: Vec<usize> = menus.iter().map(|m| m.monitor).collect();
+    let looks: Vec<u64> = {
+        let g = GENERATIONS.lock().unwrap();
+        menus.iter().map(|m| g.get(&m.id).copied().unwrap_or(0)).collect()
+    };
+    let stale: Vec<(usize, u64)> = {
+        let read = READ.lock().unwrap();
+        menus.iter().zip(&looks).filter(|(m, look)| read.get(&m.id).is_none_or(|(had, _)| had != *look)).map(|(m, _)| (m.monitor, m.id)).collect()
+    };
+    let mut monitors: Vec<usize> = stale.iter().map(|s| s.0).collect();
     monitors.sort_unstable();
     monitors.dedup();
-    let mut read = Vec::new();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
     for k in monitors {
         let (tx, rx) = std::sync::mpsc::channel();
-        read_clients(k, menus.iter().filter(|m| m.monitor == k).map(|m| m.id).collect(), tx);
-        read.extend(rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_default());
+        read_clients(k, stale.iter().filter(|s| s.0 == k).map(|s| s.1).collect(), tx);
+        let got = rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())).unwrap_or_default();
+        let mut read = READ.lock().unwrap();
+        for p in got {
+            let Some(look) = menus.iter().position(|m| m.id == p.id).map(|i| looks[i]) else { continue };
+            read.insert(p.id, (look, p));
+        }
     }
-    let pictures = menus.into_iter().filter_map(|m| {
-        let i = read.iter().position(|p| p.id == m.id)?;
-        Some((m, read.swap_remove(i)))
-    });
+    let read = READ.lock().unwrap();
+    let pictures = menus.into_iter().filter_map(|m| read.get(&m.id).map(|(_, p)| p.clone()).map(|p| (m, p)));
     Some((size, pictures.collect()))
 }
 
@@ -479,6 +504,7 @@ pub struct ClientLayer {
 
 /// A program's surface on a monitor, read back (`read_clients`): its pixels
 /// over transparent, BGRA, premultiplied, row after row with no padding.
+#[derive(Clone)]
 pub struct ClientPicture {
     pub id: u64,
     pub size: (u32, u32),
@@ -744,25 +770,10 @@ pub fn show(monitor: usize, layer: ClientLayer) {
         if old.is_none() && new.is_none() {
             continue;
         }
-        // What changes on the monitor: where it was and where it is, if it
-        // moved, grew, changed level or came or went; else only the pieces
-        // with something new.
-        let same_place = match (&old, &new) {
-            (Some(o), Some(n)) => o.rect == n.rect && o.level == n.level && o.pieces.len() == n.pieces.len() && o.pieces.iter().zip(&n.pieces).all(|(a, b)| a.at == b.at && a.size == b.size),
-            _ => false,
-        };
-        if same_place {
-            if let Some(n) = new.as_ref().filter(|n| n.drawn) {
-                for p in n.pieces.iter().filter(|p| p.content.is_some()) {
-                    st.note_change(n.piece_rect(p), n.owner);
-                }
-            }
-        } else {
-            for l in old.iter().chain(new.iter()).filter(|l| l.drawn) {
-                for p in &l.pieces {
-                    st.note_change(l.piece_rect(p), l.owner);
-                }
-            }
+        let seen = note_shown(&mut st, old.as_ref(), new.as_ref());
+        // Its look changed: its picture is read again (`window_menus`).
+        if new.as_ref().is_some_and(|n| old.as_ref().is_none_or(|o| !same_place(o, n)) || n.pieces.iter().any(|p| p.content.is_some())) {
+            *GENERATIONS.lock().unwrap().entry(id).or_default() += 1;
         }
         for p in old.into_iter().flat_map(|o| o.pieces) {
             let Some(content) = p.content else { continue };
@@ -780,16 +791,51 @@ pub fn show(monitor: usize, layer: ClientLayer) {
             let at = before.unwrap_or(st.clients.len()).min(st.clients.len());
             st.clients.insert(at, n);
         }
-        st.dirty = true;
-        cv.notify_all();
+        // One not drawn before nor now changes nothing on the monitor: what it
+        // brought is read the next time it is put together for something else,
+        // or for its picture (`read_clients`).
+        if seen {
+            st.dirty = true;
+            cv.notify_all();
+        }
     }
     if !unread.is_empty() {
         tell(ToLayers::Released(unread));
     }
 }
 
+/// Whether two of the same surface are in the same place: the same box,
+/// level and pieces, and drawn or not as it was.
+fn same_place(o: &ClientLayer, n: &ClientLayer) -> bool {
+    o.rect == n.rect && o.level == n.level && o.drawn == n.drawn && o.pieces.len() == n.pieces.len() && o.pieces.iter().zip(&n.pieces).all(|(a, b)| a.at == b.at && a.size == b.size)
+}
+
+/// What changes on the monitor when a surface goes from `old` to `new`:
+/// where it was and where it is, if it moved, grew, changed level, came or
+/// went, or was drawn or no longer; else only the pieces with something
+/// new. And whether it is seen there at all, before or now.
+fn note_shown(st: &mut crate::screen::ScreenState, old: Option<&ClientLayer>, new: Option<&ClientLayer>) -> bool {
+    match (old, new) {
+        (Some(o), Some(n)) if same_place(o, n) => {
+            for p in n.pieces.iter().filter(|p| n.drawn && p.content.is_some()) {
+                st.note_change(n.piece_rect(p), n.owner);
+            }
+        }
+        _ => {
+            for l in old.into_iter().chain(new).filter(|l| l.drawn) {
+                for p in &l.pieces {
+                    st.note_change(l.piece_rect(p), l.owner);
+                }
+            }
+        }
+    }
+    old.is_some_and(|o| o.drawn) || new.is_some_and(|n| n.drawn)
+}
+
 /// A program's surface is gone.
 pub fn hide(id: u64) {
+    GENERATIONS.lock().unwrap().remove(&id);
+    READ.lock().unwrap().remove(&id);
     let mut unread = Vec::new();
     for (_, sc) in MONITORS.lock().unwrap().iter() {
         let (lock, cv) = &**sc;
@@ -837,6 +883,8 @@ pub fn capture(monitor: usize, id: u64, piece: [i32; 4], on_change: bool, owner:
 
 /// Those programs' surfaces on that monitor, read back the next time it is
 /// put together, drawn there or not: the ones it does not have are left out.
+/// None at once from a monitor that is paused (another TTY): it is not put
+/// together until it is back.
 pub fn read_clients(monitor: usize, ids: Vec<u64>, to: std::sync::mpsc::Sender<Vec<ClientPicture>>) {
     let monitors = MONITORS.lock().unwrap();
     let Some((_, sc)) = monitors.get(monitor) else {
@@ -845,6 +893,10 @@ pub fn read_clients(monitor: usize, ids: Vec<u64>, to: std::sync::mpsc::Sender<V
     };
     let (lock, cv) = &**sc;
     let mut st = lock.lock().unwrap();
+    if st.paused {
+        let _ = to.send(Vec::new());
+        return;
+    }
     st.reads.push((ids, to));
     st.dirty = true;
     cv.notify_all();
@@ -876,7 +928,7 @@ pub fn forget(buffers: &[u64]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     struct Nowhere;
@@ -889,13 +941,54 @@ mod tests {
         }
     }
 
+    fn menu(drawn: bool, content: bool) -> ClientLayer {
+        let piece = ClientPiece { key: 1, at: (0, 0), size: (40, 30), px: (40, 30), content: content.then_some(PieceContent::Kept), buffer: None, opaque: false };
+        ClientLayer { id: 3, level: 3, rect: [100, 200, 40, 30], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn }
+    }
+
+    /// What `show` notes on the monitor for one surface going from `old` to
+    /// `new`, and whether the monitor is put together for it.
+    fn noted(old: Option<ClientLayer>, new: Option<ClientLayer>) -> (Vec<[i32; 4]>, bool) {
+        let sc = crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere));
+        let mut st = sc.0.lock().unwrap();
+        st.changed_all = false;
+        let seen = note_shown(&mut st, old.as_ref(), new.as_ref());
+        (st.changed.iter().map(|c| c.0).collect(), seen)
+    }
+
+    /// A menu that is no longer drawn where it was (its window hidden) is
+    /// taken off the monitor, and one drawn again where it was is put back,
+    /// even with nothing new in it.
+    #[test]
+    fn a_menu_drawn_or_not_in_the_same_place_is_noted() {
+        let whole = vec![[100, 200, 40, 30]];
+        assert_eq!(noted(Some(menu(true, false)), Some(menu(false, false))), (whole.clone(), true));
+        assert_eq!(noted(Some(menu(false, false)), Some(menu(true, false))), (whole.clone(), true));
+        // Drawn and drawn: only what is new.
+        assert_eq!(noted(Some(menu(true, false)), Some(menu(true, false))), (Vec::new(), true));
+        assert_eq!(noted(Some(menu(true, false)), Some(menu(true, true))), (whole, true));
+    }
+
+    /// A menu not drawn, before nor now, puts nothing together: it brings
+    /// what it draws, and the monitor stays as it is.
+    #[test]
+    fn a_menu_not_drawn_does_not_put_the_monitor_together() {
+        assert_eq!(noted(Some(menu(false, false)), Some(menu(false, true))), (Vec::new(), false));
+        assert_eq!(noted(None, Some(menu(false, true))), (Vec::new(), false));
+        assert_eq!(noted(Some(menu(false, true)), None), (Vec::new(), false));
+    }
+
     /// Dragging a file while a window redraws: the pointer moves the drag
     /// icon (`move_drag`, the input thread) while the compositor lets go of a
     /// window's buffers (`forget`) and a window goes fullscreen. Both take
     /// `MONITORS` and each monitor's lock; in opposite orders they froze the
     /// session for good.
+    /// Held by a test that drags, and by one that would see the drag.
+    pub static DRAGGING: Mutex<()> = Mutex::new(());
+
     #[test]
     fn dragging_while_windows_redraw_does_not_freeze() {
+        let _drag = DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
         let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0 };
         register(vec![(info, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere)))]);
         show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn: true });

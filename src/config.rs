@@ -701,6 +701,8 @@ pub fn parse(text: &str, c: &mut Config) {
                     Some(p) => c.pace = p,
                     None => eprintln!("config · line {}: `agent pace default|fast|instant`", n + 1),
                 },
+                // A pace with none said: an error, not `agent` off.
+                [w, ..] if w == "pace" => eprintln!("config · line {}: `agent pace default|fast|instant`", n + 1),
                 _ => c.agent = on(rest.first()).unwrap_or_else(|| {
                     eprintln!("config · line {}: `agent on`, `agent off` or `agent pace default|fast|instant`", n + 1);
                     false
@@ -938,6 +940,9 @@ mod tests {
         assert_eq!(c.pace, Pace::Fast);
         // A pace it does not know leaves the one it had, and the agent as it was.
         parse("agent pace slow", &mut c);
+        assert_eq!((c.agent, c.pace), (true, Pace::Fast));
+        // Nor one with no pace.
+        parse("agent pace", &mut c);
         assert_eq!((c.agent, c.pace), (true, Pace::Fast));
         assert_eq!(Config::default().pace, Pace::Default);
         for p in [Pace::Default, Pace::Fast, Pace::Instant] {
