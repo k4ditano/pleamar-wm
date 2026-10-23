@@ -572,9 +572,19 @@ fn layer(real: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
         if let Some(listener) = listen(&socket) {
             let s = shared.clone();
             std::thread::spawn(move || {
+                let asking = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 for c in listener.incoming().flatten() {
-                    let s = s.clone();
-                    std::thread::spawn(move || answer(&s, c));
+                    // Yours only (the folder is already), and not too many at once.
+                    if peer_uid(&c) != Some(libc::getuid()) || asking.load(std::sync::atomic::Ordering::SeqCst) >= MAX_ASKING {
+                        continue;
+                    }
+                    let _ = c.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+                    asking.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let (s, asking) = (s.clone(), asking.clone());
+                    std::thread::spawn(move || {
+                        answer(&s, c);
+                        asking.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    });
                 }
             });
         }
@@ -834,13 +844,35 @@ fn key_bytes(name: &str, app_cursor: bool) -> Option<Vec<u8>> {
     })
 }
 
+/// A program's own words as one line: control characters (a newline, an
+/// escape) become spaces.
+fn one_line(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+}
+
+/// Whose process is at the other end of a socket (`SO_PEERCRED`): its user.
+fn peer_uid(c: &std::os::unix::net::UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: a ucred, and its size.
+    let r = unsafe { libc::getsockopt(c.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED, &mut cred as *mut _ as *mut libc::c_void, &mut len) };
+    (r == 0).then_some(cred.uid)
+}
+
+/// Questions answered at once, at most: a program opening connections and
+/// saying nothing must not use up this layer's threads.
+const MAX_ASKING: usize = 32;
+/// The longest question (a paste is hex, twice its text).
+const MAX_QUESTION: u64 = 8 << 20;
+
 /// One question, one answer, and the connection closes. `info`, `read N`,
 /// `lines N [M]`, `screen`, `paste HEX`, `keys NAME...`.
 fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
     let mut line = String::new();
     {
-        let mut r = std::io::BufReader::new(&c);
-        use std::io::BufRead;
+        use std::io::{BufRead, Read};
+        let mut r = std::io::BufReader::new((&c).take(MAX_QUESTION));
         if r.read_line(&mut line).is_err() {
             return;
         }
@@ -863,6 +895,10 @@ fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
                 Err(_) => return,
             };
             let (pid, cmd, cwd) = foreground(s);
+            // What a program says of itself (its words, its place, its title, its
+            // prompt) goes into a reply of one line a field: a newline in it must
+            // not start a field of its own.
+            let (cmd, cwd, title, before) = (one_line(&cmd), one_line(&cwd), one_line(&title), one_line(&before));
             let quiet = s.started.elapsed().as_millis() as u64 - s.last_out.load(std::sync::atomic::Ordering::Relaxed);
             format!(
                 "layer {}\nterminal {}\nshell {}\nforeground {pid}\ncommand {cmd}\ncwd {cwd}\nagent {}\ntitle {title}\nstate {}\nsize {cols}x{rows}\nfullscreen {}\nbells {bells}\nquiet {quiet}\ncursor {cursor}\nhook {}\nanswers {}\ndraft {}\nbefore {before}\n",
