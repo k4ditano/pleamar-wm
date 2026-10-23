@@ -25,7 +25,8 @@
 //! | `x` | the agent has finished: the monitor's light goes out now, not when it would have stopped waiting for its next step |
 //! | `C [PID]` | `can LOCKED` and, `|` between them, per window (every window without PID; with it, the one TARGET `root:PID` names) `PID SLOT PRIVATE POPUPS`: 1 or 0, it is private; POPUPS its menus open, `X,Y,W,H` from the root's corner, `;` between them, `-` with none. LOCKED: the screen is locked. `err unknown-root-pid` |
 //! | `l` | `windows` and, per window, `PID X Y W H VISIBLE FOCUSED APP TITLE` (app and title hex encoded), windows separated by `|`: what `pleamar-wm agent windows` shows |
-//! | `r PID` | `rect X Y W H VISIBLE`: the root surface's box on the desktop, as the scene shows it, and whether it is seen (1) — what a screenshot of the window is cut from, and what `m`'s coordinates count in |
+//! | `r PID` | `rect X Y W H VISIBLE ZOOM`: the root surface's box on the desktop, as the scene shows it, whether it is seen (1), and how much the scene scales it: `m`'s coordinates are the window's own, W / ZOOM wide |
+//! | `c TARGET [hidpi] [X Y W H]` | `picture PATH W H AGE [SCALE]`: a PNG of the window as it drew itself, with its menus, in `m`'s coordinates (or at its own density, a pixel over SCALE), cut to that box; AGE the ms since it last drew; whole, with a menu above or left of the root's corner: `... [SCALE] X Y`, the picture's corner in `m`'s coordinates; `err private` for a private window or a locked screen, `err no-box` for a box that misses the window, `err too-big` for a picture past 16384 pixels a side |
 //! | `f PID` | the keyboard to that process' only window (and its workspace shown) |
 //! | `m TARGET IDX X Y` | cursor IDX to X, Y of the window (its root surface's coordinates) |
 //! | `b TARGET IDX BUTTON PRESSED` | an evdev button (272 left), 1 down, 0 up |
@@ -54,7 +55,7 @@ use smithay::input::keyboard::{xkb, FilterResult, KeyboardHandle, XkbConfig};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerHandle};
 use smithay::input::Seat;
 use smithay::reexports::calloop::generic::Generic;
-use smithay::reexports::calloop::{Interest, Mode, PostAction};
+use smithay::reexports::calloop::{Interest, LoopHandle, Mode, PostAction};
 use smithay::reexports::wayland_server::protocol::{wl_keyboard, wl_pointer, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
@@ -133,10 +134,9 @@ pub struct Agent {
     /// Someone at this desktop from elsewhere (`pleamar-wm remote`): when
     /// that was last said.
     remote: Option<Instant>,
-    /// What the last command pasted, until the window reads it, and what
-    /// was copied before, to give back then: its answer waits for that (see
-    /// `agent_lines`).
-    pasting: Option<(std::sync::Arc<super::Kept>, Option<std::sync::Arc<super::Kept>>)>,
+    /// What the last command left to finish after its line: its answer
+    /// waits for that (see `agent_lines`).
+    pending: Option<Pending>,
     /// Typing for the person, not for an agent (the phone's keyboard, `U`):
     /// the same hands, without the agent's marks on the monitor.
     quiet: bool,
@@ -146,22 +146,222 @@ pub struct Agent {
     pub path: String,
 }
 
-/// A connection to the socket: what it sent that is not answered yet, and
-/// whether an answer is being waited for (a paste the window has not read).
+/// A command whose answer comes later than its line.
+enum Pending {
+    /// A paste the window has not read yet, and what was copied before, to
+    /// give back then.
+    Paste(std::sync::Arc<super::Kept>, Option<std::sync::Arc<super::Kept>>),
+    /// Work done off the loop: its answer, or none by the deadline.
+    Work(std::sync::mpsc::Receiver<String>, Instant),
+}
+
+/// A connection to the socket: what it sent that is not answered yet,
+/// whether an answer is being waited for (`Pending`), and what is still to
+/// go down it.
 struct Conn {
     stream: UnixStream,
     buffer: Vec<u8>,
     hello: bool,
     waiting: bool,
+    /// Answers not written yet, in order: written as the socket takes them,
+    /// never waiting for it on the loop (a picture's records are hundreds of
+    /// KB, and an agent that does not read held the whole session).
+    out: Vec<u8>,
+    /// A source writes `out` as the socket takes more.
+    writing: bool,
+    /// Over: the agent went, or let too much go unread.
+    closed: bool,
 }
 
-/// An answer, down a connection. Blocking for it: it is one short line.
-fn answer(conn: &std::rc::Rc<std::cell::RefCell<Conn>>, reply: &str) -> bool {
-    let c = conn.borrow_mut();
-    let _ = c.stream.set_nonblocking(false);
-    let ok = (&c.stream).write_all(format!("{reply}\n").as_bytes()).is_ok();
-    let _ = c.stream.set_nonblocking(true);
+/// What may wait unread down a connection before it is closed.
+const UNREAD: usize = 16 << 20;
+
+impl Conn {
+    fn new(stream: UnixStream) -> Conn {
+        Conn { stream, buffer: Vec::new(), hello: false, waiting: false, out: Vec::new(), writing: false, closed: false }
+    }
+
+    /// Bytes after the ones before them, written what the socket takes now.
+    /// false: the connection is over.
+    fn queue(&mut self, bytes: &[u8]) -> bool {
+        if self.closed {
+            return false;
+        }
+        if self.out.len() + bytes.len() > UNREAD {
+            self.close();
+            return false;
+        }
+        self.out.extend_from_slice(bytes);
+        self.flush()
+    }
+
+    /// What the socket takes of `out` without waiting.
+    fn flush(&mut self) -> bool {
+        while !self.out.is_empty() {
+            match (&self.stream).write(&self.out) {
+                Ok(0) => {
+                    self.close();
+                    return false;
+                }
+                Ok(n) => drop(self.out.drain(..n)),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => {
+                    self.close();
+                    return false;
+                }
+            }
+        }
+        !self.closed
+    }
+
+    /// Ended both ways: its read source hears the end, the agent too.
+    fn close(&mut self) {
+        self.closed = true;
+        self.out = Vec::new();
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+    }
+
+    /// Whether the agent has gone: closed here, or hung up (it closed, not
+    /// only its writing half).
+    fn gone(&mut self) -> bool {
+        if !self.closed && hung_up(&self.stream) {
+            self.close();
+        }
+        self.closed
+    }
+}
+
+fn hung_up(stream: &UnixStream) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut p = libc::pollfd { fd: stream.as_raw_fd(), events: 0, revents: 0 };
+    // SAFETY: one pollfd of an open socket, not waited on.
+    unsafe { libc::poll(&mut p, 1, 0) > 0 && p.revents & (libc::POLLHUP | libc::POLLERR) != 0 }
+}
+
+type Shared = std::rc::Rc<std::cell::RefCell<Conn>>;
+
+/// An answer, down a connection, after the ones before it. false: the
+/// connection is over.
+fn answer(handle: &LoopHandle<'static, State>, conn: &Shared, reply: &str) -> bool {
+    let ok = conn.borrow_mut().queue(format!("{reply}\n").as_bytes());
+    write_later(handle, conn);
     ok
+}
+
+/// What the socket did not take yet, written as it takes more.
+fn write_later(handle: &LoopHandle<'static, State>, conn: &Shared) {
+    let mut c = conn.borrow_mut();
+    if c.out.is_empty() || c.writing || c.closed {
+        return;
+    }
+    let Ok(writing) = c.stream.try_clone() else {
+        c.close();
+        return;
+    };
+    c.writing = true;
+    drop(c);
+    let source = Generic::new(writing, Interest::WRITE, Mode::Level);
+    let conn2 = conn.clone();
+    let inserted = handle.insert_source(source, move |_, _, _: &mut State| {
+        let mut c = conn2.borrow_mut();
+        if c.flush() && !c.out.is_empty() {
+            return Ok(PostAction::Continue);
+        }
+        c.writing = false;
+        Ok(PostAction::Remove)
+    });
+    if inserted.is_err() {
+        let mut c = conn.borrow_mut();
+        c.writing = false;
+        c.close();
+    }
+}
+
+#[cfg(test)]
+mod conn_tests {
+    use super::Conn;
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    fn pair() -> (Conn, UnixStream) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        ours.set_nonblocking(true).unwrap();
+        (Conn::new(ours), theirs)
+    }
+
+    /// An agent that does not read: a long answer waits, whole and in
+    /// order, without the loop waiting for it; read later, it all comes.
+    #[test]
+    fn a_long_answer_never_waits_for_the_agent() {
+        let (mut c, mut theirs) = pair();
+        let long: Vec<u8> = (0..4 << 20).map(|k| b'a' + (k % 26) as u8).collect();
+        let start = std::time::Instant::now();
+        assert!(c.queue(&long));
+        assert!(c.queue(b"\nok\n"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
+        assert!(!c.out.is_empty(), "the socket took it all at once");
+        let reader = std::thread::spawn(move || {
+            let mut all = Vec::new();
+            theirs.read_to_end(&mut all).unwrap();
+            all
+        });
+        while !c.out.is_empty() {
+            assert!(c.flush());
+            std::thread::yield_now();
+        }
+        drop(c);
+        let all = reader.join().unwrap();
+        assert_eq!(&all[..long.len()], &long[..]);
+        assert_eq!(&all[long.len()..], b"\nok\n");
+    }
+
+    /// Too much left unread closes it: the agent hears the end.
+    #[test]
+    fn too_much_unread_closes_it() {
+        let (mut c, mut theirs) = pair();
+        let lot = vec![b'x'; 1 << 20];
+        let mut over = false;
+        for _ in 0..(super::UNREAD >> 20) + 4 {
+            if !c.queue(&lot) {
+                over = true;
+                break;
+            }
+        }
+        assert!(over && c.closed && c.out.is_empty());
+        let mut all = Vec::new();
+        theirs.read_to_end(&mut all).unwrap();
+        assert!(!c.queue(b"ok\n"));
+    }
+
+    /// A picture that starts at a menu above and left of the root's corner:
+    /// the window where it is from there, and a box asked for in look
+    /// coordinates cut from the same place.
+    #[test]
+    fn a_picture_from_a_menu_above_and_left() {
+        let red = [0u8, 0, 255, 255].repeat(10 * 8);
+        let p = pleamar::scene::WindowPicture { size: (10, 8), pixels: std::sync::Arc::new(red) };
+        let (g, extent) = ([4, 6, 10, 8], [-5, -3, 19, 17]);
+        let (whole, _) = super::look_picture(usize::MAX, &p, g, extent, false, None).unwrap();
+        assert_eq!(whole.dimensions(), (19, 17));
+        assert_eq!(whole.get_pixel(9, 9).0, [255, 0, 0, 255]);
+        assert_eq!(whole.get_pixel(8, 8).0[3], 0);
+        let (part, _) = super::look_picture(usize::MAX, &p, g, extent, false, Some([4, 6, 2, 2])).unwrap();
+        assert!(part.pixels().all(|c| c.0 == [255, 0, 0, 255]));
+        let (corner, _) = super::look_picture(usize::MAX, &p, g, extent, false, Some([-5, -3, 4, 4])).unwrap();
+        assert!(corner.dimensions() == (4, 4) && corner.pixels().all(|c| c.0[3] == 0));
+    }
+
+    /// One that hung up is gone; one that only stopped writing is not.
+    #[test]
+    fn gone_once_hung_up() {
+        let (mut c, theirs) = pair();
+        theirs.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(!c.gone());
+        drop(theirs);
+        assert!(c.gone());
+        assert!(!c.queue(b"ok\n"));
+    }
 }
 
 /// Where the socket goes: beside the session's other ones.
@@ -217,7 +417,7 @@ pub fn start(state: &mut State) {
         return;
     }
     println!("agent · computer use: cua-inject v1 at {path}");
-    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pasting: None, quiet: false, pace: crate::config::get().pace });
+    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace });
     // Whether it is at work, looked at every second: between one action and
     // the next an agent thinks, and that is still working.
     let timer = Timer::from_duration(Duration::from_secs(1));
@@ -230,20 +430,33 @@ pub fn start(state: &mut State) {
 impl State {
     fn agent_connection(&mut self, stream: UnixStream) {
         let Ok(reading) = stream.try_clone() else { return };
-        let conn = std::rc::Rc::new(std::cell::RefCell::new(Conn { stream, buffer: Vec::new(), hello: false, waiting: false }));
+        let conn = std::rc::Rc::new(std::cell::RefCell::new(Conn::new(stream)));
         let source = Generic::new(reading, Interest::READ, Mode::Level);
         let _ = self.handle.insert_source(source, move |_, stream, state: &mut State| {
             let stream: &mut UnixStream = unsafe { stream.get_mut() };
             let mut chunk = [0u8; 4096];
             loop {
                 match stream.read(&mut chunk) {
-                    Ok(0) => return Ok(PostAction::Remove),
+                    // The end of what it says: what it said before is still
+                    // answered, unless it has gone altogether (not only done
+                    // writing); then what it asked is ended (`agent_lines`).
+                    Ok(0) => {
+                        if !conn.borrow_mut().gone() {
+                            state.agent_lines(&conn);
+                        }
+                        return Ok(PostAction::Remove);
+                    }
                     Ok(n) => conn.borrow_mut().buffer.extend_from_slice(&chunk[..n]),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => return Ok(PostAction::Remove),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => {
+                        conn.borrow_mut().close();
+                        return Ok(PostAction::Remove);
+                    }
                 }
                 // A line longer than any command is not one.
                 if conn.borrow().buffer.len() > 64 * 1024 {
+                    conn.borrow_mut().close();
                     return Ok(PostAction::Remove);
                 }
             }
@@ -256,7 +469,9 @@ impl State {
     /// was pasted, or after a second and a half: a program reads it when it
     /// gets round to the Ctrl+V, and something pasted next could otherwise
     /// get there first —Chromium pasted the second emoji in place of the
-    /// first—. The lines after it wait meanwhile. false: the connection is over.
+    /// first—. Work done off the loop (`Pending::Work`) is answered when it
+    /// is done, or `err timeout` at its deadline. The lines after either
+    /// wait meanwhile. false: the connection is over.
     fn agent_lines(&mut self, conn: &std::rc::Rc<std::cell::RefCell<Conn>>) -> bool {
         loop {
             let line = {
@@ -273,33 +488,52 @@ impl State {
                     conn.borrow_mut().hello = true;
                     HELLO.to_owned()
                 } else {
-                    let _ = conn.borrow_mut().stream.write_all(b"err unsupported-version\n");
+                    answer(&self.handle, conn, "err unsupported-version");
                     return false;
                 }
             } else {
                 self.agent_command(&line)
             };
-            if let Some((pasted, back)) = self.agent.as_mut().and_then(|a| a.pasting.take()) {
+            if let Some(mut pending) = self.agent.as_mut().and_then(|a| a.pending.take()) {
                 conn.borrow_mut().waiting = true;
                 let (conn, since) = (conn.clone(), Instant::now());
-                let mut back = Some(back);
+                let mut reply = Some(reply);
                 let timer = Timer::from_duration(Duration::from_millis(5));
                 let _ = self.handle.insert_source(timer, move |_, _, state: &mut State| {
-                    if !pasted.read.load(std::sync::atomic::Ordering::Relaxed) && since.elapsed() < Duration::from_millis(1500) {
-                        return TimeoutAction::ToDuration(Duration::from_millis(5));
+                    // The agent went: what it asked ends now, and a paste
+                    // gives back what you had copied all the same.
+                    if conn.borrow_mut().gone() {
+                        if let Pending::Paste(pasted, back) = &mut pending {
+                            state.agent_give_back(&pasted.clone(), back.take());
+                        }
+                        conn.borrow_mut().waiting = false;
+                        return TimeoutAction::Drop;
                     }
-                    if let Some(back) = back.take() {
-                        state.agent_give_back(&pasted, back);
-                    }
+                    let done = match &mut pending {
+                        Pending::Paste(pasted, back) => {
+                            if !pasted.read.load(std::sync::atomic::Ordering::Relaxed) && since.elapsed() < Duration::from_millis(1500) {
+                                return TimeoutAction::ToDuration(Duration::from_millis(5));
+                            }
+                            state.agent_give_back(&pasted.clone(), back.take());
+                            reply.take().unwrap_or_default()
+                        }
+                        Pending::Work(work, deadline) => match work.try_recv() {
+                            Ok(done) => done,
+                            Err(std::sync::mpsc::TryRecvError::Empty) if Instant::now() < *deadline => {
+                                return TimeoutAction::ToDuration(Duration::from_millis(5));
+                            }
+                            Err(_) => "err timeout".to_owned(),
+                        },
+                    };
                     conn.borrow_mut().waiting = false;
-                    if answer(&conn, &reply) {
+                    if answer(&state.handle, &conn, &done) {
                         state.agent_lines(&conn);
                     }
                     TimeoutAction::Drop
                 });
                 return true;
             }
-            if !answer(conn, &reply) {
+            if !answer(&self.handle, conn, &reply) {
                 return false;
             }
         }
@@ -312,6 +546,7 @@ impl State {
             ["q", pid] => return self.agent_query(pid.parse().unwrap_or(0)),
             ["g", pid] => self.agent_geometry(pid),
             ["r", pid] => self.agent_rect(pid),
+            ["c", target, rest @ ..] => self.agent_picture(target, rest),
             ["C"] => self.agent_can(None),
             ["C", pid] => self.agent_can(Some(pid)),
             ["l"] => Ok(self.agent_list()),
@@ -627,27 +862,98 @@ impl State {
     /// compositor, which is what draws it: an agent can trust it.
     fn agent_rect(&self, pid: &str) -> Result<String, &'static str> {
         let slot = self.agent_pick(pid).map_err(|_| "target-not-found")?;
-        let r = self.agent_rect_of(slot);
-        Ok(format!("rect {} {} {} {} {}", r.0, r.1, r.2, r.3, u8::from(r.4)))
+        let (r, zoom) = (self.agent_rect_of(slot), self.agent_place(slot).map_or(1.0, |p| p.2));
+        Ok(format!("rect {} {} {} {} {} {zoom:.4}", r.0, r.1, r.2, r.3, u8::from(r.4)))
     }
 
     fn agent_rect_of(&self, slot: usize) -> (i64, i64, i64, i64, bool) {
-        let Some(Some(w)) = self.slots.get(slot) else { return (0, 0, 0, 0, false) };
         let Some((_, root, zoom, _)) = self.agent_place(slot) else { return (0, 0, 0, 0, false) };
-        // From the root surface's corner to the window's far edges: the scene
-        // draws the window only (not a program's own shadow), and starting at
-        // the root's corner keeps a pixel of the picture a point `m` takes.
+        let e = self.agent_extent(slot);
+        let (width, height) = (((e[0] + e[2]) as f64 * zoom).round(), ((e[1] + e[3]) as f64 * zoom).round());
+        (root[0].round() as i64, root[1].round() as i64, width as i64, height as i64, true)
+    }
+
+    /// How far a window reaches from its root surface's corner, in its units:
+    /// to the window's far edges (the scene draws the window only, not a
+    /// program's own shadow, and starting at the root's corner keeps a pixel
+    /// of a picture a point `m` takes), and its menus that hang out of it (a
+    /// right-click menu near its edge), whole: X Y W H. X and Y are 0 but
+    /// for a menu above or left of the root's corner (one a window at the
+    /// bottom of the monitor opens upwards), where they are that menu's.
+    fn agent_extent(&self, slot: usize) -> [i32; 4] {
+        let Some(Some(w)) = self.slots.get(slot) else { return [0; 4] };
         let g = w.geometry;
-        let (mut right, mut bottom) = (g[0] + g[2], g[1] + g[3]);
-        // And its menus that hang out of it (a right-click menu near its
-        // edge): a picture of the window shows them whole.
+        let (mut left, mut top, mut right, mut bottom) = (0, 0, g[0] + g[2], g[1] + g[3]);
         for (popup, offset) in smithay::desktop::PopupManager::popups_for_surface(&w.surface) {
             let size = popup.geometry().size;
-            right = right.max(g[0] + offset.x + size.w);
-            bottom = bottom.max(g[1] + offset.y + size.h);
+            let (x, y) = (g[0] + offset.x, g[1] + offset.y);
+            (left, top) = (left.min(x), top.min(y));
+            (right, bottom) = (right.max(x + size.w), bottom.max(y + size.h));
         }
-        let (width, height) = ((right as f64 * zoom).round(), (bottom as f64 * zoom).round());
-        (root[0].round() as i64, root[1].round() as i64, width as i64, height as i64, true)
+        [left, top, right - left, bottom - top]
+    }
+
+    /// `c TARGET [hidpi] [X Y W H]`: a picture of the window from what it
+    /// drew, not from the screen: covered, on another workspace, with its
+    /// menus and nothing else over it. In look coordinates (its root
+    /// surface's units: a pixel is the point `m` takes), or at the window's
+    /// own density with `hidpi` (a pixel over SCALE is that point). Put
+    /// together off the loop; answered `picture PATH W H AGE [SCALE]`, AGE
+    /// the milliseconds since the window last drew.
+    fn agent_picture(&mut self, target: &str, rest: &[&str]) -> Result<String, &'static str> {
+        let slot = self.agent_target(target)?;
+        if layers::private(slot) || layers::locked() {
+            return Err("private");
+        }
+        let hidpi = rest.first() == Some(&"hidpi");
+        let cut = match &rest[usize::from(hidpi)..] {
+            [] => None,
+            [x, y, w, h] => match (x.parse::<i32>(), y.parse::<i32>(), w.parse::<i32>(), h.parse::<i32>()) {
+                (Ok(x), Ok(y), Ok(w), Ok(h)) if w > 0 && h > 0 => Some([x, y, w, h]),
+                _ => return Err("bad-args"),
+            },
+            _ => return Err("bad-args"),
+        };
+        let Some(Some(w)) = self.slots.get(slot) else { return Err("unknown-pid") };
+        let (geometry, age, extent) = (w.geometry, w.drew.elapsed().as_millis(), self.agent_extent(slot));
+        let peer = self.agent.as_ref().map_or(0, |a| a.peer);
+        self.agent_busy(slot);
+        static WHO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
+        let who = WHO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (answer, work) = std::sync::mpsc::channel();
+        let to_render = self.to_render.clone();
+        // Menus read back from their monitors: a second more.
+        let deadline = Duration::from_secs(3 + u64::from(layers::has_menus(slot)));
+        std::thread::spawn(move || {
+            // A cut is what of it is in the window, and says its own size.
+            let within = |c: [i32; 4]| crate::marks::meet(c, extent);
+            let reply = match cut {
+                Some(c) if within(c).is_none() => "err no-box".to_owned(),
+                _ => {
+                    let (tx, rx) = std::sync::mpsc::channel::<pleamar::scene::WindowPicture>();
+                    let _ = to_render.send(ToRender::WatchWindow(slot, who, Some(tx)));
+                    let got = rx.recv_timeout(Duration::from_millis(2500));
+                    let _ = to_render.send(ToRender::WatchWindow(slot, who, None));
+                    match got {
+                        Ok(p) => {
+                            let cut = cut.and_then(within);
+                            // Whole, from a menu above or left of the root's corner: where it starts.
+                            let corner = if cut.is_none() && extent[..2] != [0, 0] { format!(" {} {}", extent[0], extent[1]) } else { String::new() };
+                            match look_picture(slot, &p, geometry, extent, hidpi, cut) {
+                                Ok((picture, scale)) => kept(&picture, peer, cut.map_or((extent[2], extent[3]), |c| (c[2], c[3])), age, hidpi.then_some(scale), &corner),
+                                Err(e) => format!("err {e}"),
+                            }
+                        }
+                        Err(_) => "err no-picture".to_owned(),
+                    }
+                }
+            };
+            let _ = answer.send(reply);
+        });
+        if let Some(a) = self.agent.as_mut() {
+            a.pending = Some(Pending::Work(work, Instant::now() + deadline));
+        }
+        Ok(String::new())
     }
 
     /// Every window: its process, its box (as `r` says it), whether it is
@@ -828,7 +1134,7 @@ impl State {
         match lent {
             Ok(()) => {
                 if let Some(a) = self.agent.as_mut() {
-                    a.pasting = Some((pasted, back));
+                    a.pending = Some(Pending::Paste(pasted, back));
                 }
             }
             Err(_) => self.agent_give_back(&pasted, back),
@@ -1778,6 +2084,96 @@ pub fn is_agent_seat(seat: &Seat<State>) -> bool {
     seat.name().starts_with("cua-agent")
 }
 
+/// A window's picture from the render (cut to its geometry, at its own
+/// density, BGRA premultiplied) laid out from its root surface's corner,
+/// with its menus over it, over the `extent` box (from that corner), at a
+/// unit a pixel (or at its density, `hidpi`), cut to `cut` (in units from
+/// the root's corner): RGBA, and its pixels a unit. `too-big` past `SIDE`
+/// pixels a side or `PIXELS` in all.
+fn look_picture(slot: usize, p: &pleamar::scene::WindowPicture, g: [i32; 4], extent: [i32; 4], hidpi: bool, cut: Option<[i32; 4]>) -> Result<(image::RgbaImage, f64), &'static str> {
+    const SIDE: u32 = 16384;
+    const PIXELS: u64 = 1 << 25;
+    let s = if g[2] > 0 { p.size.0 as f64 / g[2] as f64 } else { 1.0 };
+    let d = if hidpi { s } else { 1.0 };
+    let px = |v: i32| (v as f64 * d).round() as i32;
+    let small = |(w, h): (u32, u32)| w <= SIDE && h <= SIDE && u64::from(w) * u64::from(h) <= PIXELS;
+    let size = (px(extent[2]).max(1) as u32, px(extent[3]).max(1) as u32);
+    // The window's corner on the canvas, in units.
+    let (gx, gy) = (g[0] - extent[0], g[1] - extent[1]);
+    // Its pixels to the canvas's: resampled premultiplied, as they are.
+    let fit = (px(g[2]).max(1) as u32, px(g[3]).max(1) as u32);
+    if !small(size) || !small(fit) {
+        return Err("too-big");
+    }
+    let mut canvas = vec![0u8; size.0 as usize * size.1 as usize * 4];
+    let own = image::RgbaImage::from_raw(p.size.0, p.size.1, p.pixels.to_vec());
+    let own = own.map(|o| if o.dimensions() == fit { o } else { image::imageops::resize(&o, fit.0, fit.1, image::imageops::FilterType::Triangle) });
+    if let Some(own) = own {
+        let (ox, oy) = (px(gx) as i64, px(gy) as i64);
+        for (x, y, c) in own.enumerate_pixels() {
+            let (tx, ty) = (ox + x as i64, oy + y as i64);
+            if tx >= 0 && ty >= 0 && tx < size.0 as i64 && ty < size.1 as i64 {
+                let k = (ty as usize * size.0 as usize + tx as usize) * 4;
+                canvas[k..k + 4].copy_from_slice(&c.0);
+            }
+        }
+    }
+    if let Some((_, menus)) = layers::window_menus(slot) {
+        for (menu, its) in &menus {
+            layers::lay_menu(&mut canvas, size, (px(gx), px(gy)), d, menu, its);
+        }
+    }
+    // BGRA premultiplied to RGBA as it is seen.
+    for c in canvas.chunks_exact_mut(4) {
+        let a = c[3] as u32;
+        let un = |v: u8| if a == 0 { 0 } else { ((v as u32 * 255 + a / 2) / a).min(255) as u8 };
+        let (b, g, r) = (un(c[0]), un(c[1]), un(c[2]));
+        c[0] = r;
+        c[1] = g;
+        c[2] = b;
+    }
+    let picture = image::RgbaImage::from_raw(size.0, size.1, canvas).unwrap_or_default();
+    let picture = match cut {
+        Some([x, y, w, h]) => {
+            let (x0, y0) = (px(x - extent[0]).clamp(0, size.0 as i32) as u32, px(y - extent[1]).clamp(0, size.1 as i32) as u32);
+            let (w, h) = ((px(w).max(0) as u32).min(size.0 - x0).max(1), (px(h).max(0) as u32).min(size.1 - y0).max(1));
+            image::imageops::crop_imm(&picture, x0, y0, w, h).to_image()
+        }
+        None => picture,
+    };
+    Ok((picture, d))
+}
+
+/// Where the agent's pictures are kept (yours only): the last few, each
+/// connection's numbered, the older ones let go.
+fn keep_picture(picture: &image::RgbaImage, peer: u32) -> Result<String, String> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = format!("{}/pleamar-agent", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    let path = format!("{dir}/look-{peer}-{}.png", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).map_err(|e| e.to_string())?;
+    picture.write_to(&mut file, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    let mut kept: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(&dir)
+        .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("look-")).filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect())
+        .unwrap_or_default();
+    kept.sort();
+    for (_, old) in kept.iter().rev().skip(16) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(path)
+}
+
+/// A picture kept, and `c`'s answer: `picture PATH W H AGE [SCALE]`, and
+/// what follows.
+fn kept(picture: &image::RgbaImage, peer: u32, (w, h): (i32, i32), age: u128, scale: Option<f64>, after: &str) -> String {
+    match keep_picture(picture, peer) {
+        Ok(path) => format!("picture {path} {w} {h} {age}{}{after}", scale.map_or(String::new(), |s| format!(" {s:.3}"))),
+        Err(e) => format!("err {e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::words;
@@ -1813,5 +2209,15 @@ mod tests {
         assert_eq!(unhex("abc"), Err("bad-args"));
         assert_eq!(unhex(&"a".repeat(8194)), Err("bad-args"));
         assert_eq!(unhex_long(&"61".repeat(5000)).map(|b| b.len()), Ok(5000));
+    }
+
+    #[test]
+    fn a_picture_too_big_is_refused() {
+        let p = pleamar::scene::WindowPicture { size: (4000, 10), pixels: std::sync::Arc::new(vec![0; 4000 * 10 * 4]) };
+        // A buffer 4000 times the window's units, at its density.
+        assert_eq!(super::look_picture(usize::MAX, &p, [0, 0, 1, 10], [0, 0, 100, 10], true, None).err(), Some("too-big"));
+        assert_eq!(super::look_picture(usize::MAX, &p, [0, 0, 1, 10], [0, 0, i32::MAX, i32::MAX], false, None).err(), Some("too-big"));
+        let (small, d) = super::look_picture(usize::MAX, &p, [0, 0, 1, 10], [0, 0, 100, 10], false, Some([90, 0, 10, 10])).unwrap();
+        assert_eq!((small.dimensions(), d), ((10, 10), 1.0));
     }
 }

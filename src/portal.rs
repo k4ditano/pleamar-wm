@@ -208,11 +208,16 @@ async fn window_picture(slot: usize) -> Option<(Vec<u8>, (u32, u32))> {
     render(ToRender::WatchWindow(slot, ONCE, Some(tx)));
     let (done, wait) = async_channel::bounded(1);
     std::thread::spawn(move || {
-        let _ = done.try_send(rx.recv_timeout(std::time::Duration::from_secs(3)).ok());
+        let picture = rx.recv_timeout(std::time::Duration::from_secs(3)).ok().map(|p| {
+            let mut pixels = std::sync::Arc::unwrap_or_clone(p.pixels);
+            layers::with_menus(slot, &mut pixels, p.size);
+            (pixels, p.size)
+        });
+        let _ = done.try_send(picture);
     });
     let picture = wait.recv().await.ok().flatten();
     render(ToRender::WatchWindow(slot, ONCE, None));
-    picture.map(|p| (std::sync::Arc::unwrap_or_clone(p.pixels), p.size))
+    picture
 }
 
 /// The whole desktop: every monitor where it is, at the finest scale.
@@ -783,7 +788,10 @@ fn pipewire_thread(rx: pw::channel::Receiver<Msg>) -> Result<(), pw::Error> {
             let name = session.clone();
             let _ = std::thread::Builder::new().name("portal-window".into()).spawn(move || {
                 let Some(to_pw) = to_pw else { return };
-                for picture in pictures {
+                for mut picture in pictures {
+                    let mut pixels = std::sync::Arc::unwrap_or_clone(picture.pixels);
+                    layers::with_menus(slot, &mut pixels, picture.size);
+                    picture.pixels = std::sync::Arc::new(pixels);
                     if to_pw.send(Msg::Window { session: name.clone(), picture }).is_err() {
                         return;
                     }

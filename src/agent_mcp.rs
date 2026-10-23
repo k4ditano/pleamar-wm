@@ -315,13 +315,29 @@ fn tools() -> Vec<Tool<Words>> {
         },
         Tool {
             name: "look",
-            about: "A picture of the window (or, without one, the desktop), and its size. Look only for what reading cannot tell: layout, an image, a colour.",
-            args: json!({ "window": window }),
+            about: "A picture of the window (or, without one, the desktop), and its size; of a scene's item, its corner in the window's picture. Look only for what reading cannot tell: layout, an image, a colour.",
+            args: json!({
+                "window": window,
+                "element": element,
+                "text": text,
+                "first": first,
+                "box": { "type": "array", "items": { "type": "number" }, "description": "A part of it: [x, y, w, h] in the picture's coordinates." },
+                "pad": num("Around an element, this many units."),
+                "hidpi": flag("At the window's own pixels; says the scale."),
+            }),
             needed: &[],
             eager: true,
             run: |a| {
+                let said = ["element", "text", "box"].iter().filter(|k| a.get(**k).is_some()).count();
+                if said > 1 {
+                    return Err("look takes one of element, text or box".into());
+                }
                 let mut w = vec!["look".into()];
                 words(&mut w, a, &["window"]);
+                which(&mut w, a);
+                flags(&mut w, a, &[("hidpi", "--hidpi")]);
+                values(&mut w, a, &[("pad", "--pad")]);
+                w.extend(a.get("box").and_then(Value::as_array).into_iter().flatten().map(|n| n.to_string()));
                 Ok(Call { words: w, input: None })
             },
         },
@@ -551,7 +567,13 @@ mod tests {
         assert_eq!(words("scroll", json!({ "window": w, "x": 1, "y": 2, "direction": "up" })), ["scroll", w, "1", "2", "up"]);
         assert_eq!(words("drag", json!({ "window": w, "x1": 1, "y1": 2, "x2": 3, "y2": 4 })), ["drag", w, "1", "2", "3", "4"]);
         assert_eq!(words("look", json!({})), ["look"]);
-        assert_eq!(words("look", json!({ "window": w })), ["look", w]);
+        assert_eq!(words("look", json!({ "window": w, "element": "@24", "pad": 8 })), ["look", w, "@24", "--pad", "8"]);
+        assert_eq!(words("look", json!({ "window": w, "hidpi": true })), ["look", w, "--hidpi"]);
+        assert_eq!(words("look", json!({ "window": w, "box": [0, 0, 100, 50] })), ["look", w, "0", "0", "100", "50"]);
+        assert_eq!(words("look", json!({ "window": w, "text": "OK", "first": true })), ["look", w, "--text", "OK", "--first"]);
+        for bad in [json!({ "window": w, "text": "a", "element": "@1" }), json!({ "window": w, "element": "@save", "box": [0, 0, 1, 1] })] {
+            assert!((tool("look").run)(&bad).is_err(), "{bad}");
+        }
         assert_eq!(words("wait", json!({ "window": w, "until": "has", "text": "OK", "timeout": 5 })), ["wait", w, "has", "--text", "OK", "5s"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "gone", "text": "Loading" })), ["wait", w, "gone", "--text", "Loading"]);
         assert_eq!(words("wait", json!({ "window": w, "until": "gone", "element": "@4" })), ["wait", w, "@4", "gone"]);
@@ -607,15 +629,15 @@ mod tests {
 
     #[test]
     fn look_answers_the_picture() {
-        let r = reply(&tool("look"), &json!({ "window": "4521" }), |w, _| {
+        let r = reply(&tool("look"), &json!({ "window": "4521", "element": "@24" }), |w, _| {
             let [.., o, f] = w else { panic!() };
             assert_eq!(o, "-o");
             std::fs::write(f, b"\x89PNG..").unwrap();
-            Ran { code: 0, out: format!("{f} 120x40\n"), err: String::new() }
+            Ran { code: 0, out: format!("{f} 120x40 at 10,20\n"), err: String::new() }
         });
         match &r.content[..] {
             [Content::Text(t), Content::Image { data, mime }] => {
-                assert_eq!(t, "120x40\n");
+                assert_eq!(t, "120x40 at 10,20\n");
                 assert_eq!((&data[..], *mime), (&b"\x89PNG.."[..], "image/png"));
             }
             _ => panic!("text and a picture"),
