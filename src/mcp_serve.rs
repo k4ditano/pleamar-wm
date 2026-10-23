@@ -24,17 +24,15 @@ pub enum Content {
     Image { data: Vec<u8>, mime: &'static str },
 }
 
-/// What a call answers: its parts, whether it failed, and the code it failed
-/// with when there is one (`structuredContent.code`).
+/// What a call answers: its parts, and whether it failed.
 pub struct Reply {
     pub content: Vec<Content>,
     pub error: bool,
-    pub code: Option<i32>,
 }
 
 impl Reply {
     pub fn text(text: String, error: bool) -> Self {
-        Reply { content: vec![Content::Text(text)], error, code: None }
+        Reply { content: vec![Content::Text(text)], error }
     }
 }
 
@@ -107,11 +105,7 @@ fn answer(reply: Reply) -> Value {
     if content.is_empty() {
         content.push(json!({ "type": "text", "text": "done" }));
     }
-    let mut v = json!({ "content": content, "isError": reply.error });
-    if let Some(code) = reply.code {
-        v["structuredContent"] = json!({ "code": code });
-    }
-    v
+    json!({ "content": content, "isError": reply.error })
 }
 
 #[cfg(test)]
@@ -137,8 +131,8 @@ mod tests {
             &fake(),
             |t, a| match t.name {
                 "echo" => Reply::text(a["text"].as_str().unwrap_or("").into(), false),
-                "fail" => Reply { content: vec![Content::Text("gone".into())], error: true, code: Some(4) },
-                _ => Reply { content: vec![Content::Text("here".into()), Content::Image { data: b"png".to_vec(), mime: "image/png" }], error: false, code: None },
+                "fail" => Reply { content: vec![Content::Text("gone".into())], error: true },
+                _ => Reply { content: vec![Content::Text("here".into()), Content::Image { data: b"png".to_vec(), mime: "image/png" }], error: false },
             },
             input.as_bytes(),
             &mut out,
@@ -176,7 +170,7 @@ mod tests {
         assert_eq!(a[0]["result"], json!({ "content": [{ "type": "text", "text": "hi" }], "isError": false }));
         assert_eq!(a[1]["result"]["content"], json!([{ "type": "text", "text": "done" }]));
         assert_eq!(a[2]["result"], json!({ "content": [{ "type": "text", "text": "missing: text" }], "isError": true }));
-        assert_eq!(a[3]["result"], json!({ "content": [{ "type": "text", "text": "gone" }], "isError": true, "structuredContent": { "code": 4 } }));
+        assert_eq!(a[3]["result"], json!({ "content": [{ "type": "text", "text": "gone" }], "isError": true }));
         assert_eq!(a[4]["error"], json!({ "code": -32602, "message": "no tool called nope" }));
     }
 

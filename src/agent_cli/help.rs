@@ -107,6 +107,17 @@ Wait
     dialog                        the window opened a dialog
     expr 'EXPR'                   a scene's expression holds: expr 'status == \"Saved\"'
 
+Several steps
+  do PID <<'EOF'                  one command a line, as said here without `pleamar-wm agent` and the
+                                  window (press @12, type @12 -- \"ana\", key tab, wait has --text OK
+                                  5s), quoted as in a shell, # comments; in order, each under
+                                  `step N: COMMAND`, until one fails: its number, and its exit code.
+                                  PID may be PID.N or PID:SHELL; `type -` and `run -` are refused
+  mcp                             these verbs as an MCP server (stdio): structured arguments, the
+                                  exit code as `exit N` on a failure, look's picture itself
+  setup [--yes] [--undo]          registers that server, pleamar-desktop, in Claude Code and Codex
+                                  (asks first); --undo takes it away
+
 The hands
   done                            finished: the light on the monitor goes out now
   stop                            the user's: what the agent tries next is refused until `done`

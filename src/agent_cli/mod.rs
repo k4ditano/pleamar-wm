@@ -15,6 +15,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
 mod act;
+mod batch;
 mod conn;
 mod fail;
 mod help;
@@ -41,6 +42,7 @@ use target::*;
 use terminal::*;
 use versions::*;
 pub(crate) use conn::{tell, Line};
+pub(crate) use batch::{quote, seconds};
 pub(crate) use windows::monitors;
 
 pub fn run(args: &[String]) -> i32 {
@@ -86,6 +88,9 @@ fn go(args: &[String]) -> R {
         "look" => look::look(rest)?,
         "run" => run::run(rest)?,
         "wait" => wait::wait(rest)?,
+        "do" => batch::run(rest)?,
+        "mcp" => crate::agent_mcp::run(),
+        "setup" => crate::agent_mcp::setup(rest)?,
         "say" => say(&parse(rest, &Spec { raw: true, ..PLAIN })?)?,
         "move" | "click" | "drag" | "scroll" => pointer::go(what, rest)?,
         "open" => {

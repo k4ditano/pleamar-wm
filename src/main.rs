@@ -9,6 +9,7 @@ mod a11y_act;
 mod marks;
 mod a11y_wait;
 mod agent_cli;
+mod agent_mcp;
 mod build;
 mod remote;
 mod remote_rtc;

@@ -1228,6 +1228,64 @@ const SKILL: &str = include_str!("../skill/pleamar-link/SKILL.md");
 const CLAUDE_EVENTS: [&str; 7] = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop"];
 const HOOK: &str = "pleamar-wm link hook claude";
 
+/// The agents an MCP server is registered with.
+#[derive(Clone, Copy)]
+pub(crate) enum Client {
+    Claude,
+    Codex,
+}
+
+pub(crate) const NO_CLIENT: &str = "no agent found to set up (Claude Code: ~/.claude and `claude`; Codex: ~/.codex and `codex`)";
+
+/// Which of them are here: Claude Code (~/.claude and `claude`), Codex
+/// (~/.codex and `codex`).
+pub(crate) fn clients() -> Result<(bool, bool), String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME")?;
+    let has = |p: &str| std::path::Path::new(&format!("{home}/{p}")).is_dir();
+    let on_path = |c: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(c).is_file()));
+    Ok((has(".claude") && on_path("claude"), has(".codex") && on_path("codex")))
+}
+
+/// Registering (or removing) the MCP server `name`, as a plan says it.
+pub(crate) fn mcp_plan(client: Client, name: &str, undo: bool) -> String {
+    let (verb, word) = if undo { ("remove", "remove") } else { ("register", "add") };
+    match client {
+        Client::Claude => format!("{verb} the MCP server «{name}» in Claude Code (user scope): `claude mcp {word}`"),
+        Client::Codex => format!("{verb} the MCP server «{name}» in Codex: `codex mcp {word}`"),
+    }
+}
+
+/// The MCP server `name`, `pleamar-wm ARGS...`, registered anew (or removed).
+pub(crate) fn register_mcp(client: Client, name: &str, args: &[&str], undo: bool) -> Result<(), String> {
+    let quiet = |c: &mut std::process::Command| c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+    let (cmd, scope): (&str, &[&str]) = match client {
+        Client::Claude => ("claude", &["--scope", "user"]),
+        Client::Codex => ("codex", &[]),
+    };
+    quiet(std::process::Command::new(cmd).args(["mcp", "remove"]).args(scope).arg(name));
+    if !undo && !quiet(std::process::Command::new(cmd).args(["mcp", "add"]).args(scope).args([name, "--", "pleamar-wm"]).args(args)) {
+        return Err(format!("`{cmd} mcp add` did not go through"));
+    }
+    Ok(())
+}
+
+/// The plan said, and whether to go ahead: asked in a terminal, unless `yes`.
+pub(crate) fn go_ahead(what: &str, plan: &[String], yes: bool) -> Result<bool, String> {
+    println!("{what} will:\n  - {}", plan.join("\n  - "));
+    if yes {
+        return Ok(true);
+    }
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        return Err("run it in a terminal to answer, or with --yes".into());
+    }
+    print!("Go ahead? [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut a = String::new();
+    let _ = std::io::stdin().read_line(&mut a);
+    Ok(matches!(a.trim(), "y" | "Y" | "s" | "S" | "yes" | "si" | "sí"))
+}
+
 /// `link setup`: what lets the agents use wires by themselves —the skill,
 /// the MCP server (`link mcp`) for Claude Code and Codex, and Claude Code's
 /// hooks (exact state and answers)—. Says what it will change and asks
@@ -1235,9 +1293,7 @@ const HOOK: &str = "pleamar-wm link hook claude";
 fn setup(yes: bool, undo: bool) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "no HOME")?;
     let has = |p: &str| std::path::Path::new(&format!("{home}/{p}")).is_dir();
-    let on_path = |c: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(c).is_file()));
-    let claude = has(".claude") && on_path("claude");
-    let codex = has(".codex") && on_path("codex");
+    let (claude, codex) = clients()?;
     let mut plan: Vec<String> = Vec::new();
     for (ok, dir) in [(has(".claude"), ".claude/skills/pleamar-link"), (has(".codex"), ".codex/skills/pleamar-link")] {
         if ok {
@@ -1245,28 +1301,17 @@ fn setup(yes: bool, undo: bool) -> Result<String, String> {
         }
     }
     if claude {
-        plan.push(format!("{} the MCP server «pleamar-link» in Claude Code (user scope): `claude mcp {}`", if undo { "remove" } else { "register" }, if undo { "remove" } else { "add" }));
+        plan.push(mcp_plan(Client::Claude, "pleamar-link", undo));
         plan.push(format!("{} Claude Code's hooks for wires in ~/.claude/settings.json (a copy of it is kept as settings.json.before-pleamar-link)", if undo { "take away" } else { "add" }));
     }
     if codex {
-        plan.push(format!("{} the MCP server «pleamar-link» in Codex: `codex mcp {}`", if undo { "remove" } else { "register" }, if undo { "remove" } else { "add" }));
+        plan.push(mcp_plan(Client::Codex, "pleamar-link", undo));
     }
     if plan.is_empty() {
-        return Err("no agent found to set up (Claude Code: ~/.claude and `claude`; Codex: ~/.codex and `codex`)".into());
+        return Err(NO_CLIENT.into());
     }
-    println!("pleamar-wm link setup will:\n  - {}", plan.join("\n  - "));
-    if !yes {
-        use std::io::IsTerminal;
-        if !std::io::stdin().is_terminal() {
-            return Err("run it in a terminal to answer, or with --yes".into());
-        }
-        print!("Go ahead? [y/N] ");
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        let mut a = String::new();
-        let _ = std::io::stdin().read_line(&mut a);
-        if !matches!(a.trim(), "y" | "Y" | "s" | "S" | "yes" | "si" | "sí") {
-            return Ok("nothing changed".into());
-        }
+    if !go_ahead("pleamar-wm link setup", &plan, yes)? {
+        return Ok("nothing changed".into());
     }
     let mut done: Vec<String> = Vec::new();
     for (ok, dir) in [(has(".claude"), format!("{home}/.claude/skills/pleamar-link")), (has(".codex"), format!("{home}/.codex/skills/pleamar-link"))] {
@@ -1281,23 +1326,14 @@ fn setup(yes: bool, undo: bool) -> Result<String, String> {
         }
         done.push(format!("skill {dir}"));
     }
-    let quiet = |c: &mut std::process::Command| c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
     if claude {
-        quiet(std::process::Command::new("claude").args(["mcp", "remove", "--scope", "user", "pleamar-link"]));
-        if !undo {
-            if !quiet(std::process::Command::new("claude").args(["mcp", "add", "--scope", "user", "pleamar-link", "--", "pleamar-wm", "link", "mcp"])) {
-                return Err("`claude mcp add` did not go through".into());
-            }
-        }
+        register_mcp(Client::Claude, "pleamar-link", &["link", "mcp"], undo)?;
         done.push("Claude Code's MCP server".into());
         claude_hooks(&format!("{home}/.claude/settings.json"), undo)?;
         done.push("Claude Code's hooks".into());
     }
     if codex {
-        quiet(std::process::Command::new("codex").args(["mcp", "remove", "pleamar-link"]));
-        if !undo && !quiet(std::process::Command::new("codex").args(["mcp", "add", "pleamar-link", "--", "pleamar-wm", "link", "mcp"])) {
-            return Err("`codex mcp add` did not go through".into());
-        }
+        register_mcp(Client::Codex, "pleamar-link", &["link", "mcp"], undo)?;
         done.push("Codex's MCP server".into());
     }
     Ok(format!(
