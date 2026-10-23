@@ -16,6 +16,11 @@
 //! as a video track only if not: a track goes through the browser's jitter
 //! buffer, which waits to smooth the picture out, and here every millisecond
 //! between a touch and its picture counts more than smoothness.
+//!
+//! The sound goes as an audio track (Opus), when the page asks for one: what
+//! the computer plays, taken from PipeWire (the default output's monitor)
+//! while the way is there. With the session on the phone, the phone is an
+//! output of its own («Phone», the default meanwhile), and the sound is its.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -134,6 +139,9 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     // Not reachable since then: often a moment (the wifi, a phone waking), so
     // given a while to come back before it ends.
     let mut lost: Option<Instant> = None;
+    // The sound: its track, what takes it, and how far it has gone (48 kHz).
+    let mut sound: Option<(Mid, Pt, Sound, u64)> = None;
+    let mut connected = false;
     while alive.load(Ordering::Relaxed) {
         if lost.is_some_and(|t| t.elapsed() > LOST_GRACE) || !rtc.is_alive() {
             return Ok("the page is not reachable any more");
@@ -222,12 +230,21 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                         };
                     }
                     Event::Connected => {
+                        connected = true;
                         let _ = events.send(PeerEvent::Connected);
                     }
                     Event::MediaAdded(m) if m.kind == MediaKind::Video => {
                         let pt = rtc.writer(m.mid).and_then(|w| h264(w.payload_params().map(|p| (p.pt(), p.spec())).collect()));
                         if let Some(pt) = pt {
                             video = Some((m.mid, pt));
+                        }
+                    }
+                    Event::MediaAdded(m) if m.kind == MediaKind::Audio && sound.is_none() => {
+                        let pt = rtc.writer(m.mid).and_then(|w| w.payload_params().find(|p| p.spec().codec == Codec::Opus).map(|p| p.pt()));
+                        match (pt, Sound::start(PHONE_SINK.load(Ordering::SeqCst))) {
+                            (Some(pt), Ok(s)) => sound = Some((m.mid, pt, s, 0)),
+                            (None, _) => println!("remote · no sound: the page takes no Opus"),
+                            (_, Err(e)) => println!("remote · no sound: {e}"),
                         }
                     }
                     Event::ChannelOpen(id, label) if label == "video" => {
@@ -263,6 +280,32 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                 continue;
             }
         };
+        // The phone's output put up or taken down: the sound from where it is now.
+        if let Some((_, _, s, _)) = sound.as_mut().filter(|(_, _, s, _)| s.phone != PHONE_SINK.load(Ordering::SeqCst)) {
+            match Sound::start(!s.phone) {
+                Ok(again) => *s = again,
+                Err(e) => println!("remote · no sound: {e}"),
+            }
+        }
+        // The sound that came, onto its track once the way is open.
+        if let Some((mid, pt, s, at)) = sound.as_mut() {
+            let mut broke = None;
+            while let Ok(packet) = s.packets.try_recv() {
+                *at += OPUS_FRAME;
+                if !connected {
+                    continue;
+                }
+                let Some(writer) = rtc.writer(*mid) else { continue };
+                if let Err(e) = writer.write(*pt, Instant::now(), MediaTime::new(*at, Frequency::FORTY_EIGHT_KHZ), packet) {
+                    broke = Some(e.to_string());
+                    break;
+                }
+            }
+            if let Some(e) = broke {
+                println!("remote · the sound stops: {e}");
+                sound = None;
+            }
+        }
         // Wait for the network, but come back soon for the frames.
         let wait = timeout.saturating_duration_since(Instant::now()).min(Duration::from_millis(2));
         if wait.is_zero() {
@@ -282,6 +325,191 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     }
     rtc.disconnect();
     Ok("closed from here")
+}
+
+/// Samples of each channel in an Opus packet (20 ms at 48 kHz).
+const OPUS_FRAME: u64 = 960;
+
+/// What the computer plays (the default output's monitor, or the phone's
+/// output), as Opus packets: taken from PipeWire and encoded here, on a
+/// thread of its own.
+struct Sound {
+    quit: pipewire::channel::Sender<()>,
+    packets: mpsc::Receiver<Vec<u8>>,
+    /// Taken from the phone's output, not the default one.
+    phone: bool,
+}
+
+impl Sound {
+    fn start(phone: bool) -> Result<Sound, String> {
+        // (A second of it at most waiting: what the way could not take is dropped.)
+        let (tx, packets) = mpsc::sync_channel(50);
+        let (quit, quit_rx) = pipewire::channel::channel();
+        let (ready_tx, ready) = mpsc::channel();
+        std::thread::spawn(move || {
+            if let Err(e) = capture(phone, quit_rx, tx, &ready_tx) {
+                let _ = ready_tx.send(Err(e));
+            }
+        });
+        ready.recv_timeout(Duration::from_secs(2)).map_err(|_| "PipeWire did not answer".to_owned())??;
+        println!("remote · the sound goes too, from {}", if phone { "the phone's output" } else { "the default output" });
+        Ok(Sound { quit, packets, phone })
+    }
+}
+
+impl Drop for Sound {
+    fn drop(&mut self) {
+        let _ = self.quit.send(());
+    }
+}
+
+/// Taking the sound until told to stop: a stream of PipeWire's on an
+/// output's monitor (the default one's, which it follows, or the phone's),
+/// 48 kHz stereo, encoded 20 ms at a time.
+fn capture(phone: bool, quit: pipewire::channel::Receiver<()>, tx: mpsc::SyncSender<Vec<u8>>, ready: &mpsc::Sender<Result<(), String>>) -> Result<(), String> {
+    use pipewire as pw;
+    use pw::spa;
+    let err = |e: pw::Error| e.to_string();
+    pw::init();
+    let main = pw::main_loop::MainLoopRc::new(None).map_err(err)?;
+    let context = pw::context::ContextRc::new(&main, None).map_err(err)?;
+    let core = context.connect_rc(None).map_err(err)?;
+    let mut props = pw::properties::properties! {
+        *pw::keys::MEDIA_TYPE => "Audio",
+        *pw::keys::MEDIA_CATEGORY => "Capture",
+        *pw::keys::MEDIA_ROLE => "Music",
+        *pw::keys::NODE_NAME => "pleamar-remote-sound",
+        *pw::keys::NODE_LATENCY => "960/48000",
+        *pw::keys::STREAM_CAPTURE_SINK => "true",
+    };
+    if phone {
+        props.insert(*pw::keys::TARGET_OBJECT, SINK);
+    }
+    let stream = pw::stream::StreamRc::new(core, "pleamar-remote-sound", props).map_err(err)?;
+    let encoder = Opus::new()?;
+    let _listener = stream
+        .add_local_listener_with_user_data((encoder, Vec::<f32>::new(), tx))
+        .process(|stream, (encoder, pcm, tx)| {
+            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(data) = buffer.datas_mut().first_mut() else { return };
+            let (offset, size) = (data.chunk().offset() as usize, data.chunk().size() as usize);
+            if let Some(bytes) = data.data().and_then(|b| b.get(offset..offset + size)) {
+                pcm.extend(bytes.chunks_exact(4).map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]])));
+            }
+            let whole = OPUS_FRAME as usize * 2;
+            while pcm.len() >= whole {
+                if let Some(packet) = encoder.encode(&pcm[..whole]) {
+                    let _ = tx.try_send(packet);
+                }
+                pcm.drain(..whole);
+            }
+        })
+        .register()
+        .map_err(err)?;
+    let mut info = spa::param::audio::AudioInfoRaw::new();
+    info.set_format(spa::param::audio::AudioFormat::F32LE);
+    info.set_rate(48_000);
+    info.set_channels(2);
+    let mut position = [0; spa::sys::SPA_AUDIO_MAX_CHANNELS as usize];
+    (position[0], position[1]) = (spa::sys::SPA_AUDIO_CHANNEL_FL, spa::sys::SPA_AUDIO_CHANNEL_FR);
+    info.set_position(position);
+    let object = spa::pod::Object { type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(), id: spa::param::ParamType::EnumFormat.as_raw(), properties: info.into() };
+    let bytes = spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object)).map_err(|e| format!("{e:?}"))?.0.into_inner();
+    let mut params = [spa::pod::Pod::from_bytes(&bytes).ok_or("no format")?];
+    stream.connect(spa::utils::Direction::Input, None, pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS, &mut params).map_err(err)?;
+    let _quit = quit.attach(main.loop_(), {
+        let main = main.clone();
+        move |()| main.quit()
+    });
+    let _ = ready.send(Ok(()));
+    main.run();
+    Ok(())
+}
+
+/// libopus's encoder: 48 kHz stereo, for music and as soon as it can.
+struct Opus(*mut opusic_sys::OpusEncoder);
+
+impl Opus {
+    fn new() -> Result<Opus, String> {
+        let mut e = 0;
+        // SAFETY: a new encoder; `e` says if it could not be made.
+        let enc = unsafe { opusic_sys::opus_encoder_create(48_000, 2, opusic_sys::OPUS_APPLICATION_RESTRICTED_LOWDELAY, &mut e) };
+        if enc.is_null() || e != opusic_sys::OPUS_OK {
+            return Err(format!("libopus: error {e}"));
+        }
+        // SAFETY: the encoder just made; the request takes one opus_int32.
+        unsafe { opusic_sys::opus_encoder_ctl(enc, opusic_sys::OPUS_SET_BITRATE_REQUEST, 128_000 as opusic_sys::opus_int32) };
+        Ok(Opus(enc))
+    }
+
+    /// One frame (`OPUS_FRAME` samples of each channel, interleaved) as a packet.
+    fn encode(&mut self, pcm: &[f32]) -> Option<Vec<u8>> {
+        let mut out = vec![0u8; 4000];
+        // SAFETY: `pcm` holds a whole frame of both channels, `out` its length.
+        let n = unsafe { opusic_sys::opus_encode_float(self.0, pcm.as_ptr(), OPUS_FRAME as i32, out.as_mut_ptr(), out.len() as i32) };
+        (n > 0).then(|| {
+            out.truncate(n as usize);
+            out
+        })
+    }
+}
+
+impl Drop for Opus {
+    fn drop(&mut self) {
+        // SAFETY: made by opus_encoder_create, and only freed here.
+        unsafe { opusic_sys::opus_encoder_destroy(self.0) };
+    }
+}
+
+/// The phone's output, by its name.
+const SINK: &str = "pleamar-phone";
+/// Asked for (the session on the phone), and there (made the default): the
+/// sound is taken from it only once it is.
+static PHONE_WANTED: AtomicBool = AtomicBool::new(false);
+static PHONE_SINK: AtomicBool = AtomicBool::new(false);
+/// The default output before the phone's, by its name: the default again after.
+static DESK_SINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The phone as an output of this computer, the default one, while the
+/// session is on it; taken down after, and the one before is the default
+/// again. (Left by a remote that stopped meanwhile: taken down first.)
+pub fn phone_sink(on: bool) {
+    if PHONE_WANTED.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(args[0]).args(&args[1..]).stderr(std::process::Stdio::null()).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    // A node's id by its name (the first line of what pw-cli says of it: «id: 90»).
+    let id = |name: &str| run(&["pw-cli", "info", name]).and_then(|t| t.split_whitespace().nth(1).map(str::to_owned));
+    if on {
+        let desk = run(&["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
+            .and_then(|t| t.lines().find_map(|l| l.trim_start_matches([' ', '*']).strip_prefix("node.name = ").map(|n| n.trim_matches('"').to_owned())))
+            .filter(|n| n != SINK);
+        let mut kept = DESK_SINK.lock().unwrap();
+        *kept = desk.or(kept.take());
+        drop(kept);
+        run(&["pw-cli", "destroy", SINK]);
+        let made = run(&["pw-cli", "create-node", "adapter", &format!("{{ factory.name=support.null-audio-sink node.name={SINK} node.description=Phone media.class=Audio/Sink object.linger=true audio.position=[FL FR] }}")]);
+        // (It is there a moment after it is made.)
+        let new = (0..20).find_map(|_| id(SINK).or_else(|| { std::thread::sleep(Duration::from_millis(50)); None }));
+        match (made, new) {
+            (Some(_), Some(n)) if run(&["wpctl", "set-default", &n]).is_some() => {
+                PHONE_SINK.store(true, Ordering::SeqCst);
+                println!("remote · the phone is this computer's output now");
+            }
+            _ => println!("remote · the phone could not be made an output"),
+        }
+    } else {
+        PHONE_SINK.store(false, Ordering::SeqCst);
+        run(&["pw-cli", "destroy", SINK]);
+        let desk = DESK_SINK.lock().unwrap().take();
+        if let Some(n) = desk.as_deref().and_then(id) {
+            run(&["wpctl", "set-default", &n]);
+        }
+        println!("remote · the phone is no output any more: {}", desk.as_deref().unwrap_or("the default one as it was"));
+    }
 }
 
 /// The H.264 the page takes, one frame per packet group (mode 1): High

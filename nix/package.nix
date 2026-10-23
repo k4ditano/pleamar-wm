@@ -24,6 +24,8 @@
   pipewire,
   openssl,
   ffmpeg,
+  libopus,
+  wireplumber,
   grim,
   wf-recorder,
   wl-clipboard,
@@ -71,6 +73,8 @@ rustPlatform.buildRustPackage {
     openssl
     # …and its video (`pleamar-wm-stream`, built with it): the card's encoder.
     ffmpeg
+    # …and its sound.
+    libopus
   ];
 
   # The session and the remote's video (`stream`).
@@ -121,6 +125,14 @@ rustPlatform.buildRustPackage {
           # the first time, in a bubblewrap sandbox.
           nodejs
           bubblewrap
+        ]
+      } \
+      --suffix PATH : ${
+        # The phone as an output (pw-cli, wpctl): after the system's own,
+        # which speak to the PipeWire that runs.
+        lib.makeBinPath [
+          pipewire
+          wireplumber
         ]
       } \
       --set-default FONTCONFIG_FILE ${fontconfig.out}/etc/fonts/fonts.conf

@@ -331,6 +331,14 @@
   // (By the socket while the way is not through: a key is never left on one that went quiet.)
   const hand = (t) => { if (isDirect && dc && dc.readyState === 'open' && pc && pc.connectionState === 'connected') dc.send(t); else send(t); };
 
+  // What home plays, by the direct way. A browser lets it be heard only after
+  // a tap or a key here: tried again on the next one until it plays.
+  const sound = new Audio();
+  sound.autoplay = true;
+  const hearIt = () => { if (sound.srcObject && sound.paused) sound.play().catch(() => {}); };
+  window.addEventListener('pointerdown', hearIt, true);
+  window.addEventListener('keydown', hearIt, true);
+
   // The direct way: WebRTC, offered by the socket; the picture and the hands
   // go straight between the two computers if the networks let them.
   async function startDirect() {
@@ -341,6 +349,7 @@
       // (What the one it replaces says as it closes is not this one's.)
       const me = pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
       dc = pc.createDataChannel('input', { ordered: true });
       dcVideo = false; pieces = null; vdcErrors = 0; failed = []; seen.decodedHere = 0;
       // A new way has a clock of its own, started now: what the last one
@@ -361,6 +370,7 @@
       }
       me.ontrack = (e) => {
         if (pc !== me) return;
+        if (e.track.kind === 'audio') { sound.srcObject = new MediaStream([e.track]); hearIt(); return; }
         // No waiting to smooth it out: each frame as soon as it is whole.
         try { e.receiver.jitterBufferTarget = 0; } catch (_) {}
         try { e.receiver.playoutDelayHint = 0; } catch (_) {}

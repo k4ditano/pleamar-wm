@@ -679,6 +679,9 @@ fn tell_the_session(gate: Arc<Mutex<Gate>>) {
 fn keep_phone(gate: Arc<Mutex<Gate>>) {
     loop {
         std::thread::sleep(Duration::from_secs(2));
+        // The phone as this computer's output while the session is on it.
+        let on = gate.lock().unwrap().phone_on;
+        crate::remote_rtc::phone_sink(on);
         let mut g = gate.lock().unwrap();
         if !g.phone_on {
             continue;
@@ -1586,6 +1589,9 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                                     g.phone_on = true;
                                     g.phone_pages += 1;
                                     g.phone_left = None;
+                                    drop(g);
+                                    // Its output at once (not at keep_phone's next look).
+                                    std::thread::spawn(|| crate::remote_rtc::phone_sink(true));
                                 }
                                 println!("remote · the session goes to the phone ({}×{} at {:.2})", *w as u32, *hh as u32, scale);
                                 let _ = ws.send(Message::Text(mons(&monitors).into()));
