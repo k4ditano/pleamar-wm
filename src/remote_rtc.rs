@@ -141,6 +141,14 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
             if let Some(id) = channel {
                 seq = seq.wrapping_add(1);
                 if broken && !key {
+                    // Asked again until one comes through: the one asked when
+                    // the frame was dropped can come while the channel is
+                    // still full, and nothing else asks (the page hears none).
+                    let room = rtc.channel(id).is_some_and(|mut ch| ch.buffered_amount() < CHANNEL_FULL / 2);
+                    if room && last_keyframe_ask.elapsed() > Duration::from_millis(300) {
+                        last_keyframe_ask = Instant::now();
+                        let _ = events.send(PeerEvent::WholeFrame);
+                    }
                     continue;
                 }
                 let Some(mut ch) = rtc.channel(id) else { continue };
