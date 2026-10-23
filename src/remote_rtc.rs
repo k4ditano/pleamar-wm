@@ -485,33 +485,67 @@ static PHONE_WANTED: AtomicBool = AtomicBool::new(false);
 static PHONE_SINK: AtomicBool = AtomicBool::new(false);
 /// The default output before the phone's, by its name: the default again after.
 static DESK_SINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// What keeps the phone's output up: told to stop, it is gone.
+static PHONE_OWNER: std::sync::Mutex<Option<pipewire::channel::Sender<()>>> = std::sync::Mutex::new(None);
+
+/// Where the desk's output is written while the phone's is the default, so
+/// that a remote that ended without putting it back has the next one do it.
+fn desk_file() -> std::path::PathBuf {
+    let dir = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/tmp".into());
+    std::path::PathBuf::from(dir).join("pleamar-phone-desk")
+}
 
 /// The phone as an output of this computer, the default one, while the
 /// session is on it; taken down after, and the one before is the default
-/// again. (Left by a remote that stopped meanwhile: taken down first.)
+/// again. (Left by a remote that stopped meanwhile: put right first.)
+/// `phone output off` in session.conf: the desk keeps its own.
 pub fn phone_sink(on: bool) {
-    if PHONE_WANTED.swap(on, Ordering::SeqCst) == on {
-        return;
-    }
     let run = |args: &[&str]| {
         let out = std::process::Command::new(args[0]).args(&args[1..]).stderr(std::process::Stdio::null()).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     // A node's id by its name (the first line of what pw-cli says of it: «id: 90»).
     let id = |name: &str| run(&["pw-cli", "info", name]).and_then(|t| t.split_whitespace().nth(1).map(str::to_owned));
+    static LEFT: Once = Once::new();
+    LEFT.call_once(|| {
+        run(&["pw-cli", "destroy", SINK]);
+        if let Ok(desk) = std::fs::read_to_string(desk_file()) {
+            if let Some(n) = id(desk.trim()) {
+                run(&["wpctl", "set-default", &n]);
+            }
+            let _ = std::fs::remove_file(desk_file());
+            println!("remote · the desk's output put back as it was: {}", desk.trim());
+        }
+    });
+    if PHONE_WANTED.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
     if on {
+        if crate::config::get().phone_output_off {
+            return;
+        }
         let desk = run(&["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
             .and_then(|t| t.lines().find_map(|l| l.trim_start_matches([' ', '*']).strip_prefix("node.name = ").map(|n| n.trim_matches('"').to_owned())))
             .filter(|n| n != SINK);
         let mut kept = DESK_SINK.lock().unwrap();
         *kept = desk.or(kept.take());
+        if let Some(n) = kept.as_deref() {
+            let _ = std::fs::write(desk_file(), n);
+        }
         drop(kept);
-        run(&["pw-cli", "destroy", SINK]);
-        let made = run(&["pw-cli", "create-node", "adapter", &format!("{{ factory.name=support.null-audio-sink node.name={SINK} node.description=Phone media.class=Audio/Sink object.linger=true audio.position=[FL FR] }}")]);
+        let (quit, quit_rx) = pipewire::channel::channel();
+        let (ready_tx, ready) = mpsc::channel();
+        std::thread::spawn(move || {
+            if let Err(e) = own_sink(quit_rx, &ready_tx) {
+                let _ = ready_tx.send(Err(e));
+            }
+        });
+        let made = ready.recv_timeout(Duration::from_secs(2)).ok().and_then(Result::ok);
+        *PHONE_OWNER.lock().unwrap() = Some(quit);
         // (It is there a moment after it is made.)
-        let new = (0..20).find_map(|_| id(SINK).or_else(|| { std::thread::sleep(Duration::from_millis(50)); None }));
-        match (made, new) {
-            (Some(_), Some(n)) if run(&["wpctl", "set-default", &n]).is_some() => {
+        let new = made.and_then(|()| (0..20).find_map(|_| id(SINK).or_else(|| { std::thread::sleep(Duration::from_millis(50)); None })));
+        match new {
+            Some(n) if run(&["wpctl", "set-default", &n]).is_some() => {
                 PHONE_SINK.store(true, Ordering::SeqCst);
                 println!("remote · the phone is this computer's output now");
             }
@@ -519,13 +553,42 @@ pub fn phone_sink(on: bool) {
         }
     } else {
         PHONE_SINK.store(false, Ordering::SeqCst);
-        run(&["pw-cli", "destroy", SINK]);
+        if let Some(quit) = PHONE_OWNER.lock().unwrap().take() {
+            let _ = quit.send(());
+        }
         let desk = DESK_SINK.lock().unwrap().take();
         if let Some(n) = desk.as_deref().and_then(id) {
             run(&["wpctl", "set-default", &n]);
         }
+        let _ = std::fs::remove_file(desk_file());
         println!("remote · the phone is no output any more: {}", desk.as_deref().unwrap_or("the default one as it was"));
     }
+}
+
+/// The phone's output, made on a connection of this process's own and kept
+/// until told to stop: it goes with the connection, however the process ends.
+fn own_sink(quit: pipewire::channel::Receiver<()>, ready: &mpsc::Sender<Result<(), String>>) -> Result<(), String> {
+    use pipewire as pw;
+    let err = |e: pw::Error| e.to_string();
+    pw::init();
+    let main = pw::main_loop::MainLoopRc::new(None).map_err(err)?;
+    let context = pw::context::ContextRc::new(&main, None).map_err(err)?;
+    let core = context.connect_rc(None).map_err(err)?;
+    let props = pw::properties::properties! {
+        "factory.name" => "support.null-audio-sink",
+        *pw::keys::NODE_NAME => SINK,
+        *pw::keys::NODE_DESCRIPTION => "Phone",
+        *pw::keys::MEDIA_CLASS => "Audio/Sink",
+        "audio.position" => "FL,FR",
+    };
+    let _node: pw::node::Node = core.create_object("adapter", &props).map_err(err)?;
+    let _quit = quit.attach(main.loop_(), {
+        let main = main.clone();
+        move |()| main.quit()
+    });
+    let _ = ready.send(Ok(()));
+    main.run();
+    Ok(())
 }
 
 /// The H.264 the page takes, one frame per packet group (mode 1): High
