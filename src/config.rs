@@ -110,6 +110,9 @@ pub struct Config {
     /// `agent pace fast`: how fast the agent's hands go when the session
     /// starts (`T` changes it).
     pub pace: Pace,
+    /// `a11y reader orca`: a program other than pleamar-wm that may read the
+    /// windows' accessibility trees, by its executable's name (see `a11y.rs`).
+    pub a11y_readers: Vec<String>,
     /// `terminals off`: the terminals the session starts get the user's
     /// shell as it is, without the layer that lets wired windows read and
     /// type in them (see `term.rs`). On unless said.
@@ -482,6 +485,23 @@ pub fn write_layout(monitor: &str, name: &str) -> Result<(), String> {
     std::fs::write(&path, out.join("\n") + "\n").map_err(|e| format!("could not write {path}: {e}"))
 }
 
+/// Allows a reader of the accessibility bus for good (`a11y reader NAME` in
+/// session.conf), at the end, if it is not there yet.
+pub fn write_a11y_reader(name: &str) -> Result<(), String> {
+    let path = std::env::var("PLEAMAR_WM_CONFIG").ok().or_else(|| user_dir().map(|d| format!("{d}/session.conf"))).ok_or("there is no configuration folder")?;
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if text.lines().any(|l| words(l.split('#').next().unwrap_or("")) == ["a11y", "reader", name]) {
+        return Ok(());
+    }
+    let mut out: Vec<&str> = text.lines().collect();
+    let line = format!("a11y reader {name}");
+    out.push(&line);
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, out.join("\n") + "\n").map_err(|e| format!("could not write {path}: {e}"))
+}
+
 /// The file that says the monitors must not go dark (`pleamar-wm idle hold`):
 /// it is there, or it is not, so that a script can change it while the session
 /// runs, which `session.conf` (read once) cannot.
@@ -686,6 +706,10 @@ pub fn parse(text: &str, c: &mut Config) {
                     false
                 }),
             },
+            "a11y" => match rest {
+                [w, name] if w == "reader" => c.a11y_readers.push(name.clone()),
+                _ => eprintln!("config · line {}: `a11y reader NAME` (an executable's name)", n + 1),
+            },
             "terminals" => c.terminals_off = !on(rest.first()).unwrap_or_else(|| {
                 eprintln!("config · line {}: `terminals on` or `terminals off`", n + 1);
                 true
@@ -698,7 +722,7 @@ pub fn parse(text: &str, c: &mut Config) {
                 Some((w, cmd)) if w == "lock" && !cmd.is_empty() => c.phone_lock = Some(cmd.join(" ")),
                 _ => eprintln!("config · line {}: `phone lock COMMAND` (or `phone lock none`)", n + 1),
             },
-            other => eprintln!("config · line {}: '{other}' is not something it knows (monitor, layout, keyboard, pointer, touchpad, idle, agent, terminals, phone)", n + 1),
+            other => eprintln!("config · line {}: '{other}' is not something it knows (monitor, layout, keyboard, pointer, touchpad, idle, agent, a11y, terminals, phone)", n + 1),
         }
     }
 }
@@ -961,6 +985,13 @@ mod tests {
         assert_eq!(c.layouts.len(), 4, "a layout it does not know is said, not kept");
         assert_eq!(layout_index("fractal"), Some(7));
         assert_eq!(Config::default().layout_of("DP-3"), None);
+    }
+
+    #[test]
+    fn a11y_readers() {
+        let mut c = Config::default();
+        parse("a11y reader orca\na11y reader\na11y orca", &mut c);
+        assert_eq!(c.a11y_readers, ["orca"]);
     }
 
     #[test]
