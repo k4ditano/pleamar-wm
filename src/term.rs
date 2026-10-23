@@ -21,7 +21,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
 /// History kept beyond the screen, in lines.
-const HISTORY: usize = 2000;
+pub const HISTORY: usize = 2000;
 
 /// The folder of the links, next to Build's: `~/.local/share/pleamar-wm/shell`.
 fn link_dir() -> String {
@@ -156,11 +156,21 @@ fn exec(real: &str, args: &[std::ffi::OsString], env: &[(&str, String)]) -> ! {
     std::process::exit(127);
 }
 
-/// What it keeps of the screen: the terminal's contents, and what the
-/// program said of itself (its title, the bell).
+/// What it keeps of the screen: the terminal's contents, what the program
+/// said of itself (its title, the bell), and the history a redraw erased.
+#[derive(Default)]
 struct Seen {
     title: String,
     bells: u64,
+    /// What `CSI 3 J` would have erased of the history (and the screen with
+    /// it), each line with its number: older than vt100's own history.
+    kept: std::collections::VecDeque<(u64, String)>,
+    /// The number of the first line of vt100's history: every line before
+    /// it is kept or gone. Lines count from 1.
+    next: u64,
+    /// The screen as `CSI 2 J` found it, and vt100's history then (its
+    /// length, `next`): what a `CSI 3 J` right after keeps.
+    cleared: Option<(Vec<String>, usize, u64)>,
 }
 
 impl vt100::Callbacks for Seen {
@@ -170,6 +180,134 @@ impl vt100::Callbacks for Seen {
     fn audible_bell(&mut self, _: &mut vt100::Screen) {
         self.bells += 1;
     }
+    // A line off the top of a full history: gone, and the numbers go on.
+    fn on_scroll(&mut self, _: vt100::capture::RowContents<'_>, alternate: bool) {
+        if !alternate {
+            self.next += 1;
+        }
+    }
+}
+
+fn parser(rows: u16, cols: u16) -> vt100::Parser<Seen> {
+    vt100::Parser::new_with_callbacks(nz(rows), nz(cols), HISTORY, Seen { next: 1, ..Seen::default() })
+}
+
+/// The erases a full redraw sends (`ESC[2J ESC[3J ESC[H`: the screen, then
+/// the history), found as the bytes come (a sequence may be cut between
+/// two reads): what comes before each, and each.
+#[derive(Default)]
+struct Erases {
+    // A sequence that may be one, begun: from its ESC.
+    held: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Piece {
+    Bytes(Vec<u8>),
+    /// `CSI 2 J` or `CSI 3 J` (`CSI ? n J` too).
+    Erase(u8),
+}
+
+impl Erases {
+    fn split(&mut self, bytes: &[u8]) -> Vec<Piece> {
+        let (mut out, mut text) = (Vec::new(), Vec::new());
+        for &b in bytes {
+            if self.held.is_empty() && b != 0x1b {
+                text.push(b);
+                continue;
+            }
+            // An ESC begins another.
+            if b == 0x1b {
+                text.append(&mut self.held);
+            }
+            self.held.push(b);
+            let erase = match self.held.as_slice() {
+                [0x1b] | [0x1b, b'['] | [0x1b, b'[', b'?'] | [0x1b, b'[', b'2' | b'3'] | [0x1b, b'[', b'?', b'2' | b'3'] => continue,
+                [0x1b, b'[', n @ (b'2' | b'3'), b'J'] | [0x1b, b'[', b'?', n @ (b'2' | b'3'), b'J'] => Some(n - b'0'),
+                _ => None,
+            };
+            match erase {
+                Some(n) => {
+                    if !text.is_empty() {
+                        out.push(Piece::Bytes(std::mem::take(&mut text)));
+                    }
+                    out.push(Piece::Erase(n));
+                    self.held.clear();
+                }
+                None => text.append(&mut self.held),
+            }
+        }
+        if !text.is_empty() {
+            out.push(Piece::Bytes(text));
+        }
+        out
+    }
+}
+
+/// What came out, read as a terminal would, except that what `CSI 3 J`
+/// erases goes to the kept history first.
+fn take(p: &mut vt100::Parser<Seen>, pieces: Vec<Piece>) {
+    for piece in pieces {
+        let alternate = p.screen().alternate_screen();
+        match piece {
+            Piece::Bytes(b) => p.process(&b),
+            Piece::Erase(2) => {
+                if !alternate {
+                    let screen = p.screen().rows(0, p.screen().size().1.get()).collect();
+                    let (len, next) = (p.screen().scrollback_len(), p.callbacks().next);
+                    p.callbacks_mut().cleared = Some((screen, len, next));
+                }
+                p.process(b"\x1b[2J");
+            }
+            Piece::Erase(_) => {
+                if !alternate {
+                    keep_erased(p);
+                }
+                p.screen_mut().clear_scrollback();
+            }
+        }
+    }
+    // The same lines in all: the oldest kept go as vt100's history grows.
+    let room = HISTORY.saturating_sub(p.screen().scrollback_len());
+    let kept = &mut p.callbacks_mut().kept;
+    while kept.len() > room {
+        kept.pop_front();
+    }
+}
+
+/// vt100's history to the kept history, and the screen `CSI 2 J` erased
+/// just before if nothing has moved since (`ESC[2J ESC[3J`, `clear`): the
+/// screen still shown stays where it is. What was kept is cut where they
+/// print it again.
+fn keep_erased(p: &mut vt100::Parser<Seen>) {
+    let (mut lines, rows) = lines_of(p);
+    lines.truncate(lines.len() - rows);
+    let len = lines.len();
+    let seen = p.callbacks_mut();
+    if let Some((mut before, _, _)) = seen.cleared.take().filter(|c| c.1 == len && c.2 == seen.next) {
+        while before.last().is_some_and(|l| l.trim().is_empty()) {
+            before.pop();
+        }
+        lines.extend(before);
+    }
+    let at = reprint_at(seen.kept.iter().map(|(_, l)| l.as_str()), lines.iter().map(String::as_str));
+    seen.kept.truncate(at.unwrap_or(seen.kept.len()));
+    for line in lines {
+        seen.kept.push_back((seen.next, line));
+        seen.next += 1;
+    }
+}
+
+/// Where a program that prints everything again after a clear (its
+/// transcript) begins to do it in what was there before: the last place
+/// its first three lines that say something are, one after the other.
+fn reprint_at<'a>(before: impl Iterator<Item = &'a str>, again: impl Iterator<Item = &'a str>) -> Option<usize> {
+    let first: Vec<&str> = again.map(str::trim_end).filter(|l| !l.trim().is_empty()).take(3).collect();
+    if first.len() < 3 {
+        return None;
+    }
+    let said: Vec<(usize, &str)> = before.map(str::trim_end).enumerate().filter(|(_, l)| !l.trim().is_empty()).collect();
+    said.windows(3).rev().find(|w| w.iter().zip(&first).all(|((_, a), b)| a == b)).map(|w| w[0].0)
 }
 
 /// Kitty's text sizing (`OSC 66 ; w=1 ; á ST`), which `vt100` does not know
@@ -245,6 +383,8 @@ struct Shared {
     hook: Mutex<String>,
     answers: Mutex<(u64, String)>,
     started: std::time::Instant,
+    // The last reads given with their marks (`lines`), to tell what changed since.
+    given: Mutex<std::collections::VecDeque<Given>>,
 }
 
 /// Whether the person is in the middle of writing something, after these keys:
@@ -359,7 +499,7 @@ fn layer(real: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
         libc::cfmakeraw(&mut raw);
         libc::tcsetattr(0, libc::TCSANOW, &raw);
         let shared = Arc::new(Shared {
-            screen: Mutex::new(vt100::Parser::new_with_callbacks(nz(ws.ws_row), nz(ws.ws_col), HISTORY, Seen { title: String::new(), bells: 0 })),
+            screen: Mutex::new(parser(ws.ws_row, ws.ws_col)),
             input: Mutex::new(()),
             master,
             shell: child,
@@ -368,6 +508,7 @@ fn layer(real: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
             hook: Mutex::new(String::new()),
             answers: Mutex::new((0, String::new())),
             started: std::time::Instant::now(),
+            given: Mutex::new(std::collections::VecDeque::new()),
         });
         let socket = format!("{}/{me}.sock", socket_dir());
         // Typed: to the shell.
@@ -404,7 +545,7 @@ fn layer(real: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
                         let ws = size_of(0);
                         libc::ioctl(s.master, libc::TIOCSWINSZ, &ws);
                         if let Ok(mut p) = s.screen.lock() {
-                            p.screen_mut().set_size(nz(ws.ws_row), nz(ws.ws_col));
+                            p.set_size(nz(ws.ws_row), nz(ws.ws_col));
                         }
                     }
                     libc::SIGHUP | libc::SIGTERM => {
@@ -435,14 +576,14 @@ fn layer(real: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
             let s = shared.clone();
             let behind = behind.clone();
             std::thread::spawn(move || {
-                let mut sized = SizedText::default();
+                let (mut sized, mut erases) = (SizedText::default(), Erases::default());
                 while let Ok(mut bytes) = kept.recv() {
                     // All that has come meanwhile, at once.
                     while let Ok(more) = kept.try_recv() {
                         bytes.extend_from_slice(&more);
                     }
                     if let Ok(mut p) = s.screen.lock() {
-                        p.process(&sized.plain(&bytes));
+                        take(&mut p, erases.split(&sized.plain(&bytes)));
                     }
                     behind.fetch_sub(bytes.len(), std::sync::atomic::Ordering::Relaxed);
                 }
@@ -550,6 +691,78 @@ pub fn state_of(title: &str) -> &'static str {
 
 /// The last `n` lines, history and screen, without the blank ones at the end.
 fn last_lines(p: &mut vt100::Parser<Seen>, n: usize) -> String {
+    let (lines, _) = numbered(p);
+    lines[lines.len().saturating_sub(n)..].iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join("\n")
+}
+
+/// What is read, each line with its number: the history kept (cut where
+/// what came after it prints it again), vt100's history and its screen,
+/// without the blank lines at the end; and the number of the screen's
+/// first line. A program on the alternate screen: its screen only.
+fn numbered(p: &mut vt100::Parser<Seen>) -> (Vec<(u64, String)>, u64) {
+    let (lines, rows) = lines_of(p);
+    let seen = p.callbacks();
+    let next = seen.next;
+    let top = next + (lines.len() - rows) as u64;
+    let kept = if p.screen().alternate_screen() { 0 } else { reprint_at(seen.kept.iter().map(|(_, l)| l.as_str()), lines.iter().map(String::as_str)).unwrap_or(seen.kept.len()) };
+    let mut out: Vec<(u64, String)> = seen.kept.iter().take(kept).cloned().collect();
+    out.extend(lines.into_iter().enumerate().map(|(k, l)| (next + k as u64, l.trim_end().to_owned())));
+    while out.last().is_some_and(|(_, l)| l.trim().is_empty()) {
+        out.pop();
+    }
+    (out, top)
+}
+
+/// A read given with its mark: the number of its last line, of the
+/// screen's first then, what the lines from there to the last said (a
+/// hash), and the last one.
+struct Given {
+    mark: u64,
+    top: u64,
+    hash: u64,
+    last: String,
+}
+
+fn hash_of<'a>(lines: impl Iterator<Item = &'a (u64, String)>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    lines.for_each(|l| l.hash(&mut h));
+    h.finish()
+}
+
+/// `lines N [M] [peek]`: `mark` and the newest line's number, then the last N
+/// lines (after line M). Lines read up to M that were written over since (a
+/// TUI's screen, a redraw): `screen` and the screen instead. The line M
+/// itself, only written on (a prompt being typed at), comes again. `peek`
+/// (a wait looking again and again): the read is not remembered as given.
+fn lines_after(lines: &[(u64, String)], top: u64, after: Option<u64>, n: usize, given: &mut std::collections::VecDeque<Given>, remember: bool) -> String {
+    let mark = lines.last().map_or(top.saturating_sub(1), |l| l.0);
+    let mut shown: Vec<&(u64, String)> = lines.iter().filter(|l| after.is_none_or(|m| l.0 > m)).collect();
+    let mut head = format!("mark {mark}\n");
+    if let Some(g) = after.and_then(|m| given.iter().rev().find(|g| g.mark == m)) {
+        let last = lines.iter().find(|l| l.0 == g.mark);
+        let same = hash_of(lines.iter().filter(|l| l.0 >= g.top && l.0 < g.mark)) == g.hash;
+        match last {
+            Some(l) if same && l.1 == g.last => {}
+            Some(l) if same && l.1.starts_with(&g.last) => shown.insert(0, l),
+            _ => {
+                head.push_str("screen\n");
+                shown = lines.iter().filter(|l| l.0 >= top).collect();
+            }
+        }
+    }
+    if remember {
+        if given.len() >= 64 {
+            given.pop_front();
+        }
+        given.push_back(Given { mark, top, hash: hash_of(lines.iter().filter(|l| l.0 >= top && l.0 < mark)), last: lines.last().map(|l| l.1.clone()).unwrap_or_default() });
+    }
+    let from = shown.len().saturating_sub(n);
+    head + &shown[from..].iter().map(|(_, l)| format!("{l}\n")).collect::<String>()
+}
+
+/// vt100's history and its screen, every row, and how many are the screen's.
+fn lines_of(p: &mut vt100::Parser<Seen>) -> (Vec<String>, usize) {
     let (rows, cols) = p.screen().size();
     let (rows, cols) = (rows.get() as usize, cols.get());
     let mut lines: Vec<String> = Vec::new();
@@ -571,11 +784,7 @@ fn last_lines(p: &mut vt100::Parser<Seen>, n: usize) -> String {
         offset = offset.saturating_sub(take);
     }
     p.screen_mut().set_scrollback(0);
-    while lines.last().is_some_and(|l| l.trim().is_empty()) {
-        lines.pop();
-    }
-    let from = lines.len().saturating_sub(n);
-    lines[from..].iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n")
+    (lines, rows)
 }
 
 /// A key by its name, as the program asked for it (its cursor keys in
@@ -598,6 +807,10 @@ fn key_bytes(name: &str, app_cursor: bool) -> Option<Vec<u8>> {
         "end" => b"\x1b[F".to_vec(),
         "page_up" | "pageup" => b"\x1b[5~".to_vec(),
         "page_down" | "pagedown" => b"\x1b[6~".to_vec(),
+        _ if name.len() >= 2 && name.starts_with('f') => match name[1..].parse::<usize>().ok().filter(|n| (1..=12).contains(n))? {
+            n @ 1..=4 => vec![0x1b, b'O', b"PQRS"[n - 1]],
+            n => format!("\x1b[{}~", [15, 17, 18, 19, 20, 21, 23, 24][n - 5]).into_bytes(),
+        },
         _ if name.starts_with("ctrl+") && name.len() == 6 => {
             let c = name.as_bytes()[5].to_ascii_lowercase();
             if !c.is_ascii_lowercase() {
@@ -611,7 +824,7 @@ fn key_bytes(name: &str, app_cursor: bool) -> Option<Vec<u8>> {
 }
 
 /// One question, one answer, and the connection closes. `info`, `read N`,
-/// `paste HEX`, `keys NAME…`.
+/// `lines N [M]`, `screen`, `paste HEX`, `keys NAME...`.
 fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
     let mut line = String::new();
     {
@@ -657,6 +870,21 @@ fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
                 Err(_) => return,
             }
         }
+        // The same with their marks: `lines N [M] [peek]` (see `lines_after`).
+        "lines" => {
+            let mut w = rest.split_whitespace();
+            let n = w.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(200).clamp(1, HISTORY);
+            let after = w.next().and_then(|m| m.parse::<u64>().ok());
+            let Ok((lines, top)) = s.screen.lock().map(|mut p| numbered(&mut p)) else { return };
+            match s.given.lock() {
+                Ok(mut given) => lines_after(&lines, top, after, n, &mut given, w.next() != Some("peek")),
+                Err(_) => return,
+            }
+        }
+        "screen" => match s.screen.lock() {
+            Ok(p) => p.screen().rows(0, p.screen().size().1.get()).map(|l| l.trim_end().to_owned() + "\n").collect::<String>().trim_end().to_owned() + "\n",
+            Err(_) => return,
+        },
         // Text as a paste: whole, bracketed if the program asked for that, so
         // an agent takes it as one thing and not as many lines typed.
         "paste" => match hex(rest.trim()) {
@@ -715,7 +943,7 @@ fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
         },
         // How many answers the hooks told, and the last one.
         "answer" => s.answers.lock().map(|a| format!("{}\n{}", a.0, a.1)).unwrap_or_default(),
-        _ => "error: info, read N, paste HEX, keys NAME…\n".into(),
+        _ => "error: info, read N, lines N [M], screen, paste HEX, keys NAME...\n".into(),
     };
     let _ = c.write_all(reply.as_bytes());
 }
@@ -754,11 +982,8 @@ pub fn layers_in(folder: &str) -> Vec<(i32, std::collections::BTreeMap<String, S
     for e in dir.flatten() {
         let path = e.path();
         let Some(id) = path.file_stem().and_then(|n| n.to_str()).and_then(|n| n.parse::<i32>().ok()) else { continue };
-        match ask(&path.to_string_lossy(), "info") {
-            Ok(text) => {
-                let info = text.lines().filter_map(|l| l.split_once(' ').map(|(k, v)| (k.to_owned(), v.to_owned())).or_else(|| Some((l.to_owned(), String::new())))).collect();
-                out.push((id, info));
-            }
+        match info(&path.to_string_lossy()) {
+            Ok(info) => out.push((id, info)),
             // SAFETY: kill with 0 only asks whether it is there.
             Err(_) if unsafe { libc::kill(id, 0) } != 0 => {
                 let _ = std::fs::remove_file(&path);
@@ -768,6 +993,19 @@ pub fn layers_in(folder: &str) -> Vec<(i32, std::collections::BTreeMap<String, S
     }
     out.sort_by_key(|(id, _)| *id);
     out
+}
+
+/// What the layer at that socket says of itself (`info`), by its words.
+pub fn info(socket: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+    Ok(ask(socket, "info")?.lines().filter_map(|l| l.split_once(' ').map(|(k, v)| (k.to_owned(), v.to_owned())).or_else(|| Some((l.to_owned(), String::new())))).collect())
+}
+
+/// The layer whose terminal is that process, if one. A terminal with
+/// several shells (tabs) speaks for the one that moved last.
+pub fn layer_of(pid: u32, layers: &[(i32, std::collections::BTreeMap<String, String>)]) -> Option<(i32, std::collections::BTreeMap<String, String>)> {
+    let mut of: Vec<&(i32, std::collections::BTreeMap<String, String>)> = layers.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(pid)).collect();
+    of.sort_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX));
+    of.first().map(|l| (*l).clone())
 }
 
 /// A question an agent's screen asks the person: what it says, and its
@@ -1154,7 +1392,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel";
 
     #[test]
     fn the_last_lines_come_from_the_history_and_the_screen() {
-        let mut p = vt100::Parser::new_with_callbacks(nz(3), nz(20), HISTORY, Seen { title: String::new(), bells: 0 });
+        let mut p = parser(3, 20);
         p.process(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
         assert_eq!(last_lines(&mut p, 10), "one\ntwo\nthree\nfour\nfive");
         assert_eq!(last_lines(&mut p, 2), "four\nfive");
@@ -1164,7 +1402,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel";
 
     #[test]
     fn kittys_sized_text_is_read_as_its_text() {
-        let mut p = vt100::Parser::new_with_callbacks(nz(3), nz(30), HISTORY, Seen { title: String::new(), bells: 0 });
+        let mut p = parser(3, 30);
         let mut sized = SizedText::default();
         // As opencode writes «Salúdame qué», cut in the middle of a sequence,
         // one ended by BEL and one by ESC \.
@@ -1175,5 +1413,120 @@ Enter to select · ↑/↓ to navigate · Esc to cancel";
         p.process(&sized.plain(b"\r\n\x1b]2;title\x07\x1b[1mbold\x1b[0m"));
         assert_eq!(last_lines(&mut p, 2), "Salúdame qué ok\nbold");
         assert_eq!(p.callbacks().title, "title");
+    }
+
+    /// As the layer reads what comes: in pieces of that many bytes.
+    fn feed(p: &mut vt100::Parser<Seen>, erases: &mut Erases, bytes: &[u8], cut: usize) {
+        for part in bytes.chunks(cut) {
+            take(p, erases.split(part));
+        }
+    }
+
+    #[test]
+    fn the_erases_are_found_wherever_they_are_cut() {
+        let all = b"a\x1b[2J\x1b[3J\x1b[Hb\x1b[?3Jc\x1b[1Jd\x1b[33Je";
+        for cut in 1..all.len() {
+            let mut erases = Erases::default();
+            let pieces: Vec<Piece> = all.chunks(cut).flat_map(|p| erases.split(p)).collect();
+            let (mut bytes, mut found) = (Vec::new(), Vec::new());
+            for p in pieces {
+                match p {
+                    Piece::Bytes(b) => bytes.extend(b),
+                    Piece::Erase(n) => {
+                        found.push((bytes.len(), n));
+                    }
+                }
+            }
+            assert_eq!(bytes, b"a\x1b[Hbc\x1b[1Jd\x1b[33Je", "cut every {cut}");
+            assert_eq!(found, [(1, 2), (1, 3), (5, 3)], "cut every {cut}");
+        }
+    }
+
+    #[test]
+    fn a_full_redraw_keeps_the_history() {
+        let mut p = parser(5, 30);
+        let mut erases = Erases::default();
+        let before: String = (1..=40).map(|k| format!("line {k}\r\n")).collect();
+        feed(&mut p, &mut erases, before.as_bytes(), 7);
+        feed(&mut p, &mut erases, b"\x1b[2J\x1b[3J\x1b[Hafter one\r\nafter two", 3);
+        let text = last_lines(&mut p, HISTORY);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 42, "{text}");
+        assert_eq!((lines[0], lines[39], lines[40], lines[41]), ("line 1", "line 40", "after one", "after two"));
+        // `clear`'s: the same, the cursor home first.
+        feed(&mut p, &mut erases, b"\r\nthird\x1b[H\x1b[2J\x1b[3J", 64);
+        assert_eq!(last_lines(&mut p, 3), "after one\nafter two\nthird");
+        // The history alone erased: the screen stays, read once.
+        feed(&mut p, &mut erases, b"fourth\r\nfifth\x1b[3J", 64);
+        assert_eq!(last_lines(&mut p, 5), "after one\nafter two\nthird\nfourth\nfifth");
+        // The alternate screen: its screen only, as ever.
+        feed(&mut p, &mut erases, b"\x1b[?1049h\x1b[Hvim\x1b[2J\x1b[3J\x1b[Hstill vim", 64);
+        assert_eq!(last_lines(&mut p, HISTORY), "still vim");
+        feed(&mut p, &mut erases, b"\x1b[?1049l", 64);
+        assert_eq!(last_lines(&mut p, 3), "third\nfourth\nfifth");
+    }
+
+    #[test]
+    fn a_transcript_printed_again_after_a_clear_is_read_once() {
+        let mut p = parser(6, 30);
+        let mut erases = Erases::default();
+        let transcript = "> hello\r\n\r\nHi there.\r\n\r\n> list the files\r\n\r\na.txt b.txt\r\n";
+        feed(&mut p, &mut erases, format!("{transcript}[input]").as_bytes(), 5);
+        // Claude Code's redraw: everything again, and a little more.
+        feed(&mut p, &mut erases, format!("\x1b[2J\x1b[3J\x1b[H{transcript}> thanks\r\n\r\nYou are welcome.\r\n[input]").as_bytes(), 9);
+        assert_eq!(last_lines(&mut p, HISTORY).matches("> hello").count(), 1, "{}", last_lines(&mut p, HISTORY));
+        // Twice: still once, nothing lost.
+        feed(&mut p, &mut erases, format!("\x1b[2J\x1b[3J\x1b[H{transcript}> thanks\r\n\r\nYou are welcome.\r\n> bye\r\n[input]").as_bytes(), 64);
+        let text = last_lines(&mut p, HISTORY);
+        assert_eq!((text.matches("> hello").count(), text.matches("You are welcome.").count(), text.matches("[input]").count()), (1, 1, 1), "{text}");
+        assert!(text.ends_with("> bye\n[input]"), "{text}");
+        // What is not a reprint is kept whole before it.
+        feed(&mut p, &mut erases, b"\x1b[2J\x1b[3J\x1b[Hsomething\r\nelse\r\nentirely\r\n", 64);
+        let text = last_lines(&mut p, HISTORY);
+        assert!(text.starts_with("> hello") && text.contains("[input]\nsomething\nelse\nentirely"), "{text}");
+    }
+
+    #[test]
+    fn the_history_kept_is_the_same_lines_in_all() {
+        let mut p = parser(5, 20);
+        let mut erases = Erases::default();
+        let lines: String = (1..=1500).map(|k| format!("{k}\r\n")).collect();
+        feed(&mut p, &mut erases, lines.as_bytes(), 4096);
+        feed(&mut p, &mut erases, b"\x1b[2J\x1b[3J\x1b[H", 64);
+        feed(&mut p, &mut erases, lines.replace("\r\n", "b\r\n").as_bytes(), 4096);
+        // The history (kept and vt100's) and the screen's four lines.
+        let (all, _) = numbered(&mut p);
+        assert_eq!(all.len(), HISTORY + 4);
+        assert_eq!((all[0].1.as_str(), all.last().unwrap().1.as_str()), ("997", "1500b"));
+        // Numbered on from the first line ever, whatever went.
+        assert_eq!(all.last().unwrap().0, 3000);
+        assert!(all.windows(2).all(|w| w[1].0 == w[0].0 + 1));
+        // vt100's own history full: lines off its top go, the numbers on.
+        feed(&mut p, &mut erases, lines.replace("\r\n", "c\r\n").as_bytes(), 4096);
+        let (all, _) = numbered(&mut p);
+        assert_eq!((all.len(), all.last().unwrap().0, all.last().unwrap().1.as_str()), (HISTORY + 4, 4500, "1500c"));
+        assert!(all.windows(2).all(|w| w[1].0 == w[0].0 + 1));
+    }
+
+    #[test]
+    fn lines_after_a_mark_are_what_is_new_or_the_screen_written_over() {
+        let mut p = parser(4, 20);
+        let mut erases = Erases::default();
+        let mut given = std::collections::VecDeque::new();
+        let mut lines = |p: &mut vt100::Parser<Seen>, after: Option<u64>| {
+            let (l, top) = numbered(p);
+            lines_after(&l, top, after, HISTORY, &mut given, true)
+        };
+        feed(&mut p, &mut erases, b"one\r\ntwo\r\nthree\r\nfour\r\n$ ", 64);
+        assert_eq!(lines(&mut p, None), "mark 5\none\ntwo\nthree\nfour\n$\n");
+        // Typed at the prompt read last: it comes again, with what followed.
+        feed(&mut p, &mut erases, b"ls\r\na b\r\n$ ", 64);
+        assert_eq!(lines(&mut p, Some(5)), "mark 7\n$ ls\na b\n$\n");
+        assert_eq!(lines(&mut p, Some(7)), "mark 7\n");
+        // A TUI that redraws its screen in place: the screen again.
+        feed(&mut p, &mut erases, b"\x1b[H\x1b[2Ktop\x1b[4;1H\x1b[2Kbottom", 64);
+        assert_eq!(lines(&mut p, Some(7)), "mark 7\nscreen\ntop\n$ ls\na b\nbottom\n");
+        // A mark it does not remember: the lines after it.
+        assert_eq!(lines(&mut p, Some(6)), "mark 7\nbottom\n");
     }
 }

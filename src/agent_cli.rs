@@ -58,6 +58,16 @@ A window made with pleamar (`windows` says «pleamar scene NAME») is asked and 
   say PID ORDER…                  any other order to the scene: type query words, drag knob 0 -40,
                                   hold card, wheel list -3, key escape
 
+A terminal (`pleamar-wm term list`: its shell has pleamar-wm's layer) is read as text, history and all:
+  read PID [N] [--since M]        its last N lines (200); the first says `mark M`, the newest line's
+                                  number: --since M gives what came after it (or `screen` and the
+                                  screen, if what was read was written over: a TUI)
+  tree PID                        what runs in it, where, its size, how long it has been quiet; its screen
+  wait PID has \"TEXT\"|output|quiet MS|prompt [SECONDS]
+                                  `ok` and what came out meanwhile, as soon as it holds (in 30 s, or SECONDS)
+  run PID \"COMMAND\" [SECONDS]     typed, Enter, and what it printed once the shell waits again
+  type PID TEXT, key PID NAME     through the terminal (ctrl+c too): it need not be seen nor have the keyboard
+
 Look before each click: a page moves under you. A pleamar window does not need it: ask it.";
 
 /// Where the session's socket is.
@@ -299,10 +309,162 @@ impl Hands {
     fn act(&mut self, line: &str) -> Result<(), String> {
         match self.say(line)? {
             r if r == "ok" => Ok(()),
-            r if r == "err stopped-by-user" => Err("the user stopped the agent: stop here and tell them where you left it (`pleamar-wm agent done` lets the hands be used again)".to_owned()),
+            r if r == "err stopped-by-user" => Err(STOPPED.to_owned()),
             r => Err(format!("{line}: {r}")),
         }
     }
+}
+
+const STOPPED: &str = "the user stopped the agent: stop here and tell them where you left it (`pleamar-wm agent done` lets the hands be used again)";
+
+// -- terminals: read, followed and typed into through their layer --------
+
+/// A window whose process is a terminal with pleamar-wm's layer (term.rs):
+/// its text, history included, is asked of the layer, not seen in pictures.
+struct Term {
+    pid: String,
+    id: i32,
+    socket: String,
+}
+
+/// What a terminal's wait is for.
+enum Until {
+    Has(String),
+    Output,
+    Quiet(u64),
+    Prompt,
+}
+
+impl Term {
+    /// That window's terminal, if its process has a layer, once the window
+    /// manager has let the agent at it (`i`): it says no for a private
+    /// window or a locked session, and for typing while stopped.
+    fn of(pid: &str, types: bool) -> Result<Option<Term>, String> {
+        let n: u32 = pid.split('.').next().and_then(|p| p.parse().ok()).ok_or("which window: its number")?;
+        let Some((id, _)) = crate::term::layer_of(n, &crate::term::layers()) else { return Ok(None) };
+        Term::allowed(pid, types)?;
+        Ok(Some(Term { pid: pid.to_owned(), id, socket: format!("{}/{id}.sock", crate::term::socket_dir()) }))
+    }
+
+    fn allowed(pid: &str, types: bool) -> Result<(), String> {
+        let line = format!("i {pid}{}", if types { " w" } else { "" });
+        match Hands::open()?.say(&line)?.as_str() {
+            "ok" => Ok(()),
+            "err private" => Err(format!("{pid} is private (a `private` rule in session.conf), or the session is locked: its terminal is not read nor typed into")),
+            "err stopped-by-user" => Err(STOPPED.to_owned()),
+            r => Err(format!("{line}: {r}")),
+        }
+    }
+
+    fn ask(&self, question: &str) -> Result<String, String> {
+        match crate::term::ask(&self.socket, question)? {
+            r if r.starts_with("error: ") => Err(r["error: ".len()..].trim_end().to_owned()),
+            r => Ok(r),
+        }
+    }
+
+    /// The number of its newest line (`mark` in a read).
+    fn mark(&self) -> Result<u64, String> {
+        let reply = self.ask("lines 1")?;
+        reply.lines().next().and_then(|l| l.strip_prefix("mark ")).and_then(|m| m.parse().ok()).ok_or(reply)
+    }
+
+    fn go(&self, what: &str, rest: &[String]) -> Result<(), String> {
+        let seconds = |s: Option<&String>| s.map_or(Ok(30.0), |s| s.parse::<f64>().map_err(|_| format!("{s}: seconds, a number")));
+        match what {
+            "read" => {
+                let since = rest.iter().position(|a| a == "--since");
+                let after = match since {
+                    Some(k) => format!(" {}", rest.get(k + 1).and_then(|m| m.parse::<u64>().ok()).ok_or("--since M: a mark, as a read's first line says it")?),
+                    None => String::new(),
+                };
+                let n = rest.iter().enumerate().filter(|(k, _)| since.is_none_or(|s| *k != s && *k != s + 1)).find_map(|(_, a)| a.parse::<usize>().ok()).unwrap_or(200);
+                print!("{}", self.ask(&format!("lines {n}{after}"))?);
+            }
+            "tree" => {
+                let info = crate::term::info(&self.socket)?;
+                println!("terminal {} (layer {})", self.pid, self.id);
+                for k in ["command", "cwd", "size", "fullscreen", "quiet"] {
+                    println!("{k} {}", info.get(k).map_or("", String::as_str));
+                }
+                println!();
+                print!("{}", self.ask("screen")?);
+            }
+            "wait" => {
+                let (until, secs) = match rest.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+                    ["has", text, ..] => (Until::Has(text.to_owned()), rest.get(2)),
+                    ["output", ..] => (Until::Output, rest.get(1)),
+                    ["quiet", ms, ..] => (Until::Quiet(ms.parse().map_err(|_| "quiet MS: milliseconds")?), rest.get(2)),
+                    ["prompt", ..] => (Until::Prompt, rest.get(1)),
+                    _ => return Err("wait PID has \"TEXT\" | output | quiet MS | prompt [SECONDS]".into()),
+                };
+                let (start, from) = (std::time::Instant::now(), self.mark()?);
+                self.follow(&until, seconds(secs)?, start, from, false)?;
+            }
+            "run" => {
+                let command = rest.first().filter(|c| !c.trim().is_empty()).ok_or("run what: run PID \"ls -l\"")?;
+                let (start, from) = (std::time::Instant::now(), self.mark()?);
+                self.ask(&format!("paste {}", hex(command)))?;
+                self.ask("keys enter")?;
+                self.follow(&Until::Prompt, seconds(rest.get(1))?, start, from, true)?;
+            }
+            "type" => {
+                self.ask(&format!("paste {}", hex(&typed(rest)?)))?;
+            }
+            "key" | "hotkey" => {
+                self.ask(&format!("keys {}", rest.first().ok_or("which key")?))?;
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    /// Until it holds, or for so many seconds: then `ok` and what came out
+    /// after the mark `from` (as a read's answer). `run`: without the `ok`,
+    /// and the prompt counts only once something came out (the command was
+    /// taken).
+    fn follow(&self, until: &Until, secs: f64, start: std::time::Instant, from: u64, run: bool) -> Result<(), String> {
+        let mut asked = std::time::Instant::now();
+        loop {
+            let info = crate::term::info(&self.socket)?;
+            let number = |k: &str| info.get(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            let quiet = number("quiet");
+            let came = quiet < start.elapsed().as_millis() as u64;
+            let holds = match until {
+                Until::Has(text) => self.ask(&format!("lines {} {from} peek", crate::term::HISTORY))?.lines().skip(1).any(|l| l.contains(text.as_str())) || self.ask("screen")?.contains(text.as_str()),
+                Until::Output => came,
+                Until::Quiet(ms) => quiet >= *ms,
+                Until::Prompt => number("foreground") == number("shell") && quiet >= 300 && (came || !run),
+            };
+            let late = start.elapsed().as_secs_f64() >= secs;
+            if holds || late {
+                print!("{}{}", if holds && !run { "ok\n" } else { "" }, self.ask(&format!("lines {} {from}", crate::term::HISTORY))?);
+            }
+            if holds {
+                return Ok(());
+            }
+            if late {
+                return Err(format!("timeout: it did not happen in {secs} s (what came out meanwhile is above)"));
+            }
+            // A window made private or a session locked meanwhile ends it.
+            if asked.elapsed() >= std::time::Duration::from_secs(1) {
+                Term::allowed(&self.pid, false)?;
+                asked = std::time::Instant::now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// The text `type` types: its words, or (`-`) the input, so that a
+/// password is not seen in the list of processes.
+fn typed(words: &[String]) -> Result<String, String> {
+    if words.len() == 1 && words[0] == "-" {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| e.to_string())?;
+        return Ok(s.strip_suffix('\n').map(str::to_owned).unwrap_or(s));
+    }
+    Ok(words.join(" "))
 }
 
 fn hex(s: &str) -> String {
@@ -356,6 +518,19 @@ fn go(args: &[String]) -> Result<(), String> {
             .ok_or("which window: its number, as `pleamar-wm agent windows` names it".to_owned())
     };
     let target = |pid: &str| format!("root:{pid}");
+    // A terminal with pleamar-wm's layer is read, followed and typed into
+    // through it; a pleamar window keeps its scene's `tree` and `wait`.
+    let terminal = match what.as_str() {
+        "read" | "run" | "type" | "key" => true,
+        "hotkey" => args.get(2).is_some_and(|k| k == "shift+tab" || k.strip_prefix("ctrl+").is_some_and(|c| c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic())),
+        "tree" | "wait" => pid().is_ok_and(|p| scene_of(&p).is_err()),
+        _ => false,
+    };
+    if terminal {
+        if let Some(t) = Term::of(&pid()?, matches!(what.as_str(), "run" | "type" | "key" | "hotkey"))? {
+            return t.go(what, &args[2..]);
+        }
+    }
     match what.as_str() {
         "help" | "--help" | "-h" => println!("{HELP}"),
         "windows" => {
@@ -539,15 +714,7 @@ fn go(args: &[String]) -> Result<(), String> {
         }
         "type" => {
             let p = pid()?;
-            // `-`: the text from the input, not the command line (a password
-            // must not be seen in the list of processes).
-            let text = if args.len() == 3 && args[2] == "-" {
-                let mut s = String::new();
-                std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| e.to_string())?;
-                s.strip_suffix('\n').map(str::to_owned).unwrap_or(s)
-            } else {
-                args[2..].join(" ")
-            };
+            let text = typed(&args[2..])?;
             let mut h = Hands::open()?;
             // In pieces (one line of the protocol has its limits), whole
             // characters each: any text, accents and all.

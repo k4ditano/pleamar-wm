@@ -10,6 +10,7 @@
 //! that terminal's layer. A window wired to the caller's that runs no
 //! terminal through a layer can be listed, not read nor typed in.
 
+use crate::term::layer_of;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -62,14 +63,6 @@ fn wires() -> Vec<(usize, i64, i64, String)> {
         .filter(|(_, a, b)| *a >= 0 && *b >= 0)
         .map(|(k, a, b)| (k, a, b, say(&[format!("get wire.{k}.label")]).first().map(|l| l.trim().to_owned()).unwrap_or_default()))
         .collect()
-}
-
-/// The terminal layer whose terminal is that process, if one.
-fn layer_of(pid: u32, layers: &[(i32, Info)]) -> Option<(i32, Info)> {
-    let mut of: Vec<&(i32, Info)> = layers.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(pid)).collect();
-    // A terminal with several shells (tabs) speaks for the one that moved last.
-    of.sort_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX));
-    of.first().map(|l| (*l).clone())
 }
 
 struct Here {
@@ -169,9 +162,7 @@ fn socket(id: i32) -> String {
 }
 
 fn info(id: i32) -> Info {
-    crate::term::ask(&socket(id), "info")
-        .map(|t| t.lines().filter_map(|l| l.split_once(' ').map(|(k, v)| (k.to_owned(), v.to_owned())).or_else(|| Some((l.to_owned(), String::new())))).collect())
-        .unwrap_or_default()
+    crate::term::info(&socket(id)).unwrap_or_default()
 }
 
 fn read(id: i32, lines: usize) -> String {
