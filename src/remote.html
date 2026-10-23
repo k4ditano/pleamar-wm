@@ -1373,16 +1373,20 @@
     if (now.length > 40 || now.length < 2) { keys.value = SENTINEL; typed = SENTINEL; }
   }
   if (window.visualViewport) {
+    // (Put away only once it was up: a step of it coming up is not it going.)
+    let kbdUp = false;
     visualViewport.addEventListener('resize', () => {
       if (!PHONE) return;
       const covered = innerHeight - visualViewport.height;
       if (covered > 80) {
+        kbdUp = true;
         const lift = Math.max(0, Math.min(covered, lastTapY - (visualViewport.height - 70)));
         stage.style.transform = 'translateY(' + (-lift) + 'px)';
       } else {
         applyZoom();
         kbd.classList.remove('on');
-        keys.inputMode = 'none';
+        if (kbdUp) keys.inputMode = 'none';
+        kbdUp = false;
       }
     });
   }
