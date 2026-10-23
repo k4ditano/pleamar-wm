@@ -21,6 +21,8 @@
 //! the computer plays, taken from PipeWire (the default output's monitor)
 //! while the way is there. With the session on the phone, the phone is an
 //! output of its own («Phone», the default meanwhile), and the sound is its.
+//! Taken back by the desk, the phone's page hears nothing until it has the
+//! session again.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,7 +84,8 @@ impl Drop for Peer {
 }
 
 /// The page's offer answered: the answer to give it, and the connection.
-pub fn answer(offer: &str, kbps: u32) -> Result<(String, Peer), String> {
+/// `parked`: the page is a phone's and the desk has the session: no sound.
+pub fn answer(offer: &str, kbps: u32, parked: Arc<AtomicBool>) -> Result<(String, Peer), String> {
     static CRYPTO: Once = Once::new();
     CRYPTO.call_once(|| str0m::crypto::from_feature_flags().install_process_default());
 
@@ -113,7 +116,7 @@ pub fn answer(offer: &str, kbps: u32) -> Result<(String, Peer), String> {
     let alive = Arc::new(AtomicBool::new(true));
     let still = alive.clone();
     std::thread::spawn(move || {
-        match run(rtc, socket, frames_rx, events_tx.clone(), still) {
+        match run(rtc, socket, frames_rx, events_tx.clone(), still, parked) {
             Ok(why) => println!("remote · the direct way ends: {why}"),
             Err(e) => println!("remote · the direct way broke: {e}"),
         }
@@ -122,7 +125,7 @@ pub fn answer(offer: &str, kbps: u32) -> Result<(String, Peer), String> {
     Ok((answer.to_sdp_string(), Peer { frames: frames_tx, events: events_rx, alive }))
 }
 
-fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>, events: mpsc::Sender<PeerEvent>, alive: Arc<AtomicBool>) -> Result<&'static str, String> {
+fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>, events: mpsc::Sender<PeerEvent>, alive: Arc<AtomicBool>, parked: Arc<AtomicBool>) -> Result<&'static str, String> {
     let here = socket.local_addr().map_err(|e| e.to_string())?;
     let started = Instant::now();
     let mut video: Option<(Mid, Pt)> = None;
@@ -139,8 +142,13 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
     // Not reachable since then: often a moment (the wifi, a phone waking), so
     // given a while to come back before it ends.
     let mut lost: Option<Instant> = None;
-    // The sound: its track, what takes it, and how far it has gone (48 kHz).
-    let mut sound: Option<(Mid, Pt, Sound, u64)> = None;
+    // The sound: its track and how far it has gone (48 kHz); what takes it,
+    // and from where it was asked (the phone's output or not; none, parked).
+    let mut sound: Option<(Mid, Pt, u64)> = None;
+    let mut capture: Option<Sound> = None;
+    let mut heard: Option<bool> = None;
+    // When the last packet came: after a pause (parked), the clock goes on by it.
+    let mut last_packet: Option<Instant> = None;
     let mut connected = false;
     while alive.load(Ordering::Relaxed) {
         if lost.is_some_and(|t| t.elapsed() > LOST_GRACE) || !rtc.is_alive() {
@@ -241,10 +249,9 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                     }
                     Event::MediaAdded(m) if m.kind == MediaKind::Audio && sound.is_none() => {
                         let pt = rtc.writer(m.mid).and_then(|w| w.payload_params().find(|p| p.spec().codec == Codec::Opus).map(|p| p.pt()));
-                        match (pt, Sound::start(PHONE_SINK.load(Ordering::SeqCst))) {
-                            (Some(pt), Ok(s)) => sound = Some((m.mid, pt, s, 0)),
-                            (None, _) => println!("remote · no sound: the page takes no Opus"),
-                            (_, Err(e)) => println!("remote · no sound: {e}"),
+                        match pt {
+                            Some(pt) => sound = Some((m.mid, pt, 0)),
+                            None => println!("remote · no sound: the page takes no Opus"),
                         }
                     }
                     Event::ChannelOpen(id, label) if label == "video" => {
@@ -280,17 +287,27 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
                 continue;
             }
         };
-        // The phone's output put up or taken down: the sound from where it is now.
-        if let Some((_, _, s, _)) = sound.as_mut().filter(|(_, _, s, _)| s.phone != PHONE_SINK.load(Ordering::SeqCst)) {
-            match Sound::start(!s.phone) {
-                Ok(again) => *s = again,
-                Err(e) => println!("remote · no sound: {e}"),
+        // The phone's output put up or taken down, or the desk taking the
+        // session back: the sound from where it is now, or none.
+        let want = (!parked.load(Ordering::SeqCst)).then(|| PHONE_SINK.load(Ordering::SeqCst));
+        if sound.is_some() && want != heard {
+            heard = want;
+            capture = None;
+            match want.map(Sound::start) {
+                Some(Ok(s)) => capture = Some(s),
+                Some(Err(e)) => println!("remote · no sound: {e}"),
+                None => println!("remote · the sound holds: the desk has the session"),
             }
         }
         // The sound that came, onto its track once the way is open.
-        if let Some((mid, pt, s, at)) = sound.as_mut() {
+        if let (Some((mid, pt, at)), Some(s)) = (sound.as_mut(), capture.as_ref()) {
             let mut broke = None;
             while let Ok(packet) = s.packets.try_recv() {
+                let now = Instant::now();
+                if let Some(gap) = last_packet.map(|t| now - t).filter(|g| *g > Duration::from_millis(200)) {
+                    *at += (gap.as_secs_f64() * 48_000.0) as u64 / OPUS_FRAME * OPUS_FRAME;
+                }
+                last_packet = Some(now);
                 *at += OPUS_FRAME;
                 if !connected {
                     continue;
@@ -304,6 +321,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket, frames: mpsc::Receiver<(bool, Vec<u8>)>,
             if let Some(e) = broke {
                 println!("remote · the sound stops: {e}");
                 sound = None;
+                capture = None;
             }
         }
         // Wait for the network, but come back soon for the frames.
@@ -336,8 +354,6 @@ const OPUS_FRAME: u64 = 960;
 struct Sound {
     quit: pipewire::channel::Sender<()>,
     packets: mpsc::Receiver<Vec<u8>>,
-    /// Taken from the phone's output, not the default one.
-    phone: bool,
 }
 
 impl Sound {
@@ -353,7 +369,7 @@ impl Sound {
         });
         ready.recv_timeout(Duration::from_secs(2)).map_err(|_| "PipeWire did not answer".to_owned())??;
         println!("remote · the sound goes too, from {}", if phone { "the phone's output" } else { "the default output" });
-        Ok(Sound { quit, packets, phone })
+        Ok(Sound { quit, packets })
     }
 }
 

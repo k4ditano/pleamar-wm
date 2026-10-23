@@ -1318,6 +1318,8 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     }
     let phone_flag = std::rc::Rc::new(std::cell::Cell::new(false));
     let _phone_leave = PhoneLeave(gate, phone_flag.clone());
+    // `parked`, for the direct way: no sound while it is.
+    let hush = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let mut monitor = 0usize;
     let mut flow = Flow::new();
@@ -1709,7 +1711,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                             whole = true;
                             let _ = ws.send(Message::Text("indirect".into()));
                         }
-                        match crate::remote_rtc::answer(rest, flow.kbps) {
+                        match crate::remote_rtc::answer(rest, flow.kbps, hush.clone()) {
                             Ok((sdp, p)) => {
                                 peer = Some(p);
                                 let _ = ws.send(Message::Text(format!("rtcanswer {sdp}").into()));
@@ -1856,6 +1858,7 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
             }
         }
         // Parked (the desk has the session): nothing to send until the phone asks again.
+        hush.store(parked, std::sync::atomic::Ordering::SeqCst);
         if parked {
             continue;
         }
