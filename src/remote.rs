@@ -529,7 +529,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
                     if let Some(relay) = relay_of(&who) {
                         println!("remote · {who} is {relay}'s relay (a browser hiding its address): the direct way will not reach that page");
                     }
-                    let set = format!("Set-Cookie: pleamar_remote={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}\r\nLocation: /\r\n", LIFE.as_secs());
+                    let set = format!("Set-Cookie: pleamar_remote={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}\r\nLocation: /\r\n", LIFE.as_secs());
                     respond(&mut stream, "303 See Other", html, &set, b"")
                 }
                 None => {
@@ -542,7 +542,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             if let Some(t) = token {
                 gate.lock().unwrap().sign_out(&t);
             }
-            respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0\r\nLocation: /\r\n", b"")
+            respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0\r\nLocation: /\r\n", b"")
         }
         // A home screen's app: what it is and its icon. Nothing of this desktop in
         // them, so before signing in (a browser asks for them without the cookie).
@@ -1286,6 +1286,10 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
     };
     ws.send(Message::Text(format!("version {PAGE_VERSION:016x}").into())).map_err(|e| e.to_string())?;
     ws.send(Message::Text(mons(&monitors).into())).map_err(|e| e.to_string())?;
+    // The session still on the phone (its page closed by accident): a page of the phone takes it back by itself.
+    if gate.lock().unwrap().phone_on {
+        ws.send(Message::Text("phonewaits".into())).map_err(|e| e.to_string())?;
+    }
 
     let (mut want_tx, want_rx) = mpsc::channel::<Want>();
     let (frame_tx, mut frame_rx) = mpsc::channel::<Result<(usize, u32, u32, Vec<Vec<u8>>), String>>();

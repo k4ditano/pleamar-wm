@@ -557,6 +557,8 @@
         phoneMon = current = Number(arg);
         $('ph-lock').classList.remove('on');
         if (again) turnedDone(); else phoneArrived();
+      } else if (verb === 'phonewaits') {
+        if (PHONE && !phoneWanted) { plog('the session waits on the phone: taken back'); bringHere(); }
       } else if (verb === 'phonelocked') {
         // The desk, as it is (its lock screen), to unlock it from here.
         current = 0;
