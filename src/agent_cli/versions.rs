@@ -1,5 +1,5 @@
-//! The versions of each window an agent last read: a terminal's mark, a
-//! scene's (kept here, with what it was).
+//! The versions of each window an agent last read: a tree's (the window
+//! manager's), a terminal's mark, a scene's (kept here, with what it was).
 
 use super::*;
 
@@ -33,6 +33,14 @@ fn line_of<'a>(l: &'a str, w: &str) -> Option<Last> {
 
 pub(super) fn last_version(w: &str) -> Option<Last> {
     std::fs::read_to_string(versions_file()?).ok()?.lines().find_map(|l| line_of(l, w))
+}
+
+/// The version an answer of `A`'s gave, kept for that window.
+pub(super) fn keep_version(w: &str, reply: &str) {
+    let head = reply.strip_prefix("full | ").unwrap_or(reply).split(" | ").next().unwrap_or_default();
+    if let Some(v) = head.strip_prefix("nodes ").or_else(|| head.strip_prefix("changes ")).and_then(|v| v.parse().ok()) {
+        keep(w, v);
+    }
 }
 
 fn now() -> u64 {

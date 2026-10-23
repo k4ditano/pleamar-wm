@@ -1,8 +1,9 @@
 //! `wait PID COND [DURATION]`: until something holds. One grammar for every
 //! kind of window; each takes what it can and refuses the rest.
 //!
-//! A terminal's are its layer's; a scene's expression its own `wait`, and
-//! the rest its `describe` read a frame apart.
+//! A tree's are the window manager's (`W`); a terminal's its layer's; a
+//! scene's expression its own `wait`, its `settled` and `dialog` the window
+//! manager's, and the rest its `describe` read a frame apart.
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -17,8 +18,8 @@ const FRAME: Duration = Duration::from_millis(16);
 /// How often a Stop, the window made private or closing are asked.
 const ASKED: Duration = Duration::from_secs(1);
 
-const FORM: &str = "wait PID has --text T | gone --text T | @X gone | @X [not] STATE | changed | settled DURATION | prompt | expr 'EXPR' [DURATION]";
-const CONDITIONS: [&str; 6] = ["has", "gone", "changed", "settled", "prompt", "expr"];
+const FORM: &str = "wait PID has --text T | gone --text T | @X gone | @X [not] STATE | focus @X | changed | settled DURATION | prompt | dialog | expr 'EXPR' [DURATION]";
+const CONDITIONS: [&str; 8] = ["has", "gone", "focus", "changed", "settled", "prompt", "dialog", "expr"];
 /// A scene item's states, as its records say them, and `enabled`.
 const SCENE_STATES: [&str; 7] = ["disabled", "enabled", "checked", "selected", "offscreen", "covered", "persons"];
 
@@ -30,9 +31,11 @@ enum Cond {
     ElementGone(Element),
     /// That element has (false: has not) that state.
     State(Element, String, bool),
+    Focus(Element),
     Changed,
     Settled(u64),
     Prompt,
+    Dialog,
     /// A scene's expression; true: said as on main, without `expr`, the
     /// scene reading it whole.
     Expr(String, bool),
@@ -46,13 +49,19 @@ impl Cond {
             Cond::Gone(_) => "gone",
             Cond::ElementGone(_) => "@X gone",
             Cond::State(..) => "@X STATE",
+            Cond::Focus(_) => "focus",
             Cond::Changed => "changed",
             Cond::Settled(_) => "settled",
             Cond::Prompt => "prompt",
+            Cond::Dialog => "dialog",
             Cond::Expr(..) => "expr",
         }
     }
 
+    /// Whether it is about elements (a terminal that has a tree too asks it).
+    fn of_elements(&self) -> bool {
+        matches!(self, Cond::ElementGone(_) | Cond::State(..) | Cond::Focus(_) | Cond::Dialog)
+    }
 }
 
 /// The condition and how long, in seconds: 30 unless given, up to 60
@@ -66,10 +75,12 @@ fn condition(words: &[String], text: Option<&str>) -> R<(Cond, f64)> {
         (["gone", ..], Some(t)) => (Cond::Gone(t.to_owned()), &w[1..]),
         (["has" | "gone", ..], None) => return Err(usage(format!("wait PID {} --text T: a text is said as --text", w[0]))),
         (_, Some(_)) => return Err(usage(format!("--text is for has and gone: {FORM}"))),
+        (["focus", e, ..], None) if at(e).is_some() => (Cond::Focus(at(e).unwrap_or(Element::Id(0))), &w[2..]),
         (["changed", ..], None) => (Cond::Changed, &w[1..]),
         (["settled", d, ..], None) => (Cond::Settled(ms(d)?), &w[2..]),
         (["settled"], None) => return Err(usage("wait PID settled DURATION [DURATION]: quiet for how long (500ms), then how long to wait")),
         (["prompt", ..], None) => return Ok((Cond::Prompt, seconds(&w[1..], PROMPT)?)),
+        (["dialog", ..], None) => (Cond::Dialog, &w[1..]),
         (["expr", e @ ..], None) => {
             let (expr, rest) = match e.split_last() {
                 Some((d, e)) if !e.is_empty() && is_duration(d) => (e.join(" "), &w[w.len() - 1..]),
@@ -102,11 +113,15 @@ fn seconds(rest: &[&str], longest: f64) -> R<f64> {
 /// What a kind of window waits for, as its refusal says it.
 pub(super) fn waits(k: &Kinds) -> &'static str {
     if k.is_scene() {
-        "has --text T, gone --text T, @name gone, @name [not] STATE, changed, expr 'EXPR'"
+        "has --text T, gone --text T, @name gone, @name [not] STATE, changed, settled DURATION, dialog, expr 'EXPR'"
+    } else if k.is_text() && k.tree {
+        "has --text T [--from M], gone --text T, changed, settled DURATION, prompt; of its tree @ID gone, @ID [not] STATE, focus @ID, dialog"
     } else if k.is_text() {
         "has --text T [--from M], gone --text T, changed, settled DURATION, prompt"
+    } else if k.tree {
+        "has --text T, gone --text T, @ID gone, @ID [not] STATE, focus @ID, changed, settled DURATION, dialog"
     } else {
-        "nothing"
+        "settled DURATION, dialog"
     }
 }
 
@@ -116,7 +131,7 @@ pub(super) fn wait(words: &[String]) -> R {
 
 /// An action's `--until COND [DURATION]`, read before it acts: wrong (64),
 /// or not for that window (3), as `wait` would refuse it.
-pub(super) fn check(cond: &[String], k: &Kinds) -> R {
+pub(super) fn check(cond: &[String], k: &Kinds, w: &Window) -> R {
     let a = parse(&[&["0".to_owned()][..], cond].concat(), &WAIT)?;
     let (cond, _) = condition(&a.words, a.text())?;
     let refused = || Err(k.refuse(&format!("wait {}", cond.word())));
@@ -124,16 +139,21 @@ pub(super) fn check(cond: &[String], k: &Kinds) -> R {
     if matches!(cond, Cond::Expr(_, true)) && !k.is_scene() {
         return Err(usage(FORM));
     }
-    if k.is_text() {
+    if k.is_text() && (w.shell.is_some() || !k.tree || !cond.of_elements()) {
         return match cond {
             Cond::Has(_) | Cond::Gone(_) | Cond::Changed | Cond::Settled(_) | Cond::Prompt => Ok(()),
             _ => refused(),
         };
     }
     match (&k.scene, &cond) {
+        (_, Cond::Settled(_) | Cond::Dialog) => Ok(()),
         (Some(_), Cond::ElementGone(e) | Cond::State(e, ..)) if !named(e) => refused(),
         (Some(_), Cond::Expr(..) | Cond::Has(_) | Cond::Gone(_) | Cond::ElementGone(_) | Cond::State(..) | Cond::Changed) => Ok(()),
-        _ => refused(),
+        (Some(_), _) => refused(),
+        (None, _) if !k.tree => refused(),
+        (None, Cond::Prompt | Cond::Expr(..)) => refused(),
+        (None, Cond::ElementGone(e) | Cond::State(e, ..) | Cond::Focus(e)) if named(e) => refused(),
+        (None, _) => Ok(()),
     }
 }
 
@@ -152,7 +172,7 @@ pub(super) fn until(words: &[String], mark: Option<u64>) -> R {
         return Err(usage(FORM));
     }
     let json = a.has("--json");
-    if k.is_text() {
+    if k.is_text() && (w.shell.is_some() || !k.tree || !cond.of_elements()) {
         return terminal(&k, w, cond, secs, from.or(mark), json);
     }
     if from.is_some() {
@@ -160,8 +180,9 @@ pub(super) fn until(words: &[String], mark: Option<u64>) -> R {
     }
     match (&k.scene, cond) {
         (Some((_, sock)), Cond::Expr(e, whole)) => expr(w, sock, &e, whole, secs, json),
+        (Some(_), c @ (Cond::Settled(_) | Cond::Dialog)) => told_wm(&k, w, &c, secs, json),
         (Some(_), c @ (Cond::Has(_) | Cond::Gone(_) | Cond::ElementGone(_) | Cond::State(..) | Cond::Changed)) => polled(&k, w, &c, secs, json),
-        (_, c) => Err(k.refuse(&format!("wait {}", c.word()))),
+        (_, c) => told_wm(&k, w, &c, secs, json),
     }
 }
 
@@ -224,6 +245,59 @@ fn terminal(k: &Kinds, w: &Window, cond: Cond, secs: f64, from: Option<u64>, jso
         u => u,
     };
     t.wait(&until, secs, from).map_err(|f| closed(w, f))
+}
+
+/// The window manager's `W`: a tree's conditions, and of any window
+/// `settled` and `dialog`.
+fn told_wm(k: &Kinds, w: &Window, cond: &Cond, secs: f64, json: bool) -> R {
+    let id = |e: &Element| match e {
+        Element::Id(n) => Ok(*n),
+        Element::Name(_) => Err(k.refuse(&e.said())),
+    };
+    let (line, of) = match cond {
+        Cond::Settled(ms) => (format!("settled {ms}"), None),
+        Cond::Dialog => ("dialog".to_owned(), None),
+        _ if !k.tree || k.is_scene() => return Err(k.refuse(&format!("wait {}", cond.word()))),
+        Cond::Has(t) => (format!("has {}", hex(t)), None),
+        Cond::Gone(t) => (format!("gone {}", hex(t)), None),
+        Cond::ElementGone(e) => (format!("{} gone", id(e)?), Some(e)),
+        Cond::State(e, s, true) => (format!("{} {s}", id(e)?), Some(e)),
+        Cond::State(e, s, false) => (format!("{} not {s}", id(e)?), Some(e)),
+        Cond::Focus(e) => (format!("{} focused", id(e)?), Some(e)),
+        Cond::Changed => ("changed".to_owned(), None),
+        Cond::Prompt | Cond::Expr(..) => return Err(k.refuse(&format!("wait {}", cond.word()))),
+    };
+    let mut h = Hands::open()?;
+    let _ = h.reader.get_ref().set_read_timeout(Some(Duration::from_secs_f64(secs + 1.0)));
+    let reply = h.say(&format!("W {} {} {line}", w.target(), (secs * 1000.0) as u64))?;
+    waited(&reply, &k.name, of.map(Element::said).as_deref(), secs, json)
+}
+
+/// `W`'s answer: `ok` and the record that met it, or the dialog.
+fn waited(reply: &str, w: &str, of: Option<&str>, secs: f64, json: bool) -> R {
+    let Some(met) = reply.strip_prefix("ok") else {
+        return Err(match reply {
+            "err timeout" => timeout(secs),
+            "err no-tree" => Fail::new(fail::NOT_HERE, format!("{w} has no tree: its program publishes nothing for screen readers: only settled and dialog are waited for on it")),
+            // The window closing: not its element.
+            "err gone" => answered(reply, Of::Window(w)),
+            r => answered(r, of.map_or(Of::Window(w), |e| Of::Element(w, e))),
+        });
+    };
+    let met = met.trim();
+    if let Some(r) = Rec::a11y(met) {
+        answer(Some(&r), json);
+    } else if let [pid, slot, title] = met.split_whitespace().collect::<Vec<&str>>()[..] {
+        let title = if title == "-" { String::new() } else { unhex(title) };
+        if json {
+            println!("{}", serde_json::json!({ "ok": true, "dialog": { "title": title, "window": format!("{pid}.{slot}") } }));
+        } else {
+            println!("ok\ndialog {title:?} (window {pid}.{slot})");
+        }
+    } else {
+        answer(None, json);
+    }
+    Ok(())
 }
 
 /// A scene's own `wait` for its expression; a Stop, the window made private
@@ -299,7 +373,7 @@ fn met<'a>(cond: &Cond, first: &[Rec], now: &'a [Rec]) -> Option<Option<&'a Rec>
         "enabled" => !r.states.iter().any(|s| s == "disabled"),
         s => r.states.iter().any(|t| t == s),
     };
-    // Boxes left out: a scroll moves every one.
+    // Boxes left out, as a tree's `changed`.
     let said = |r: &Rec| (r.id.clone(), r.depth, r.role.clone(), r.name.clone(), r.text.clone(), r.states.clone());
     match cond {
         Cond::Has(t) => now.iter().filter(shown).find(|r| r.says(t)).map(Some),
@@ -334,8 +408,10 @@ mod tests {
         assert_eq!(c(&["@24", "gone", "5"], None), Ok((Cond::ElementGone(Element::Id(24)), 5.0)));
         assert_eq!(c(&["@save", "not", "disabled", "500ms"], None), Ok((Cond::State(Element::Name("save".into()), "disabled".into(), false), 0.5)));
         assert_eq!(c(&["@=3", "checked"], None), Ok((Cond::State(Element::Name("3".into()), "checked".into(), true), 30.0)));
+        assert_eq!(c(&["focus", "@3"], None), Ok((Cond::Focus(Element::Id(3)), 30.0)));
         assert_eq!(c(&["changed", "2"], None), Ok((Cond::Changed, 2.0)));
         assert_eq!(c(&["settled", "500ms", "10s"], None), Ok((Cond::Settled(500), 10.0)));
+        assert_eq!(c(&["dialog", "1m"], None), Ok((Cond::Dialog, 60.0)));
         assert_eq!(c(&["prompt", "5m"], None), Ok((Cond::Prompt, 300.0)));
         assert_eq!(c(&["expr", "status == \"Saved\"", "5s"], None), Ok((Cond::Expr("status == \"Saved\"".into(), false), 5.0)));
         assert_eq!(c(&["expr", "dirty", "==", "false"], None), Ok((Cond::Expr("dirty == false".into(), false), 30.0)));
@@ -348,24 +424,27 @@ mod tests {
         let bad = |words: &[&str], text: Option<&str>| c(words, text).unwrap_err().code;
         // A text is said as --text; a bare one is not taken.
         assert_eq!(bad(&["has", "Saved"], None), fail::USAGE);
+        assert_eq!(bad(&["focus"], Some("OK")), fail::USAGE);
         assert_eq!(bad(&["changed"], Some("OK")), fail::USAGE);
         assert_eq!(bad(&["settled"], None), fail::USAGE);
         assert_eq!(bad(&["settled", "soon"], None), fail::USAGE);
         assert_eq!(bad(&["settled", "2m"], None), fail::USAGE);
+        assert_eq!(bad(&["dialog", "90"], None), fail::USAGE);
         assert_eq!(bad(&["prompt", "11m"], None), fail::USAGE);
         assert_eq!(bad(&["changed", "1", "2"], None), fail::USAGE);
         assert_eq!(bad(&["@24"], None), fail::USAGE);
         assert_eq!(bad(&["@", "gone"], None), fail::USAGE);
+        assert_eq!(bad(&["focus", "24"], None), fail::USAGE);
         assert_eq!(bad(&["expr"], None), fail::USAGE);
         assert_eq!(bad(&[], None), fail::USAGE);
-        // Any other words are no condition: a scene's expression, refused by
-        // every other kind (see `wait`).
+        // The old words of this branch are no condition: a scene's expression,
+        // refused by every other kind (see `wait`).
         assert_eq!(c(&["output"], None), Ok((Cond::Expr("output".into(), true), 60.0)));
         assert!(c(&["has"], None).unwrap_err().msg.contains("--text"));
     }
 
-    fn kinds(scene: bool, shells: usize) -> Kinds {
-        Kinds { name: "7002".into(), scene: scene.then(|| ("notes".to_owned(), std::path::PathBuf::new())), shells: (0..shells).map(|k| (7044 + k as i32, Default::default())).collect(), private: false, locked: false, popups: Vec::new(), slot: None }
+    fn kinds(scene: bool, shells: usize, tree: bool) -> Kinds {
+        Kinds { name: "7002".into(), scene: scene.then(|| ("notes".to_owned(), std::path::PathBuf::new())), shells: (0..shells).map(|k| (7044 + k as i32, Default::default())).collect(), tree, private: false, locked: false, popups: Vec::new(), slot: None }
     }
 
     #[test]
@@ -375,50 +454,58 @@ mod tests {
             let (cond, secs) = c(words, text).unwrap();
             let f = match &k.scene {
                 Some(_) if matches!(cond, Cond::Has(_) | Cond::Gone(_) | Cond::ElementGone(_) | Cond::State(..) | Cond::Changed) => polled(k, &w, &cond, secs, false),
+                Some(_) => told_wm(k, &w, &cond, secs, false),
                 None if k.is_text() => terminal(k, &w, cond, secs, None, false),
-                _ => Err(k.refuse(&format!("wait {}", cond.word()))),
+                None => told_wm(k, &w, &cond, secs, false),
             };
             f.unwrap_err()
         };
-        let term = kinds(false, 1);
-        for words in [&["@24", "gone"][..], &["@24", "checked"], &["expr", "x"]] {
+        let term = kinds(false, 1, false);
+        for words in [&["@24", "gone"][..], &["@24", "checked"], &["focus", "@3"], &["dialog"], &["expr", "x"]] {
             let f = refused(&term, words, None);
             assert_eq!(f.code, fail::NOT_HERE, "{words:?}");
             assert!(f.msg.starts_with("7002 is a terminal: it does text,look (wait "), "{}", f.msg);
             assert!(f.msg.contains("it waits for has --text T [--from M], gone --text T, changed, settled DURATION, prompt"), "{}", f.msg);
         }
-        let scene = kinds(true, 0);
+        let scene = kinds(true, 0, false);
+        assert_eq!(refused(&scene, &["focus", "@query"], None).code, fail::NOT_HERE);
         assert_eq!(refused(&scene, &["prompt"], None).code, fail::NOT_HERE);
-        assert_eq!(refused(&scene, &["settled", "500ms"], None).code, fail::NOT_HERE);
         // A scene's items are named, before anything is read.
         assert_eq!(refused(&scene, &["@24", "gone"], None).code, fail::NOT_HERE);
         assert_eq!(refused(&scene, &["@save", "shiny"], None).code, fail::USAGE);
-        let look = kinds(false, 0);
-        for words in [&["changed"][..], &["@24", "gone"], &["settled", "500ms"], &["prompt"]] {
+        let tree = kinds(false, 0, true);
+        assert_eq!(refused(&tree, &["prompt"], None).code, fail::NOT_HERE);
+        assert_eq!(refused(&tree, &["expr", "x"], None).code, fail::NOT_HERE);
+        assert_eq!(refused(&tree, &["@save", "gone"], None).code, fail::NOT_HERE);
+        let look = kinds(false, 0, false);
+        for words in [&["changed"][..], &["@24", "gone"], &["focus", "@3"], &["prompt"]] {
             let f = refused(&look, words, None);
             assert_eq!(f.code, fail::NOT_HERE, "{words:?}");
-            assert!(f.msg.contains("it waits for nothing"), "{}", f.msg);
+            assert!(f.msg.contains("it waits for settled DURATION, dialog"), "{}", f.msg);
         }
         assert_eq!(refused(&look, &["has"], Some("x")).code, fail::NOT_HERE);
     }
 
     #[test]
     fn an_actions_until_is_refused_before_it_acts() {
-        let code = |k: &Kinds, words: &[&str]| check(&s(words), k).err().map(|f| f.code);
-        let (term, scene, look) = (kinds(false, 1), kinds(true, 0), kinds(false, 0));
-        assert_eq!(code(&scene, &[]), Some(fail::USAGE));
-        assert_eq!(code(&scene, &["has", "Saved"]), Some(fail::USAGE));
-        assert_eq!(code(&scene, &["has", "--text", "Saved", "5s"]), None);
-        assert_eq!(code(&scene, &["@save", "not", "disabled"]), None);
+        let w = Window::parse("7002").unwrap();
+        let code = |k: &Kinds, words: &[&str]| check(&s(words), k, &w).err().map(|f| f.code);
+        let (term, scene, tree, look) = (kinds(false, 1, false), kinds(true, 0, false), kinds(false, 0, true), kinds(false, 0, false));
+        assert_eq!(code(&tree, &[]), Some(fail::USAGE));
+        assert_eq!(code(&tree, &["has", "Saved"]), Some(fail::USAGE));
+        assert_eq!(code(&tree, &["has", "--text", "Saved", "5s"]), None);
+        assert_eq!(code(&tree, &["@24", "not", "checked"]), None);
+        assert_eq!(code(&tree, &["@save", "gone"]), Some(fail::NOT_HERE));
+        assert_eq!(code(&tree, &["prompt"]), Some(fail::NOT_HERE));
         assert_eq!(code(&term, &["prompt", "5s"]), None);
-        assert_eq!(code(&term, &["@24", "gone"]), Some(fail::NOT_HERE));
+        assert_eq!(code(&term, &["dialog"]), Some(fail::NOT_HERE));
         assert_eq!(code(&scene, &["expr", "dirty"]), None);
         assert_eq!(code(&scene, &["dirty", "==", "true"]), None);
         assert_eq!(code(&scene, &["@24", "gone"]), Some(fail::NOT_HERE));
-        assert_eq!(code(&scene, &["prompt"]), Some(fail::NOT_HERE));
-        assert_eq!(code(&look, &["settled", "300ms"]), Some(fail::NOT_HERE));
+        assert_eq!(code(&scene, &["focus", "@query"]), Some(fail::NOT_HERE));
+        assert_eq!(code(&look, &["settled", "300ms"]), None);
         assert_eq!(code(&look, &["changed"]), Some(fail::NOT_HERE));
-        assert_eq!(code(&look, &["dirty", "==", "true"]), Some(fail::USAGE));
+        assert_eq!(code(&tree, &["dirty", "==", "true"]), Some(fail::USAGE));
     }
 
     #[test]
@@ -444,5 +531,18 @@ mod tests {
         let mut moved = first.clone();
         moved[0].rect = Some([5, 5, 10, 10]);
         assert_eq!(met(&Cond::Changed, &first, &moved), None);
+    }
+
+    #[test]
+    fn the_window_managers_answer() {
+        assert_eq!(waited("err timeout", "4521", None, 2.0, false).unwrap_err().code, fail::TIMEOUT);
+        assert_eq!(waited("err stopped-by-user", "4521", None, 2.0, false).unwrap_err().code, fail::STOPPED);
+        assert_eq!(waited("err private", "4521", None, 2.0, false).unwrap_err().code, fail::PRIVATE);
+        // The window closing, even when an element was waited for: 7; the element never given: 4.
+        assert_eq!(waited("err gone", "4521", Some("@24"), 2.0, false).unwrap_err().code, fail::WINDOW_GONE);
+        assert_eq!(waited("err unknown-id", "4521", Some("@24"), 2.0, false).unwrap_err().code, fail::GONE);
+        assert_eq!(waited("err no-tree", "4521", None, 2.0, false).unwrap_err().code, fail::NOT_HERE);
+        assert_eq!(waited("err unknown-state", "4521", Some("@24"), 2.0, false).unwrap_err().code, fail::USAGE);
+        assert!(waited("ok", "4521", None, 2.0, false).is_ok());
     }
 }

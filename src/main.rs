@@ -3,7 +3,11 @@
 //! scene's. Everything else —the command line, the scenes, the reloads— is
 //! pleamar's own.
 
+mod a11y;
+mod a11y_tree;
+mod a11y_act;
 mod marks;
+mod a11y_wait;
 mod agent_cli;
 mod agent_mcp;
 mod build;

@@ -114,7 +114,7 @@ pub(crate) fn seconds(s: &str) -> Result<f64, String> {
 /// Whether a `type` or `run` would read its text from the input, which
 /// here is the script.
 fn reads_input(verb: &str, words: &[String]) -> bool {
-    let mut rest: Vec<&str> = words.iter().map(String::as_str).filter(|w| !matches!(*w, "--" | "--full")).collect();
+    let mut rest: Vec<&str> = words.iter().map(String::as_str).filter(|w| !matches!(*w, "--" | "--set" | "--full")).collect();
     if rest.first().is_some_and(|w| w.starts_with('@')) {
         rest.remove(0);
     }

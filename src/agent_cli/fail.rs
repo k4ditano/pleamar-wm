@@ -75,16 +75,21 @@ pub(super) fn answered(reason: &str, of: Of) -> Fail {
         "locked" => Fail::new(PRIVATE, "locked: the screen is locked: ask the user"),
         "stopped-by-user" => stopped(),
         "unknown-root-pid" | "target-not-found" | "unknown-pid" | "unknown-app-id" => Fail::new(WINDOW_GONE, format!("window gone: {w} is not open (`pleamar-wm agent windows` names them)")),
-        "gone" => match e {
-            Some(e) => Fail::new(GONE, format!("gone: {e} is no longer in {w}: read it again with `tree {w}`")),
+        "gone" | "unknown-id" => match e {
+            Some(e) => Fail::new(GONE, format!("gone: {e} is no longer in {w} (or its tree never gave it): read it again with `tree {w}`")),
             None => Fail::new(WINDOW_GONE, format!("window gone: {w} closed")),
         },
         "timeout" => Fail::new(TIMEOUT, "timeout: it did not happen in time"),
         r if r.starts_with("ambiguous") => Fail::new(AMBIGUOUS, format!("ambiguous: {w} names more than one window: PID.N, as `pleamar-wm agent windows` names them")),
-        "no-box" => Fail::new(OTHER, format!("no box: that is not in {w}")),
+        "no-tree" => Fail::new(NOT_HERE, format!("{w} has no tree: its program publishes nothing for screen readers (or started before the session's bus): it does look")),
+        "no-frame" => Fail::new(NOT_HERE, format!("{w} has no tree: its program publishes one, but none of its frames is this window: it does look")),
+        "no-bus" => Fail::new(OTHER, "no accessibility bus in this session (an older pleamar-wm, or `agent off`)"),
+        "no-box" => Fail::new(OTHER, format!("no box: {} is not in the window, and its program did not scroll it into view", e.unwrap_or(w))),
         "no-keyboard-resource" => Fail::new(OTHER, format!("no keyboard: keys cannot reach {w}, its program took no keyboard: use the pointer")),
         "no-pointer-resource" => Fail::new(OTHER, format!("no pointer: the pointer cannot reach {w}, its program took none here")),
         "no-picture" =>Fail::new(OTHER, format!("no picture: {w} has not drawn anything to look at yet")),
+        "not-editable" => Fail::new(OTHER, format!("not editable: {} takes no text: focus it and type", e.unwrap_or(w))),
+        "unknown-state" => usage("a state is focused, focusable, checked, pressed, selected, expanded, collapsed, editable, disabled, enabled, required, invalid or busy"),
         "unknown-key" | "unknown-hotkey" => usage("no key called that: enter tab escape backspace space up down left right delete home end pageup pagedown f1..f12, a letter after modifiers"),
         "bad-args" => usage(format!("the window manager did not take that: `pleamar-wm agent help`")),
         "unknown-command" => Fail::new(OTHER, "this session's pleamar-wm does not know that: an older one (log out and in again after an update)"),
@@ -119,9 +124,12 @@ mod tests {
         assert_eq!(w("err target-not-found"), WINDOW_GONE);
         assert_eq!(w("err gone"), WINDOW_GONE);
         assert_eq!(e("err gone"), GONE);
+        assert_eq!(e("err unknown-id"), GONE);
         assert_eq!(w("err timeout"), TIMEOUT);
         assert_eq!(w("err ambiguous-root-pid"), AMBIGUOUS);
+        assert_eq!(w("err no-tree"), NOT_HERE);
         assert_eq!(w("err bad-args"), USAGE);
+        assert_eq!(w("err unknown-state"), USAGE);
         assert_eq!(w("err no-picture"), OTHER);
         assert_eq!(w("err something-new"), OTHER);
         // What happened first, with no prefix.

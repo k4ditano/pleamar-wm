@@ -1,5 +1,6 @@
-//! Elements in one format, a scene's items: `@save button "name" text
-//! "..." X,Y WxH states`, indented by depth; or as JSON.
+//! Elements in one format, a11y elements and scene items alike:
+//! `@24 push_button "name" text "..." X,Y WxH states`, indented by depth;
+//! or as JSON.
 
 use super::*;
 
@@ -24,7 +25,26 @@ pub(super) fn cut(long: bool) -> usize {
 }
 
 impl Rec {
-    /// The number its id is, if it is one.
+    /// A record of `A`'s: `ID DEPTH ROLE X Y W H STATES NAME TEXT`.
+    pub(super) fn a11y(r: &str) -> Option<Rec> {
+        let f: Vec<&str> = r.split_whitespace().collect();
+        let [id, depth, role, x, y, w, h, states, name, text] = f[..] else { return None };
+        let rect = match [x, y, w, h].map(|v| v.parse::<i64>()) {
+            [Ok(x), Ok(y), Ok(w), Ok(h)] => Some([x, y, w, h]),
+            _ => None,
+        };
+        Some(Rec {
+            id: format!("@{}", id.parse::<u32>().ok()?),
+            depth: depth.parse().unwrap_or(0),
+            role: role.to_owned(),
+            name: unhex(name),
+            text: unhex(text),
+            rect,
+            states: if states == "-" { Vec::new() } else { states.split(',').map(str::to_owned).collect() },
+        })
+    }
+
+    /// The number of an a11y element.
     pub(super) fn number(&self) -> Option<u32> {
         self.id.strip_prefix('@')?.parse().ok()
     }
@@ -290,6 +310,22 @@ impl Read {
     }
 }
 
+/// `A`'s answer (`nodes V | records...`), read; an `err`, what it means.
+pub(super) fn nodes(reply: &str, w: &str) -> R<Read> {
+    let mut parts = reply.split(" | ");
+    let head = parts.next().unwrap_or_default();
+    let version = head.strip_prefix("nodes ").ok_or_else(|| answered(head, Of::Window(w)))?;
+    let mut recs = Vec::new();
+    let mut more = 0;
+    for r in parts {
+        match r.strip_prefix("... more ") {
+            Some(n) => more = n.parse().unwrap_or(0),
+            None => recs.extend(Rec::a11y(r)),
+        }
+    }
+    Ok(Read { head: format!("tree {version}"), version: Some(version.to_owned()), recs, folds: Vec::new(), more, left: format!("`find {w} --text T` for what you look for") })
+}
+
 /// What changed since a read, in the order the elements are in now, then
 /// those gone: `+` came, `~` its role, name, text or states (or box) are
 /// other now (and what it was), `-` went: as it was, and how many more went
@@ -338,6 +374,32 @@ pub(super) enum Since {
     Full(Read),
 }
 
+/// `A`'s answer to `tree since` (`changes V | + RECORD | - N RECORD | ~ RECORD | was RECORD`,
+/// or `full | nodes V | ...`), read.
+pub(super) fn since_reply(reply: &str, w: &str) -> R<Since> {
+    if let Some(tree) = reply.strip_prefix("full | ") {
+        return Ok(Since::Full(nodes(tree, w)?));
+    }
+    let mut parts = reply.split(" | ");
+    let head = parts.next().unwrap_or_default();
+    let version = head.strip_prefix("changes ").ok_or_else(|| answered(head, Of::Window(w)))?.to_owned();
+    let (mut list, mut more) = (Vec::new(), 0);
+    for r in parts {
+        if let Some(n) = r.strip_prefix("... more ") {
+            more = n.parse().unwrap_or(0);
+        } else if let Some((k, rec)) = r.strip_prefix("- ").and_then(|r| r.split_once(' ')).and_then(|(k, rec)| Some((k.parse().ok()?, Rec::a11y(rec)?))) {
+            list.push(Change::Went(rec, k));
+        } else if let Some(rec) = r.strip_prefix("was ").and_then(Rec::a11y) {
+            if let Some(Change::Other(_, was)) = list.last_mut() {
+                *was = rec;
+            }
+        } else if let Some((c, rec)) = r.split_once(' ').and_then(|(c, rec)| Some((c, Rec::a11y(rec)?))) {
+            list.push(if c == "+" { Change::Came(rec) } else { Change::Other(rec.clone(), rec) });
+        }
+    }
+    Ok(Since::Changes { version, list, more })
+}
+
 /// What a scene's items are known by between reads: a name, or an unnamed
 /// one's container and what it says (the second alike: `#2`).
 fn scene_keys(recs: &[Rec]) -> Vec<String> {
@@ -371,26 +433,7 @@ pub(super) fn scene_changes(then: &[Rec], now: &[Rec], boxes: bool) -> Vec<Chang
         }
     }
     let after: std::collections::HashSet<&str> = nk.iter().map(String::as_str).collect();
-    out.extend(went(tk.iter().zip(then).map(|(k, r)| (r.depth, !after.contains(k.as_str())))).into_iter().map(|(i, k)| Change::Went(then[i].clone(), k)));
-    out
-}
-
-/// Of records in order, by their depth and whether they went: the first of
-/// each branch that went, and how many more went in it.
-fn went(all: impl IntoIterator<Item = (usize, bool)>) -> Vec<(usize, usize)> {
-    let (mut out, mut open): (Vec<(usize, usize)>, Option<usize>) = (Vec::new(), None);
-    for (i, (depth, gone)) in all.into_iter().enumerate() {
-        if let (Some(d), Some(last)) = (open, out.last_mut()) {
-            if depth > d {
-                last.1 += usize::from(gone);
-                continue;
-            }
-        }
-        open = gone.then_some(depth);
-        if gone {
-            out.push((i, 0));
-        }
-    }
+    out.extend(crate::a11y_tree::went(tk.iter().zip(then).map(|(k, r)| (r.depth, !after.contains(k.as_str())))).into_iter().map(|(i, k)| Change::Went(then[i].clone(), k)));
     out
 }
 
@@ -558,9 +601,87 @@ fn scene_nodes(nodes: &serde_json::Value, depth: usize, offset: Option<(i64, i64
     }
 }
 
+/// A line of `O`'s, read.
+#[derive(Debug, PartialEq)]
+pub(super) enum Listened {
+    /// What to print: `focus @ID role ...`, `announce "TEXT" (@ID role ...)`, `dialog "TITLE" (window PID.SLOT)`.
+    Say(String),
+    /// How it ended: why, the program's events heard and the elements read.
+    End(String, u64, u64),
+}
+
+pub(super) fn listened(line: &str) -> Listened {
+    let (what, rest) = line.split_once(' ').unwrap_or((line, ""));
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    Listened::Say(match (what, &f[..]) {
+        ("focus" | "text" | "live", _) => Rec::a11y(rest).map_or_else(|| line.to_owned(), |r| format!("{what} {}", r.line(false))),
+        ("announce", [said, record @ ..]) => match Rec::a11y(&record.join(" ")) {
+            Some(r) => format!("announce {:?} ({})", unhex(said), r.line(false)),
+            None => format!("announce {:?}", unhex(said)),
+        },
+        ("dialog", [pid, slot, title]) => format!("dialog {:?} (window {pid}.{slot})", unhex(title)),
+        ("no-tree", _) => "(its program publishes nothing for screen readers: only dialogs are heard)".to_owned(),
+        ("end", [why, heard, read]) => return Listened::End(why.to_string(), heard.parse().unwrap_or(0), read.parse().unwrap_or(0)),
+        _ => line.to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rec(id: u32, depth: usize, role: &str, b: [i64; 4], states: &str, name: &str, text: &str) -> String {
+        format!("{id} {depth} {role} {} {} {} {} {states} {} {}", b[0], b[1], b[2], b[3], if name.is_empty() { "-".into() } else { hex(name) }, if text.is_empty() { "-".into() } else { hex(text) })
+    }
+
+    #[test]
+    fn an_a11y_element_is_one_line() {
+        let r = Rec::a11y(&rec(24, 1, "push_button", [260, 610, 180, 36], "focusable", "Merge pull request", "")).unwrap();
+        assert_eq!(r.line(false), "@24 push_button \"Merge pull request\" 260,610 180x36 focusable");
+        assert_eq!(r.number(), Some(24));
+        let r = Rec::a11y(&rec(25, 2, "link", [260, 650, 520, 22], "-", "#4512", "fix(render): menus")).unwrap();
+        assert_eq!(r.line(false), "@25 link \"#4512\" text \"fix(render): menus\" 260,650 520x22");
+        // A text that says its name is not said twice; no box, none given.
+        let r = Rec::a11y("9 0 label - - - - - 536176 536176").unwrap();
+        assert_eq!(r.line(false), "@9 label \"Sav\"");
+        // Cut at 120, or 400 with --long.
+        let long = "a".repeat(500);
+        let r = Rec::a11y(&rec(3, 0, "paragraph", [0, 0, 10, 10], "-", "", &long)).unwrap();
+        assert_eq!(r.line(false).len(), "@3 paragraph text \"\" 0,0 10x10".len() + 120);
+        assert_eq!(r.line(true).len(), "@3 paragraph text \"\" 0,0 10x10".len() + 400);
+        let j = r.json(false);
+        assert_eq!((j["id"].as_str(), j["box"][2].as_i64(), j["text"].as_str().map(str::len)), (Some("@3"), Some(10), Some(120)));
+    }
+
+    #[test]
+    fn a_read_and_its_json() {
+        let reply = format!("nodes 7 | {} | {} | ... more 3", rec(1, 0, "frame", [0, 0, 800, 600], "-", "Files", ""), rec(5, 1, "push_button", [10, 10, 80, 30], "focused,focusable", "Save", ""));
+        let read = nodes(&reply, "4521").unwrap();
+        assert_eq!((read.head.as_str(), read.recs.len(), read.more), ("tree 7", 2, 3));
+        assert_eq!(read.recs[1].states, ["focused", "focusable"]);
+        assert_eq!(nodes("err private", "4521").err().unwrap().code, fail::PRIVATE);
+        assert_eq!(nodes("err no-tree", "4521").err().unwrap().code, fail::NOT_HERE);
+        let j = read.recs[1].json(false);
+        assert_eq!(j, serde_json::json!({ "id": "@5", "depth": 1, "role": "push_button", "name": "Save", "text": "", "box": [10, 10, 80, 30], "states": ["focused", "focusable"] }));
+    }
+
+    #[test]
+    fn found_with_what_it_is_in() {
+        let reply = format!(
+            "nodes 1 | {} | {} | {} | {} | {}",
+            rec(1, 0, "frame", [0, 0, 800, 600], "-", "", ""),
+            rec(2, 1, "panel", [0, 0, 400, 600], "-", "", ""),
+            rec(3, 2, "push_button", [10, 10, 80, 30], "-", "Save", ""),
+            rec(4, 1, "panel", [400, 0, 400, 600], "-", "", ""),
+            rec(5, 2, "push_button", [410, 10, 80, 30], "-", "Save as", "")
+        );
+        let recs = nodes(&reply, "1").unwrap().recs;
+        let ids = |v: Vec<Rec>| v.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(with_containers(&recs, |r| r.says("save as"))), ["@1", "@4", "@5"]);
+        assert_eq!(ids(with_containers(&recs, |r| r.named("SAVE"))), ["@1", "@2", "@3"]);
+        assert_eq!(ids(at_point(&recs, 420.0, 20.0)), ["@1", "@4", "@5"]);
+        assert!(at_point(&recs, 900.0, 20.0).is_empty());
+    }
 
     /// pleamar's `describe json` of a notes window with a menu open, and a panel.
     const DESCRIBED: &str = r#"[
@@ -610,6 +731,21 @@ mod tests {
         assert_eq!(read.recs.last().unwrap().line(false), "@rename item \"Rename\"");
         assert_eq!(at_point(&read.recs, 20.0, 70.0).iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["@list", "@hit#r0"]);
         assert!(scene_read("notes", "? the render does not answer", &place).is_err());
+    }
+
+    #[test]
+    fn a_listen_is_read_a_line_at_a_time() {
+        let say = |s: &str| match listened(s) {
+            Listened::Say(s) => s,
+            end => panic!("{end:?}"),
+        };
+        assert_eq!(say(&format!("focus 12 0 push_button 10 20 80 30 focused,focusable {} -", hex("Close"))), "focus @12 push_button \"Close\" 10,20 80x30 focused,focusable");
+        assert_eq!(say(&format!("text 5 0 entry 0 0 200 30 focused,editable - {}", hex("12*3"))), "text @5 entry text \"12*3\" 0,0 200x30 focused,editable");
+        assert_eq!(say(&format!("announce {} 3 0 label - - - - - - -", hex("Saved"))), "announce \"Saved\" (@3 label)");
+        assert_eq!(say(&format!("announce {}", hex("Saved"))), "announce \"Saved\"");
+        assert_eq!(say(&format!("dialog 4521 3 {}", hex("About"))), "dialog \"About\" (window 4521.3)");
+        assert!(say("no-tree").contains("only dialogs"));
+        assert_eq!(listened("end time 812 40"), Listened::End("time".into(), 812, 40));
     }
 
     fn r(id: &str, depth: usize, role: &str, name: &str, states: &[&str]) -> Rec {
@@ -693,7 +829,13 @@ mod tests {
     }
 
     #[test]
-    fn kept_records_come_back() {
+    fn changes_are_read_and_kept_records_come_back() {
+        let reply = format!("changes 9 | ~ {} | was {} | + {} | - 0 {} | ... more 2", rec(2, 1, "check_box", [10, 10, 80, 20], "focusable,checked", "Bold", ""), rec(2, 1, "check_box", [10, 10, 80, 20], "focusable", "Bold", ""), rec(5, 1, "separator", [0, 0, 1, 40], "-", "", ""), rec(4, 1, "label", [0, 0, 8, 8], "-", "One", ""));
+        let Since::Changes { version, list, more } = since_reply(&reply, "1").unwrap() else { panic!("full") };
+        assert_eq!((version.as_str(), list.len(), more), ("9", 3, 2));
+        assert_eq!(list.iter().map(|c| c.line(false)).collect::<Vec<_>>(), ["~ @2 check_box \"Bold\" 10,10 80x20 focusable,checked (+checked)", "+ @5 separator 0,0 1x40", "- @4 label \"One\" 0,0 8x8"]);
+        assert!(matches!(since_reply(&format!("full | nodes 9 | {}", rec(1, 0, "frame", [0, 0, 8, 8], "-", "", "")), "1").unwrap(), Since::Full(r) if r.recs.len() == 1));
+        assert_eq!(since_reply("err private", "1").err().unwrap().code, fail::PRIVATE);
         let one = Rec { text: "a \"quoted\" text".into(), ..r("@hit#r0", 2, "item", "October", &["selected"]) };
         assert_eq!(Rec::from_kept(&one.kept()), Some(one.clone()));
         assert_eq!(Rec::from_kept(&Rec { rect: None, ..one.clone() }.kept()).unwrap().rect, None);
