@@ -3572,6 +3572,11 @@ scene Session {
     on change mon while mon == 1 { launch "pleamar-wm --say marea 'emit pointer_monitor 1'" }
     on change mon while mon == 2 { launch "pleamar-wm --say marea 'emit pointer_monitor 2'" }
     on change mon while mon == 3 { launch "pleamar-wm --say marea 'emit pointer_monitor 3'" }
+    // Marea sits on a window when she is joined to it, and goes where its title bar takes it: she
+    // is told when one starts to be carried and when it is let go (which one she works out, from
+    // where the mouse is), so she moves with it at the mouse's own pace instead of asking.
+    on change dragging while dragging >= 0 { launch "pleamar-wm --say marea 'emit carry_start'" }
+    on change dragging while dragging < 0 { launch "pleamar-wm --say marea 'emit carry_end'" }
     // Tiled or free, on the monitor under the mouse (Super+W; Marea's menu too).
     event toggle_free
     repeat k in 0..4 {
