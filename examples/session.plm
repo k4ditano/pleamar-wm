@@ -99,6 +99,7 @@ scene Session {
     // Super held (the compositor says): then a window is carried from
     // anywhere on it, tiled or free, even to the other monitor.
     fact keys.super = 0
+    fact pointer.panel = 0                // the pointer is on a program's surface (Marea's box, a bar), not on what is under it
     fact grab.x = 0                      // where it was taken from, from its corner
     fact grab.y = 0
     fact over = -1                       // the window under the one carried
@@ -2921,7 +2922,7 @@ scene Session {
         // (Only one that is seen: on the workspace its monitor shows, and not
         // under a dialog. One on another workspace in the same place took
         // the keys, unseen.)
-        let pointed = win.$i.open and sc == mon and ws.here and not win.$i.dialog and not win.$i.minimized and not on.dialog and (win.$i.floating or not on.float) and mouse.x >= x.$i and mouse.x < x.$i + w.$i and mouse.y >= y.$i and mouse.y < y.$i + h.$i
+        let pointed = win.$i.open and pointer.panel < 0.5 and sc == mon and ws.here and not win.$i.dialog and not win.$i.minimized and not on.dialog and (win.$i.floating or not on.float) and mouse.x >= x.$i and mouse.x < x.$i + w.$i and mouse.y >= y.$i and mouse.y < y.$i + h.$i
         // (Free, they overlap: the keyboard goes with a click, as on Windows.)
         // (Only the one entered gives it. The one left said «nobody» too, and
         // when both changed in the same round and the leaving one spoke last,

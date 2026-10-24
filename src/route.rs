@@ -23,8 +23,12 @@ pub struct Route {
     /// And the ones pressed on a program's surface (`grab`): it keeps the
     /// pointer until the last is let go, and gets each release.
     client_held: Vec<u32>,
-    /// The program's surface that took the keyboard when clicked.
+    /// The program's surface that took the keyboard when clicked, and how many
+    /// times a window had taken it by then (`layers::window_keyboard`): if a
+    /// window has since (the scene's focus on hover, a shortcut), the surface
+    /// no longer has it.
     key_client: Option<u64>,
+    key_client_at: u64,
     /// Keys held down that went to a binding: their release is the binding's
     /// too, and does what its `release` says, if it has one.
     bound: Vec<(u32, Option<crate::keys::Action>)>,
@@ -46,7 +50,7 @@ pub struct Route {
 
 impl Route {
     pub fn new(to_render: Sender<ToRender>) -> Route {
-        Route { hit: Hit::Scene(None), grab: None, scene_held: Vec::new(), client_held: Vec::new(), key_client: None, bound: Vec::new(), repeating: None, repeat_new: false, layer_keys: Vec::new(), super_held: false, to_render }
+        Route { hit: Hit::Scene(None), grab: None, scene_held: Vec::new(), client_held: Vec::new(), key_client: None, key_client_at: 0, bound: Vec::new(), repeating: None, repeat_new: false, layer_keys: Vec::new(), super_held: false, to_render }
     }
 
     /// The pointer at that point of a monitor, in its pixels. Says whether it
@@ -100,7 +104,15 @@ impl Route {
         }
         let was_program = matches!(self.hit, Hit::Client(..));
         self.hit = hit;
-        was_program != matches!(hit, Hit::Client(..))
+        let on_program = matches!(hit, Hit::Client(..));
+        // The scene is told, so that the window under a program's surface is
+        // pointed at again when the pointer comes back to it from there: a
+        // window «pointed» all the time, wherever the program's surface is
+        // over it, never took the keyboard back from Marea's box on hover.
+        if was_program != on_program {
+            let _ = self.to_render.send(ToRender::Fact("pointer.panel", if on_program { 1.0 } else { 0.0 }));
+        }
+        was_program != on_program
     }
 
     /// A button (evdev code). Says whether a program's surface had it: then,
@@ -238,7 +250,7 @@ impl Route {
         let all = screens.iter().find_map(|s| screen::keyboard_taker(&s.0.lock().unwrap()));
         // Only while it still asks for it: a card that closes gives it back.
         let alive = |id: u64| screens.iter().any(|s| s.0.lock().unwrap().clients.iter().any(|c| c.id == id && c.keyboard != 0 && !c.pieces.is_empty()));
-        all.or(self.key_client.filter(|id| alive(*id)))
+        all.or(self.key_client.filter(|id| self.key_client_at == layers::window_keyboard() && alive(*id)))
     }
 
     /// A key, by its keysym's name, what it types (if anything) and its evdev code.
@@ -353,6 +365,7 @@ impl Route {
             layers::tell(ToLayers::KeyboardBack);
         }
         self.key_client = id;
+        self.key_client_at = layers::window_keyboard();
     }
 }
 
@@ -394,5 +407,30 @@ mod tests {
         route.pointer(&on, (50.0, 50.0));
         assert!(!matches!(route.hit, Hit::Client(9, _)));
         assert!(route.grab.is_none() && route.client_held.is_empty());
+    }
+
+    /// Marea's box asks for the keyboard on demand: a click gives it to her.
+    /// A window taking it after that (the scene focusing the one under the
+    /// pointer, a shortcut) ends it: the keys are the window's, not hers, until
+    /// the box is clicked again.
+    #[test]
+    fn a_window_taking_the_keyboard_ends_a_clicked_surfaces_claim() {
+        let _drag = layers::tests::DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut route = Route::new(tx);
+        let on = crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere));
+        let mut box_ = menu(true);
+        box_.keyboard = 2;
+        on.0.lock().unwrap().clients.push(box_);
+        let screens = [on.clone()];
+        route.pointer(&on, (50.0, 50.0));
+        route.button(&screens, 0x110, true);
+        route.button(&screens, 0x110, false);
+        assert_eq!(route.key_owner(&screens), Some(9), "clicked, the box has the keys");
+        layers::keyboard_to_window();
+        assert_eq!(route.key_owner(&screens), None, "a window took the keyboard from it");
+        route.button(&screens, 0x110, true);
+        route.button(&screens, 0x110, false);
+        assert_eq!(route.key_owner(&screens), Some(9), "clicked again, it has them again");
     }
 }

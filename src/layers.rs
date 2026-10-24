@@ -704,6 +704,21 @@ pub fn set_card(fd: smithay::backend::drm::DrmDeviceFd) {
 pub fn card() -> Option<smithay::backend::drm::DrmDeviceFd> {
     CARD.lock().unwrap().clone()
 }
+/// How many times the keyboard has been given to a window (`set_focus`, in
+/// nest.rs). The route (route.rs) keeps the program's surface that was clicked
+/// for its keys; when a window takes the keyboard from it by other means (the
+/// scene's focus on hover, a shortcut), that count moves and the surface is
+/// no longer who the keys are for.
+static WINDOW_KEYBOARD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn keyboard_to_window() {
+    WINDOW_KEYBOARD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn window_keyboard() -> u64 {
+    WINDOW_KEYBOARD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether a lock screen holds the session (ext-session-lock).
 static LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

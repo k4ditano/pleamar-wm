@@ -1806,8 +1806,20 @@ impl State {
             }
         }
         let target = if self.host_focus { self.focus.and_then(|s| self.slots[s].as_ref()).map(|w| w.surface.clone()) } else { None };
+        let to_window = target.is_some();
         let k = self.keyboard.clone();
         k.set_focus(self, target, SERIAL_COUNTER.next_serial());
+        // A window has the keyboard now, not the program's surface that took
+        // it when it was clicked (Marea's box): neither this side nor the
+        // route (`key_client`) may go on thinking it is hers. Left so, the next
+        // click in her box and its first key found her «already» with it, and
+        // went to the window.
+        if to_window {
+            if !self.exclusive_keyboard {
+                self.panel_keyboard = None;
+            }
+            layers::keyboard_to_window();
+        }
         // Given the keyboard, it no longer asks for attention.
         if let Some(s) = self.focus {
             if self.urgent.remove(&s) {
