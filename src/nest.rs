@@ -2557,7 +2557,12 @@ impl State {
             self.exclusive_level = level;
             let k = self.keyboard.clone();
             k.set_focus(self, Some(root.clone()), SERIAL_COUNTER.next_serial());
-        } else if (keyboard != 1 || !visible) && self.panel_keyboard == Some(id) && self.exclusive_keyboard {
+        } else if self.panel_keyboard == Some(id) && (!visible || keyboard == 0 || (keyboard != 1 && self.exclusive_keyboard)) {
+            // (Also when it has it because it was clicked, not because it asked for all of
+            // it, and it stops asking for any: Marea's box closing with Esc, with the keyboard,
+            // gives it back to the window, which tells the program it lost it. Left on that
+            // surface, the program went on believing it had it, and the finder, opened next,
+            // never asked for it exclusively: its letters went to the window.)
             self.panel_keyboard = None;
             self.exclusive_keyboard = false;
             self.set_focus(self.focus);
