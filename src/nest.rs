@@ -525,6 +525,10 @@ struct State {
     /// Whether the program's surface with the keyboard has it because it
     /// asked for all of it (then it goes back when it stops asking).
     exclusive_keyboard: bool,
+    /// The layer of the surface that holds the keyboard because it asked for all of it:
+    /// another one asking for all of it takes it only from a lower layer, not from one
+    /// on the same (see `update_panel`: two of them took it from each other at every commit).
+    exclusive_level: u8,
     _session_lock: SessionLockManagerState,
     /// Who listens to what windows there are (wlr-foreign-toplevel: Marea's
     /// «where the focus is», a taskbar), and each window's handle for each.
@@ -843,6 +847,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         cursor_surface: None,
         panel_keyboard: None,
         exclusive_keyboard: false,
+        exclusive_level: 0,
         _session_lock: SessionLockManagerState::new::<State, _>(&dh, |_| true),
         toplevel_managers: Vec::new(),
         toplevel_handles: Vec::new(),
@@ -2196,7 +2201,9 @@ impl State {
             ToLayers::Key { id, code, down } => {
                 // Let go, as with a window: heard, whoever has the keyboard, and
                 // without taking it for a surface that may be gone.
-                if self.panel_keyboard != Some(id) && down {
+                // (One that holds all of the keyboard keeps it: the key is its own.)
+                let held_by_another = self.exclusive_keyboard && self.panel_keyboard.is_some_and(|h| h != id);
+                if self.panel_keyboard != Some(id) && down && !held_by_another {
                     let Some(surface) = self.panels.iter().find(|p| p.id == id).map(|p| p.shell.wl_surface().clone()) else { return };
                     self.panel_keyboard = Some(id);
                     self.exclusive_keyboard = false;
@@ -2539,9 +2546,15 @@ impl State {
         // it, and puts its cursor in its field. Letting go, it goes back to
         // the window that had it.
         let visible = w > 0 && h > 0;
-        if keyboard == 1 && visible && self.panel_keyboard != Some(id) {
+        // One that already holds it that way keeps it from another that asks the same from the
+        // same layer or a lower one: Marea's finder and the surface behind it both ask for all of
+        // it, and each took it from the other at every frame they committed (the window under
+        // them saw the keyboard enter and leave dozens of times a second, and keys were lost).
+        let held_by_another = self.exclusive_keyboard && self.panel_keyboard.is_some_and(|h| h != id) && level <= self.exclusive_level;
+        if keyboard == 1 && visible && self.panel_keyboard != Some(id) && !held_by_another {
             self.panel_keyboard = Some(id);
             self.exclusive_keyboard = true;
+            self.exclusive_level = level;
             let k = self.keyboard.clone();
             k.set_focus(self, Some(root.clone()), SERIAL_COUNTER.next_serial());
         } else if (keyboard != 1 || !visible) && self.panel_keyboard == Some(id) && self.exclusive_keyboard {
