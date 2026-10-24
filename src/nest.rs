@@ -4010,7 +4010,9 @@ impl SeatHandler for State {
             return;
         }
         // None at all (a game, a film full screen): hidden, over a window too.
-        layers::hide_cursor(matches!(image, CursorImageStatus::Hidden));
+        // Locked, it stays hidden whatever the program sets on entering.
+        let locked = self.constrained.is_some() && matches!(layers::pointer_hold(), Some(layers::Hold::Locked));
+        layers::hide_cursor(locked || matches!(image, CursorImageStatus::Hidden));
         // One of its own: its pictures, as it draws them (the arrow until the first).
         match &image {
             CursorImageStatus::Surface(s) => {
