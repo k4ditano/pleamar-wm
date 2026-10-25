@@ -612,6 +612,10 @@ impl State {
             ["n", hex] => {
                 let name: String = String::from_utf8_lossy(&unhex(hex).unwrap_or_default()).chars().filter(|c| !c.is_control()).take(16).collect();
                 let name = if name.trim().is_empty() { "agent".to_owned() } else { name };
+                // Marea works in a window she is joined to, in plain sight (her child sits on it): the
+                // monitor's glow and its «An agent is using this monitor» are for agents out of sight.
+                let quiet = if name == "Marea" { 1.0 } else { 0.0 };
+                let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("agent.quiet"), quiet));
                 let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern("agent.name"), name));
                 Ok("ok".to_owned())
             }

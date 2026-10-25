@@ -4602,7 +4602,7 @@ scene Session {
     let ag.breath = 0.5 + 0.5 * sin(agent.t * 45)
     group {
         z: 99995
-        show: ag.here
+        show: ag.here and agent.quiet < 0.5
         opacity: agent.on
         // The edges: a wide soft glow, and a thin bright line on them.
         group {
@@ -4638,12 +4638,14 @@ scene Session {
         text "Stop" { at: ag.px + 136, ag.py + 0.5; anchor: center; size: 11.5; weight: 700; color: #ffb3a6 }
     }
     prop ag.stop.hover = 0 ~120ms
-    zone box ag_stop { at: W - 66, H - 30; size: 64, 22; cursor: pointer; active: ag.here and agent.on > 0.5; agent: no }
+    zone box ag_stop { at: W - 66, H - 30; size: 64, 22; cursor: pointer; active: ag.here and agent.quiet < 0.5 and agent.on > 0.5; agent: no }
     on enter ag_stop { ag.stop.hover: 1 }
     on leave ag_stop { ag.stop.hover: 0 }
     on press ag_stop { launch "pleamar-wm agent stop" }
     // Who it is (`PLEAMAR_AGENT_NAME`: Marea says hers), for its label.
     text agent.name = "agent"
+    // 1 while it is Marea: she works in plain sight, so the monitor's glow and pill stay out.
+    fact agent.quiet = 0
     // Where each cursor is, as pleamar-wm says (on its monitor, in units).
     repeat k in 0..2 {
         fact agent.$k.x = 0
