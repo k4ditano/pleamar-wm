@@ -2613,6 +2613,7 @@ scene Session {
         on press title.$i while keys.super > 0.5 and dcl.t > 0.5 and dcl.w == i and C and fr and not maxed.$i {
             cvc.w = i
             cvc.n = cvc.n + 1
+            dcl.skip = 1
         }
         on press title.$i while keys.super > 0.5 and C {
             dcl.w = i
@@ -2639,7 +2640,7 @@ scene Session {
         }
         // Let go, it starts from where it was left —on the monitor it was left
         // on— and glides to its place from there.
-        on release title.$i {
+        on release title.$i while dcl.skip < 0.5 {
             dragging = -1
             tgrab = -1
             dx.$i: mouse.x - grab.x - x.$i ~0ms
@@ -2649,7 +2650,12 @@ scene Session {
         }
         // Free: it stays where it was let go (on the monitor it was let go on).
         // (Right there, at once: nothing to glide to.)
-        on release title.$i while (free[mon] > 0.5 or win.$i.floating) and picked < 0 and cv[mon] < 0.5 {
+        on release title.$i while dcl.skip > 0.5 {
+            dragging = -1
+            tgrab = -1
+            dcl.skip = 0
+        }
+        on release title.$i while (free[mon] > 0.5 or win.$i.floating) and picked < 0 and cv[mon] < 0.5 and dcl.skip < 0.5 {
             fx.$i = mouse.x - grab.x
             fy.$i = max(mouse.y - grab.y, win.reserved[mon].top)
             fsc.$i = mon
@@ -2661,7 +2667,7 @@ scene Session {
         }
         // On a canvas: there on the plane, as the camera sees it. Then the
         // others near it offer their edges (`cvs`): the nearest takes it.
-        on release title.$i while cv[mon] > 0.5 and free[mon] > 0.5 and picked < 0 {
+        on release title.$i while cv[mon] > 0.5 and free[mon] > 0.5 and picked < 0 and dcl.skip < 0.5 {
             fx.$i = mg.x0 + cvx[mon] + (mouse.x - grab.x - mg.x0) / cvz[mon]
             fy.$i = mg.y0 + cvy[mon] + (mouse.y - grab.y - mg.y0) / cvz[mon]
             fsc.$i = mon
@@ -3842,6 +3848,10 @@ scene Session {
     fact cvk.n = 0
     // Super and a double click on a window: two presses on it within 400 ms.
     fact dcl.w = -1
+    // The second press of Super and a double click centres the camera, and the camera moves while the button
+    // is still down: the release that follows is not a window being put down (it would place it again with
+    // the grab and the mouse of the old camera, and the window jumped). 1 from that press to its release.
+    fact dcl.skip = 0
     prop dcl.t = 0 ~0ms
     fact cvf.l = 0
     fact cvf.t = 0
