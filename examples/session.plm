@@ -2548,29 +2548,47 @@ scene Session {
             cvf.go: 0 ~0ms
             cvf.go: 1 after 16ms
         }
+        // Let go of an edge: the window stays where it is on the screen if it still fits in view.
+        // Only if its new size takes it out of the view does the camera move, and then the least
+        // it can: a zoom out if it is bigger than the view (never closer), and a push just far enough
+        // to bring it in, with a little air. (Centring it, as Super and a double click do, moved
+        // the whole canvas after every resize.)
+        let kv.z = clamp(min(cz, (mg.Ws - 2 * gap) / max(fw.$i, 1), (mg.ah - gap) / max(fh.$i + bar, 1)), 0.1, 1)
+        let kv.pad = gap / kv.z
+        let kv.x0 = cvx[sc] + win.reserved[sc].left
+        let kv.y0 = cvy[sc] + win.reserved[sc].top + bar
+        let kv.vw = mg.Ws / kv.z
+        let kv.vh = mg.ah / kv.z
+        let kv.nx = if(fx.$i < kv.x0 + kv.pad, fx.$i - kv.pad, if(fx.$i + fw.$i > kv.x0 + kv.vw - kv.pad, fx.$i + fw.$i + kv.pad - kv.vw, kv.x0))
+        let kv.ny = if(fy.$i < kv.y0 + kv.pad, fy.$i - kv.pad, if(fy.$i + fh.$i > kv.y0 + kv.vh - kv.pad, fy.$i + fh.$i + kv.pad - kv.vh, kv.y0))
+        on change cvk.n while cvk.w == i and C and fr and not maxed.$i and not win.$i.minimized {
+            cvz[sc] = kv.z
+            cvx[sc] = kv.nx - win.reserved[sc].left
+            cvy[sc] = kv.ny - win.reserved[sc].top - bar
+        }
         on release left_edge.$i {
             sizing = -1
             sedge = -1
-            cvc.w = i
-            cvc.n = cvc.n + 1
+            cvk.w = i
+            cvk.n = cvk.n + 1
         }
         on release right_edge.$i {
             sizing = -1
             sedge = -1
-            cvc.w = i
-            cvc.n = cvc.n + 1
+            cvk.w = i
+            cvk.n = cvk.n + 1
         }
         on release bottom_edge.$i {
             sizing = -1
             sedge = -1
-            cvc.w = i
-            cvc.n = cvc.n + 1
+            cvk.w = i
+            cvk.n = cvk.n + 1
         }
         on release corner.$i {
             sizing = -1
             sedge = -1
-            cvc.w = i
-            cvc.n = cvc.n + 1
+            cvk.w = i
+            cvk.n = cvk.n + 1
         }
         // Only the edge pressed: another one brought under the point pressed
         // —a canvas's camera moved with Super— took the drag, and stretched
@@ -3819,6 +3837,9 @@ scene Session {
     // One window centred: it is asked here, and the camera goes as for all of them.
     fact cvc.w = -1
     fact cvc.n = 0
+    // An edge let go: the camera keeps that window in view, moving as little as it can (`cvk`).
+    fact cvk.w = -1
+    fact cvk.n = 0
     // Super and a double click on a window: two presses on it within 400 ms.
     fact dcl.w = -1
     prop dcl.t = 0 ~0ms
