@@ -17,15 +17,15 @@ use std::time::{Duration, Instant};
 type Info = BTreeMap<String, String>;
 
 /// A window of the session: its place in the scene and its process.
-struct Win {
-    slot: usize,
-    pid: u32,
-    title: String,
+pub(crate) struct Win {
+    pub(crate) slot: usize,
+    pub(crate) pid: u32,
+    pub(crate) title: String,
 }
 
 /// The session's windows, as pleamar-wm writes them (`windows` next to its
 /// other sockets): `slot pid<TAB>title`, one a line.
-fn windows() -> Result<Vec<Win>, String> {
+pub(crate) fn windows() -> Result<Vec<Win>, String> {
     let dir = std::env::var("PLEAMAR_SOCKETS").ok().filter(|d| !d.is_empty()).ok_or("not inside a pleamar-wm session")?;
     let text = std::fs::read_to_string(format!("{dir}/windows")).map_err(|_| "this pleamar-wm session says nothing of its windows (an older pleamar-wm?)".to_string())?;
     Ok(text
@@ -210,7 +210,7 @@ fn paste(id: i32, text: &str) -> Result<(), String> {
     }
 }
 
-fn keys(id: i32, names: &str) -> Result<(), String> {
+pub(crate) fn keys(id: i32, names: &str) -> Result<(), String> {
     match crate::term::ask(&socket(id), &format!("keys {names}"))? {
         r if r.starts_with("ok") => Ok(()),
         r => Err(r.trim().to_owned()),
@@ -525,7 +525,7 @@ enum Waited {
 
 /// The question on that terminal's screen, if its agent is not working.
 /// Its hooks may say it asks before the screen can be read as a question.
-fn asked(id: i32, i: &Info) -> Option<crate::term::Question> {
+pub(crate) fn asked(id: i32, i: &Info) -> Option<crate::term::Question> {
     let hook = i.get("hook").map(String::as_str).unwrap_or("");
     if hook == "working" || (hook.is_empty() && i.get("state").map(String::as_str) == Some("working")) {
         return None;
@@ -620,7 +620,7 @@ fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> W
 
 /// What makes a question the same one again: its options (the words above
 /// them change as its screen is drawn again), or its words if it has none.
-fn ask_key(q: &crate::term::Question) -> String {
+pub(crate) fn ask_key(q: &crate::term::Question) -> String {
     if q.options.is_empty() {
         q.text.clone()
     } else {
@@ -1696,7 +1696,7 @@ fn taken_since(id: i32, at: u64) -> bool {
 /// Answers a question on that terminal: an option by its number or its
 /// words (the cursor taken there, and Enter), words where it lets you type
 /// them, or yes/no. What was chosen.
-fn choose(id: i32, q: &crate::term::Question, reply: &str) -> Result<String, String> {
+pub(crate) fn choose(id: i32, q: &crate::term::Question, reply: &str) -> Result<String, String> {
     let r = reply.trim();
     if q.yes_no {
         let yes = matches!(r.to_lowercase().as_str(), "y" | "yes" | "s" | "si" | "sí" | "1" | "true" | "ok");

@@ -30,6 +30,7 @@ mod screen;
 mod session;
 mod term;
 mod link;
+mod agents;
 mod mcp;
 mod mcp_serve;
 mod keep;
@@ -72,6 +73,10 @@ fn main() {
     // `pleamar-wm link …`: an agent in a terminal and the windows wired to its own (see link.rs).
     if args.first().map(String::as_str) == Some("link") {
         std::process::exit(link::run(&args[1..]));
+    }
+    // `pleamar-wm agents …`: the session's agents and what they ask, for the person's shell (see agents.rs).
+    if args.first().map(String::as_str) == Some("agents") {
+        std::process::exit(agents::run(&args[1..]));
     }
     // `pleamar-wm term …`: the terminals' layers, by hand (see term.rs).
     if args.first().map(String::as_str) == Some("term") {
