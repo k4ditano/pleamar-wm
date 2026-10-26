@@ -68,6 +68,15 @@ the open windows without closing anything.
   Claude Code's hooks, which tell its terminal exactly how it is and its last
   answer. `link spawn codex "TASK"` opens a terminal with that agent beside
   yours, wired, and hands it the task. `link setup --undo` takes it away.
+- **The session's agents, for your shell**: `pleamar-wm agents --json` lists
+  every window with an agent —its number, agent, folder and whether it works,
+  is ready or asks— and, asking, the question with its options by number and
+  a key, one JSON object a line. `agents answer N OPTION --key KEY` answers
+  only if that same question is still on the screen (otherwise nothing is
+  sent, exit 3), and `agents stop N` sends Ctrl+C. Unlike `link`, it needs no
+  wire: it speaks for the person, so a bar can show and answer what agents
+  ask. `--log FILE --by WHO --class A|B|C` keeps a line of each answer,
+  refusal or stop, with secrets hidden.
 - **Every terminal readable and writable from outside** (0.5): in a session,
   the terminals it starts —kitty, Alacritty, foot, Konsole, any that runs
   `$SHELL`— run the user's shell through a thin layer of pleamar-wm's own,
