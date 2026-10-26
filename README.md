@@ -394,7 +394,8 @@ it goes through PipeWire only when something changes, with the pointer drawn
 in if the program asks for it. Screenshots asked through the portal are its
 own too (the whole desktop, or a window or monitor chosen the same way). While
 anything is shared, Marea's notices come in quietly and a ring breathes
-around her; windows a rule calls `private` come out pixelated —their title
+around her, and the scene's fact `share.on` is 1 (a scene that declares it,
+and any shell that reads it, can keep quiet too); windows a rule calls `private` come out pixelated —their title
 bar with them— in a whole screen shared or photographed. And programs'
 global shortcuts (push to talk in a call) go through it: each on the key it
 asks for, or the one `keys.conf` gives it (`shortcut push-to-talk Super+F9`).
