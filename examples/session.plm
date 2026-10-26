@@ -250,6 +250,13 @@ scene Session {
         lag.y: mouse.y ~0ms
     }
 
+    // The agents' and the wires' own clock: it turns only while something of theirs moves —an agent working or
+    // waiting, a wire carrying something—. Naming `time` kept the clock going from the start, with no agent at all,
+    // and the compositor never slept (#36: 70–105 % of a core at idle). Only copy 0 turns it: what is loose here
+    // belongs to the surface copied per monitor, and each copy's `spin` would add its own (four times as fast).
+    prop fxclock = 0
+    spin fxclock by if(screen.index == 0 and (ag.0 == 1 or ag.0 > 2.5 or ag.1 == 1 or ag.1 > 2.5 or ag.2 == 1 or ag.2 > 2.5 or ag.3 == 1 or ag.3 > 2.5 or ag.4 == 1 or ag.4 > 2.5 or ag.5 == 1 or ag.5 > 2.5 or ag.6 == 1 or ag.6 > 2.5 or ag.7 == 1 or ag.7 > 2.5 or ag.8 == 1 or ag.8 > 2.5 or ag.9 == 1 or ag.9 > 2.5 or ag.10 == 1 or ag.10 > 2.5 or ag.11 == 1 or ag.11 > 2.5 or ag.12 == 1 or ag.12 > 2.5 or ag.13 == 1 or ag.13 > 2.5 or ag.14 == 1 or ag.14 > 2.5 or ag.15 == 1 or ag.15 > 2.5 or wire.0.flow != 0 or wire.1.flow != 0 or wire.2.flow != 0 or wire.3.flow != 0 or wire.4.flow != 0 or wire.5.flow != 0 or wire.6.flow != 0 or wire.7.flow != 0), 1, 0)
+
     // ── the desk ──
     // Nothing: the wallpaper is a program's (swaybg, below everything). Only
     // a light that follows the keyboard: where you are typing is a little warmer.
@@ -2267,15 +2274,15 @@ scene Session {
             // Its agent: what and where, dim, and a little basin of water —low
             // and still when ready, a wave running through it while it works,
             // amber and full, beating, when it waits for you—.
-            let ag.lvl = pick(max(ag.$i - 1, 0), 6 + 1.5 * sin(time * 300), 3.5, 9.5)
+            let ag.lvl = pick(max(ag.$i - 1, 0), 6 + 1.5 * sin(fxclock * 300), 3.5, 9.5)
             group {
                 show: hb.$i > 0.01 and ag.$i > 0.5
-                opacity: hb.$i * if(ag.$i > 2.5, 0.75 + 0.25 * sin(time * 240), 1)
+                opacity: hb.$i * if(ag.$i > 2.5, 0.75 + 0.25 * sin(fxclock * 240), 1)
                 text agt.$i { at: x + w - 104, y + tb / 2; anchor: right center; size: 10.5; color: ink; opacity: 55%; width: min(150, w - 280); lines: 1; show: w > 400 }
                 group {
                     clip box { from: x + w - 98, y + tb / 2 - 6; size: 14, 12; corner: 3.5 }
                     box { from: x + w - 98, y + tb / 2 - 6 + 12 - ag.lvl * 1; size: 14, 12; color: if(ag.$i > 2.5, amber, mint); opacity: 85% }
-                    ellipse { at: x + w - 98 + 7 + 5 * sin(time * 260), y + tb / 2 - 6 + 12 - ag.lvl * 1; radius: 4; scale: 1.7, 0.45; color: #dffaf0; opacity: 70%; show: ag.$i > 0.5 and ag.$i < 1.5 }
+                    ellipse { at: x + w - 98 + 7 + 5 * sin(fxclock * 260), y + tb / 2 - 6 + 12 - ag.lvl * 1; radius: 4; scale: 1.7, 0.45; color: #dffaf0; opacity: 70%; show: ag.$i > 0.5 and ag.$i < 1.5 }
                 }
                 box { from: x + w - 98, y + tb / 2 - 6; size: 14, 12; corner: 3.5; stroke: 1.2; color: if(ag.$i > 2.5, amber, mint); opacity: 85% }
             }
@@ -2325,7 +2332,7 @@ scene Session {
                 text "answered by window {ansby.$i, 0}, through a wire" { at: x + w / 2, y + tb + 26; anchor: center; size: 11; color: ink }
             }
             // Waiting for you: its edge, amber, beating.
-            box { from: x, y; size: w, h; corner: 12; stroke: 2; color: amber; opacity: (50% + 30% * sin(time * 240)) * smooth(0.75, 1, water); show: ag.$i > 2.5 }
+            box { from: x, y; size: w, h; corner: 12; stroke: 2; color: amber; opacity: (50% + 30% * sin(fxclock * 240)) * smooth(0.75, 1, water); show: ag.$i > 2.5 }
             // Far away (a canvas zoomed out): what each agent is doing, big.
             let ag.far = clamp((0.55 - cz) / 0.12, 0, 1) * C * (ag.$i > 0.5)
             group {
@@ -2341,7 +2348,7 @@ scene Session {
                 group {
                     clip box { from: x + w / 2 - 82, y + h / 2 - 12; size: 28, 24; corner: 7.0 }
                     box { from: x + w / 2 - 82, y + h / 2 - 12 + 24 - ag.lvl * 2; size: 28, 24; color: if(ag.$i > 2.5, amber, mint); opacity: 85% }
-                    ellipse { at: x + w / 2 - 82 + 14 + 10 * sin(time * 260), y + h / 2 - 12 + 24 - ag.lvl * 2; radius: 8; scale: 1.7, 0.45; color: #dffaf0; opacity: 70%; show: ag.$i > 0.5 and ag.$i < 1.5 }
+                    ellipse { at: x + w / 2 - 82 + 14 + 10 * sin(fxclock * 260), y + h / 2 - 12 + 24 - ag.lvl * 2; radius: 8; scale: 1.7, 0.45; color: #dffaf0; opacity: 70%; show: ag.$i > 0.5 and ag.$i < 1.5 }
                 }
                 box { from: x + w / 2 - 82, y + h / 2 - 12; size: 28, 24; corner: 7.0; stroke: 2.4; color: if(ag.$i > 2.5, amber, mint); opacity: 85% }
                 text pick(max(ag.$i - 1, 0), "Working", "Ready", "Waiting for you") { at: x + w / 2 - 44, y + h / 2 - 6; anchor: left center; size: 14; weight: 650; color: ink }
@@ -2354,7 +2361,7 @@ scene Session {
             let em.y = clamp(fgy + fgh / 2, y0 + 34, y0 + ah - 34)
             group {
                 show: em.out
-                ellipse { at: em.x, em.y; radius: 15 + 5 * sin(time * 240); color: amber; opacity: 18% }
+                ellipse { at: em.x, em.y; radius: 15 + 5 * sin(fxclock * 240); color: amber; opacity: 18% }
                 body {
                     gradient: radial em.x - 2, em.y - 3 radius 12, #fff3d6, amber 45%, #a8781f
                     rim: 35%
@@ -3684,7 +3691,7 @@ scene Session {
         let wv.c2y = if(wv.hz, wv.p1y, wv.my)
         let wv.wait = ag[max(wv.a, 0)] > 2.5 or ag[max(wv.b, 0)] > 2.5
         let wv.go = wire.$k.flow != 0
-        let wv.t = fract(time / 1.3)
+        let wv.t = fract(fxclock / 1.3)
         let wv.s = if(wire.$k.flow < 0, 1 - wv.t, wv.t)
         group {
             z: -1
