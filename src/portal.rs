@@ -123,11 +123,16 @@ static SNAPS: Mutex<Option<HashMap<u64, async_channel::Sender<Option<Vec<u8>>>>>
 
 /// Marea is told when the screen starts and stops being shared: its notices
 /// come in quietly meanwhile, and it shows it. Only on the first and the last.
+/// The scene is told too, as the fact `share.on` (1 while anything is shared):
+/// any shell on top —one that reads the scene's facts— can do the same.
 fn sharing(streams: usize) {
     static SHARING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let now = streams > 0;
     if SHARING.swap(now, Ordering::AcqRel) != now {
         layers::tell(layers::ToLayers::Launch(format!("marea {}", if now { "sharing_on" } else { "sharing_off" })));
+        if let Some(tx) = TO_RENDER.lock().unwrap().as_ref() {
+            let _ = tx.send(ToRender::Fact(pleamar::scene::intern("share.on"), if now { 1.0 } else { 0.0 }));
+        }
     }
 }
 
