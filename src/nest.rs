@@ -504,6 +504,9 @@ struct State {
     /// One per monitor, with its name (`DP-3`); nested, a single one.
     outputs: Vec<Output>,
     output_globals: Vec<smithay::reexports::wayland_server::backend::GlobalId>,
+    /// Every monitor went away for a moment (they sleep): the programs were told so (their
+    /// outputs removed, their surfaces closed) and the outputs are made again when one is back.
+    outputs_asleep: bool,
     _output_manager: OutputManagerState,
     layer_shell: WlrLayerShellState,
     panels: Vec<Panel>,
@@ -837,6 +840,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         layer_shell: WlrLayerShellState::new::<State>(&dh),
         outputs,
         output_globals,
+        outputs_asleep: false,
         panels: Vec::new(),
         menus: Vec::new(),
         drag: None,
@@ -1948,14 +1952,39 @@ impl State {
     fn monitors_changed(&mut self) {
         let monitors = layers::monitors();
         if monitors.is_empty() {
+            // Not one monitor left (all of them asleep): our own outputs are kept —the windows are
+            // placed by them—, but the programs must not go on believing in them: their outputs are
+            // taken away and their surfaces closed, as for one monitor that is unplugged, or what
+            // they kept on DP-2 stayed there while a second copy was made when it came back.
+            if !self.outputs_asleep {
+                println!("windows · no monitor is left: the programs' outputs and surfaces go");
+                for g in &self.output_globals {
+                    self.dh.remove_global::<State>(g.clone());
+                }
+                for p in &self.panels {
+                    if let Shell::Layer(l) = &p.shell {
+                        l.send_close();
+                    }
+                    layers::hide(p.id);
+                }
+                self.panels.clear();
+                self.outputs_asleep = true;
+            }
             return;
         }
+        let asleep = std::mem::take(&mut self.outputs_asleep);
         let old_names: Vec<String> = self.outputs.iter().map(|o| o.name()).collect();
         let mut outputs = Vec::new();
         let mut globals = Vec::new();
         for m in &monitors {
             let mode = OutputMode { size: (m.size.0 as i32, m.size.1 as i32).into(), refresh: m.mhz };
             let (o, g) = match old_names.iter().position(|n| *n == m.name) {
+                Some(i) if asleep => {
+                    // Its output was taken away from the programs: a new one for the same monitor.
+                    let o = self.outputs[i].clone();
+                    let g = o.create_global::<State>(&self.dh);
+                    (o, g)
+                }
                 Some(i) => (self.outputs[i].clone(), self.output_globals[i].clone()),
                 None => {
                     println!("windows · a monitor for the programs: {}", m.name);
@@ -1972,7 +2001,9 @@ impl State {
         for (i, name) in old_names.iter().enumerate() {
             if !monitors.iter().any(|m| &m.name == name) {
                 println!("windows · the monitor {name} is gone");
-                self.dh.remove_global::<State>(self.output_globals[i].clone());
+                if !asleep {
+                    self.dh.remove_global::<State>(self.output_globals[i].clone());
+                }
             }
         }
         let new_index = |old: usize| old_names.get(old).and_then(|n| monitors.iter().position(|m| &m.name == n));
