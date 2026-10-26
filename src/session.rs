@@ -988,6 +988,11 @@ impl State {
     fn monitors_changed(&mut self) {
         place_monitors(&mut self.monitors);
         if self.monitors.is_empty() {
+            // Not one left (all asleep): the programs' side is told too, so it lets go of its outputs and
+            // their surfaces; returning before it, the last monitor's stayed, and a scene made a second
+            // surface on it when the monitors woke (#104, found and tested on real monitors by natepayn3).
+            publish(&self.monitors);
+            layers::tell(ToLayers::Monitors);
             return;
         }
         // The scene's surfaces, given again for the new row of monitors.
