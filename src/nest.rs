@@ -59,6 +59,10 @@ use smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::{
     zwlr_foreign_toplevel_manager_v1::{self as toplevel_manager, ZwlrForeignToplevelManagerV1},
 };
 use smithay::reexports::wayland_server::{DataInit, Dispatch, GlobalDispatch, New};
+use smithay::reexports::wayland_protocols_wlr::gamma_control::v1::server::{
+    zwlr_gamma_control_manager_v1::{self as gamma_manager, ZwlrGammaControlManagerV1},
+    zwlr_gamma_control_v1::{self as gamma_control, ZwlrGammaControlV1},
+};
 use smithay::reexports::wayland_protocols_wlr::output_power_management::v1::server::{
     zwlr_output_power_manager_v1::{self as power_manager, ZwlrOutputPowerManagerV1},
     zwlr_output_power_v1::{self as output_power, ZwlrOutputPowerV1},
@@ -655,6 +659,9 @@ struct State {
     hold_pointers: Vec<PointerHandle<State>>,
     /// Who watches a monitor's power (wlr-output-power-management), and which.
     powers: Vec<(ZwlrOutputPowerV1, usize)>,
+    /// Who sets a monitor's colour ramps (wlr-gamma-control), and which: one
+    /// program a monitor.
+    gammas: Vec<(ZwlrGammaControlV1, usize)>,
     socket: String,
     /// XWayland's display (`:1`), once it is ready; while it starts, what is
     /// launched waits for it.
@@ -766,6 +773,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         dh.create_global::<State, ZwlrScreencopyManagerV1, _>(3, ());
         // And their power, for what turns them off when idle (hypridle, wlopm).
         dh.create_global::<State, ZwlrOutputPowerManagerV1, _>(1, ());
+        // And their colour ramps, for a night light (wlsunset, gammastep).
+        dh.create_global::<State, ZwlrGammaControlManagerV1, _>(1, ());
     }
     // Pictures of one window (an overview's thumbnails, a recorder of one
     // window): on any session, the windows are on the card in all of them.
@@ -832,6 +841,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         constrained: None,
         hold_pointers: Vec::new(),
         powers: Vec::new(),
+        gammas: Vec::new(),
         seats,
         seat,
         keyboard,
@@ -1968,6 +1978,11 @@ impl State {
                     layers::hide(p.id);
                 }
                 self.panels.clear();
+                // Their colour ramps, set on outputs they no longer have, can
+                // be set no more: a night light asks again for the new ones.
+                for (g, _) in std::mem::take(&mut self.gammas) {
+                    g.failed();
+                }
                 self.outputs_asleep = true;
             }
             return;
@@ -2013,6 +2028,13 @@ impl State {
         self.powers = powers;
         for p in gone {
             p.failed();
+        }
+        // So do the colour ramps; a monitor that came back from sleep is
+        // another output for the programs, and its own ramps are on it.
+        let (gammas, gone) = follow_monitors(std::mem::take(&mut self.gammas), |k| new_index(k).filter(|_| !asleep));
+        self.gammas = gammas;
+        for g in gone {
+            g.failed();
         }
         // The windows, by the name of their monitor; the ones on one that left,
         // to the first, remembering it; the ones whose monitor came back, to it.
@@ -4884,6 +4906,74 @@ fn follow_monitors<T>(kept: Vec<(T, usize)>, new_index: impl Fn(usize) -> Option
         }
     }
     (stay, gone)
+}
+
+impl GlobalDispatch<ZwlrGammaControlManagerV1, ()> for State {
+    fn bind(_: &mut Self, _: &DisplayHandle, _: &Client, resource: New<ZwlrGammaControlManagerV1>, _: &(), init: &mut DataInit<'_, Self>) {
+        init.init(resource, ());
+    }
+}
+
+/// A monitor's colour ramps, for one program at a time to set (a night light).
+/// Set through the card's own ramps on the monitor's controller: the picture
+/// is not painted again for it. Let go —destroyed, or its program gone—, the
+/// monitor's own come back.
+impl Dispatch<ZwlrGammaControlManagerV1, ()> for State {
+    fn request(state: &mut Self, _: &Client, _: &ZwlrGammaControlManagerV1, request: gamma_manager::Request, _: &(), _: &DisplayHandle, init: &mut DataInit<'_, Self>) {
+        if let gamma_manager::Request::GetGammaControl { id, output } = request {
+            let monitor = state.outputs.iter().position(|o| o.owns(&output));
+            let control = init.init(id, ());
+            let size = monitor.map_or(0, layers::gamma_size);
+            match monitor {
+                Some(k) if size > 0 && !state.gammas.iter().any(|(_, m)| *m == k) => {
+                    control.gamma_size(size);
+                    state.gammas.push((control, k));
+                }
+                // No ramps to set there, or another program has them.
+                _ => control.failed(),
+            }
+        }
+    }
+}
+
+impl Dispatch<ZwlrGammaControlV1, ()> for State {
+    fn request(state: &mut Self, _: &Client, control: &ZwlrGammaControlV1, request: gamma_control::Request, _: &(), _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
+        match request {
+            gamma_control::Request::SetGamma { fd } => {
+                let Some(k) = state.gammas.iter().find(|(g, _)| g == control).map(|(_, k)| *k) else { return };
+                // Red, then green, then blue: as many steps each as it was told.
+                let n = layers::gamma_size(k) as usize;
+                let mut bytes = vec![0u8; 3 * n * 2];
+                let read = {
+                    use std::os::unix::fs::FileExt;
+                    std::fs::File::from(fd).read_exact_at(&mut bytes, 0)
+                };
+                if n == 0 || read.is_err() {
+                    state.gammas.retain(|(g, _)| g != control);
+                    control.failed();
+                    layers::request_gamma(k, None);
+                    return;
+                }
+                layers::request_gamma(k, Some(bytes.chunks_exact(2).map(|b| u16::from_ne_bytes([b[0], b[1]])).collect()));
+            }
+            gamma_control::Request::Destroy => state.let_go_of_gamma(control),
+            _ => {}
+        }
+    }
+
+    fn destroyed(state: &mut Self, _: smithay::reexports::wayland_server::backend::ClientId, control: &ZwlrGammaControlV1, _: &()) {
+        state.let_go_of_gamma(control);
+    }
+}
+
+impl State {
+    /// A program lets go of a monitor's colour ramps: its own come back.
+    fn let_go_of_gamma(&mut self, control: &ZwlrGammaControlV1) {
+        if let Some(i) = self.gammas.iter().position(|(g, _)| g == control) {
+            let (_, k) = self.gammas.remove(i);
+            layers::request_gamma(k, None);
+        }
+    }
 }
 
 /// A monitor's power, for a program to watch and set.

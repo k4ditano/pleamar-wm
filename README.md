@@ -559,6 +559,10 @@ a turn is still a `monitor` line in session.conf, read at start.
   `pleamar-wm idle hold|release|status`, for a "caffeine" switch), or hypridle / swayidle / wlopm through
   ext-idle-notify and wlr-output-power-management; a video keeps the screen
   awake (idle-inhibit). `vrr` on a monitor line: variable refresh.
+- **Night light**: wlsunset, gammastep or a shell's night mode set each
+  monitor's colour ramps through wlr-gamma-control, on the card's own ramps
+  (nothing is painted again for it); one program a monitor, and its own come
+  back when that program lets go or ends.
 - **Touchpad**: three and four finger swipes and pinches are the scene's
   events (`swipe3_down`, `swipe4_left`, `pinch3_in`…); session.plm does as
   Hyprland did.
