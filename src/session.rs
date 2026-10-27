@@ -83,6 +83,10 @@ struct Monitor {
     screen: Screen,
     flips: Arc<Mutex<Flips>>,
     mhz: i32,
+    /// How many steps its colour ramps have on the card (0: none to set), and
+    /// whether a program's are on it now rather than its own.
+    gamma: u32,
+    tinted: bool,
 }
 
 /// A monitor's buffers on the card: three, what each frame is put together
@@ -459,6 +463,17 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
             }
         })
         .map_err(|e| e.to_string())?;
+    // Colour ramps as a program asks (wlsunset, gammastep).
+    let (gamma_tx, gamma_rx) = smithay::reexports::calloop::channel::channel::<(usize, Option<Vec<u16>>)>();
+    layers::set_gamma_sink(gamma_tx);
+    event_loop
+        .handle()
+        .insert_source(gamma_rx, |event, _, state: &mut State| {
+            if let smithay::reexports::calloop::channel::Event::Msg((which, ramps)) = event {
+                state.gamma(which, ramps);
+            }
+        })
+        .map_err(|e| e.to_string())?;
     // The phone's monitor, as `pleamar-wm remote` asks (docs/phone.md).
     let (phone_tx, phone_rx) = smithay::reexports::calloop::channel::channel::<Option<layers::PhoneWish>>();
     layers::set_phone_sink(Box::new(move |wish| phone_tx.send(wish).is_ok()));
@@ -770,7 +785,14 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     if scale != 1.0 {
         println!("session · {name}: scale {scale}");
     }
-    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode) }
+    let gamma = drm.get_crtc(crtc).map_or(0, |c| c.gamma_length());
+    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode), gamma, tinted: false }
+}
+
+/// Ramps of `n` steps that leave every colour as it is: red, green and blue.
+fn straight_ramps(n: usize) -> Vec<u16> {
+    let one: Vec<u16> = (0..n).map(|k| if n > 1 { (k * 0xffff / (n - 1)) as u16 } else { 0xffff }).collect();
+    [one.as_slice(), one.as_slice(), one.as_slice()].concat()
 }
 
 /// The monitors, in their order, for the rest of the session to read by
@@ -779,6 +801,7 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
 fn publish(monitors: &[Monitor]) {
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     layers::set_powered(monitors.iter().map(|m| m.on).collect());
+    layers::set_gamma_sizes(monitors.iter().map(|m| m.gamma).collect());
 }
 
 /// Where the configuration puts them; the ones it does not place, left to
@@ -1058,7 +1081,7 @@ impl State {
             let screen = crate::phone::make(w.size, &self.to_render);
             let scale = w.scale.clamp(0.5, 4.0);
             println!("session · a monitor for the phone: {}×{} at scale {scale}", w.size.0, w.size.1);
-            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ });
+            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ, gamma: 0, tinted: false });
         }
         self.monitors_changed();
     }
@@ -1686,6 +1709,27 @@ impl State {
         }
     }
 
+    /// A monitor's colour ramps, a program's (red, green and blue, one after
+    /// the other) or, with none, its own back: straight, as the card has them
+    /// when nobody changed them.
+    fn gamma(&mut self, which: usize, ramps: Option<Vec<u16>>) {
+        let Some(m) = self.monitors.get_mut(which) else { return };
+        let (Some(crtc), n) = (m.crtc, m.gamma as usize) else { return };
+        if n == 0 {
+            return;
+        }
+        let tinted = ramps.as_ref().is_some_and(|r| r.len() == 3 * n);
+        let ramps = ramps.filter(|r| r.len() == 3 * n).unwrap_or_else(|| straight_ramps(n));
+        if let Err(e) = self.drm.set_gamma(crtc, &ramps[..n], &ramps[n..2 * n], &ramps[2 * n..]) {
+            eprintln!("session · {}: its colour ramps could not be set: {e}", m.name);
+            return;
+        }
+        if tinted != m.tinted {
+            m.tinted = tinted;
+            println!("session · {}: {}", m.name, if tinted { "a program sets its colour ramps" } else { "its own colour ramps back" });
+        }
+    }
+
     /// Monitors on or off (all, if none is said): off, dark (DPMS) and not
     /// put together; on, lit and put together again from the start.
     fn power(&mut self, which: Option<usize>, on: bool) {
@@ -2095,7 +2139,7 @@ mod tests {
     fn monitor(name: &str, crtc: u32, on: bool, x: i32) -> Monitor {
         let crtc = smithay::reexports::drm::control::crtc::Handle::from(std::num::NonZeroU32::new(crtc).unwrap());
         let screen = crate::screen::screen(name.into(), (1920, 1080), Box::new(Nowhere));
-        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000 }
+        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000, gamma: 0, tinted: false }
     }
 
     /// The right one dark, then moved left of the other: once re-sorted, the

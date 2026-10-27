@@ -641,6 +641,33 @@ pub fn request_power(monitor: Option<usize>, on: bool) {
     }
 }
 
+/// A monitor's colour ramps, as a program asks (wlr-gamma-control: wlsunset,
+/// gammastep, a shell's night light): which one, and its red, green and blue
+/// ramps one after the other; none, its own back.
+static GAMMA: Mutex<Option<channel::Sender<(usize, Option<Vec<u16>>)>>> = Mutex::new(None);
+
+pub fn set_gamma_sink(tx: channel::Sender<(usize, Option<Vec<u16>>)>) {
+    *GAMMA.lock().unwrap() = Some(tx);
+}
+
+pub fn request_gamma(monitor: usize, ramps: Option<Vec<u16>>) {
+    if let Some(tx) = GAMMA.lock().unwrap().as_ref() {
+        let _ = tx.send((monitor, ramps));
+    }
+}
+
+/// How many steps each monitor's ramps have, as the session last said: 0, it
+/// has none a program can set (the phone's, a headless one, a card without).
+static GAMMA_SIZES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+pub fn set_gamma_sizes(sizes: Vec<u32>) {
+    *GAMMA_SIZES.lock().unwrap() = sizes;
+}
+
+pub fn gamma_size(monitor: usize) -> u32 {
+    GAMMA_SIZES.lock().unwrap().get(monitor).copied().unwrap_or(0)
+}
+
 /// The phone's monitor (`pleamar-wm remote` from a phone, see docs/phone.md):
 /// put up with its size in pixels and its scale, or taken down.
 #[derive(Clone, Copy, Debug, PartialEq)]

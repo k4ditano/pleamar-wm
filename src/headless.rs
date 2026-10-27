@@ -210,6 +210,31 @@ impl pleamar::Platform for Headless {
             .collect();
         crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz_of(m), scale }, sc.clone())).collect());
         crate::output::set_sink(Box::new(|(name, wish, answer)| answer.send(apply_output(&name, &wish)).is_ok()));
+        // `PLEAMAR_HEADLESS_GAMMA=n`: its monitors have colour ramps of n steps
+        // for a program to set (wlsunset), and what it sets is said, with the
+        // last step of each ramp: the brightest red, green and blue.
+        if let Some(n) = std::env::var("PLEAMAR_HEADLESS_GAMMA").ok().and_then(|v| v.parse::<u32>().ok()).filter(|n| *n > 0) {
+            crate::layers::set_gamma_sizes(vec![n; count]);
+            let (tx, rx) = channel::channel::<(usize, Option<Vec<u16>>)>();
+            crate::layers::set_gamma_sink(tx);
+            std::thread::spawn(move || {
+                let Ok(mut lp) = EventLoop::<()>::try_new() else { return };
+                let _ = lp.handle().insert_source(rx, |event, _, _| {
+                    if let channel::Event::Msg((m, ramps)) = event {
+                        match ramps {
+                            Some(r) if r.len() >= 3 => {
+                                let k = r.len() / 3;
+                                println!("headless · HEADLESS-{}: colour ramps set, brightest {} {} {}", m + 1, r[k - 1], r[2 * k - 1], r[3 * k - 1]);
+                            }
+                            _ => println!("headless · HEADLESS-{}: its own colour ramps back", m + 1),
+                        }
+                    }
+                });
+                loop {
+                    let _ = lp.dispatch(None, &mut ());
+                }
+            });
+        }
         let cursor = Arc::new(Mutex::new(Cursor::Normal));
         let mut id = 7000;
         // Which sheets are on each monitor: to take one away, as if unplugged.
