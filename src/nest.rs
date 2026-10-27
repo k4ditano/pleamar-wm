@@ -1968,6 +1968,11 @@ impl State {
                     layers::hide(p.id);
                 }
                 self.panels.clear();
+                // Nor the keyboard and the pointer on one of them: the lock
+                // screen that comes back with the monitors is another surface.
+                self.panel_keyboard = None;
+                self.panel_pointer = None;
+                self.exclusive_keyboard = false;
                 self.outputs_asleep = true;
             }
             return;

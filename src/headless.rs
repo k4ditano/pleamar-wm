@@ -334,6 +334,33 @@ impl pleamar::Platform for Headless {
                 }
             });
         }
+        // `PLEAMAR_HEADLESS_SLEEP=s`: every monitor goes after that long, as a
+        // session sees them when they go dark and their connectors drop, and
+        // all come back `PLEAMAR_HEADLESS_REPLUG` seconds later (3 if not
+        // said). They go on drawing: it is the compositor inside, and its
+        // programs, that see them leave and come back.
+        if let Some(after) = std::env::var("PLEAMAR_HEADLESS_SLEEP").ok().and_then(|v| v.parse::<f32>().ok()) {
+            let screens = screens.clone();
+            let mhz: Vec<i32> = (0..screens.len()).map(&mhz_of).collect();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs_f32(after));
+                // One after another, as a real session's connectors drop.
+                for left in (0..screens.len()).rev() {
+                    crate::layers::register(screens[screens.len() - left..].iter().enumerate().map(|(k, sc)| {
+                        let m = screens.len() - left + k;
+                        (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz[m], scale }, sc.clone())
+                    }).collect());
+                    crate::layers::tell(crate::layers::ToLayers::Monitors);
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                println!("headless · every monitor gone");
+                let back = std::env::var("PLEAMAR_HEADLESS_REPLUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(3.0);
+                std::thread::sleep(Duration::from_secs_f32(back));
+                println!("headless · every monitor back");
+                crate::layers::register(screens.iter().enumerate().map(|(m, sc)| (crate::layers::MonitorInfo { name: format!("HEADLESS-{}", m + 1), size, x: placed(m, unit_w).0, y: placed(m, unit_w).1, mhz: mhz[m], scale }, sc.clone())).collect());
+                crate::layers::tell(crate::layers::ToLayers::Monitors);
+            });
+        }
         // `PLEAMAR_HEADLESS_UNPLUG=s`: the last monitor goes away after that
         // long, as a session sees one unplugged: its surfaces are taken from the
         // render, and the compositor inside is told.
@@ -364,12 +391,6 @@ impl pleamar::Platform for Headless {
                 }
             });
         }
-        // `PLEAMAR_HEADLESS_INPUT="900,40@3000 down@3500 up@3600 key:Escape:1@4000"`:
-        // a mouse and a keyboard, through the same road as the session's
-        // (`route.rs`): to the scene or to a program's surface —a bar, Marea—
-        // as the real ones would go. Points in units of the whole desktop; a
-        // key by its keysym's name and evdev code (it types itself if the name
-        // is one character).
         // `PLEAMAR_HEADLESS_INPUT="900,40@3000 down@3500 up@3600 key:Escape:1@4000"`:
         // a mouse and a keyboard, through the same road as the session's
         // (`route.rs`): to the scene or to a program's surface —a bar, Marea—

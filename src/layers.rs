@@ -741,7 +741,38 @@ pub fn set_locked(yes: bool) {
 
 /// The monitors of the session, left to right.
 pub fn register(monitors: Vec<(MonitorInfo, Screen)>) {
-    *MONITORS.lock().unwrap() = monitors;
+    let left: Vec<Screen> = {
+        let mut all = MONITORS.lock().unwrap();
+        let left = all.iter().filter(|(_, sc)| !monitors.iter().any(|(_, now)| std::sync::Arc::ptr_eq(sc, now))).map(|(_, sc)| sc.clone()).collect();
+        *all = monitors;
+        left
+    };
+    // A monitor that leaves takes the programs' surfaces on it with it: they
+    // are told they are closed, and `hide` no longer finds them there. A
+    // monitor that comes back as the same one (a headless session's) came
+    // back with them still on it: a lock screen from before the monitors
+    // slept took the keys meant for the new one (#38).
+    let mut unread = Vec::new();
+    for sc in left {
+        let (lock, cv) = &*sc;
+        let mut st = lock.lock().unwrap();
+        for old in std::mem::take(&mut st.clients) {
+            GENERATIONS.lock().unwrap().remove(&old.id);
+            READ.lock().unwrap().remove(&old.id);
+            for p in old.pieces {
+                if let (Some(PieceContent::Dmabuf(_)), Some(b)) = (&p.content, p.buffer) {
+                    if !st.held.contains(&b) {
+                        unread.push(b);
+                    }
+                }
+            }
+        }
+        st.dirty = true;
+        cv.notify_all();
+    }
+    if !unread.is_empty() {
+        tell(ToLayers::Released(unread));
+    }
 }
 
 /// One monitor moved on the desktop, the rest as they are (a headless
