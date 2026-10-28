@@ -214,11 +214,15 @@ fn delegate_by_mail(h: &Here, to: &str, title: &str, rest: &[String]) -> Result<
         return Err("delegate NAME TASK [--wait] [--timeout S]".into());
     }
     let me = h.info.get("name").cloned().unwrap_or_default();
+    // As OpenBot's agents: an agent never waits for a teammate (`--wait` is
+    // not for them): it ends its turn, and the answer comes in a later one, as
+    // a letter in its own mailbox. Only a shell, with nowhere for an answer to
+    // come, waits for it here. `--no-reply`: information, not a request.
     let caller_agent = h.info.get("agent").is_some_and(|a| !a.is_empty());
-    let waits = rest.iter().any(|a| a == "--wait") || !caller_agent;
-    // (Not waited for here: the messenger that hands it types its answer back into this terminal.)
+    let info_only = rest.iter().any(|a| a == "--no-reply");
+    let waits = !caller_agent && !info_only;
     let mut post = vec![to.to_owned(), task, "--from".to_owned(), me];
-    if waits {
+    if waits || info_only {
         post.push("--no-reply".to_owned());
     }
     let said = crate::mail::post(&post)?;
@@ -230,7 +234,10 @@ fn delegate_by_mail(h: &Here, to: &str, title: &str, rest: &[String]) -> Result<
             None => Err(format!("{title} has not answered in {timeout} s. It goes on: its answer stays in its mailbox (`pleamar-wm link mail {to}`).")),
         };
     }
-    Ok(format!("Your task is in {title}'s mailbox (letter {id}): {title} gets it as soon as it is free —if it is not started, the desktop starts it— and its answer will be typed into this terminal when it comes."))
+    if info_only {
+        return Ok(format!("Told {title} (letter {id}, no answer asked)."));
+    }
+    Ok(format!("Your request is in {title}'s mailbox (letter {id}): {title} gets it as soon as it is free (if it is not started, the desktop starts it). End your turn now —say what you asked and that the answer will follow—: do not wait for it nor check on it. {title}'s answer comes to you as a new message, and you carry on with it then."))
 }
 
 /// The letter `id` of `to`'s mailbox, once answered (or ended otherwise).
@@ -932,7 +939,7 @@ fn words(args: &[String]) -> String {
         }
         match a.as_str() {
             "--timeout" | "--lines" => skip = true,
-            "--enter" | "--wait" => {}
+            "--enter" | "--wait" | "--no-reply" => {}
             _ => out.push(a.as_str()),
         }
     }
@@ -1965,7 +1972,11 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
     HANDED_AT.with(|c| c.set(now_ms()));
     let _ = std::fs::write(format!("{}/{id}.handed", crate::term::socket_dir()), HANDED_AT.with(|c| c.get()).to_string());
     let _ = std::fs::write(format!("{}/{id}.handed-answers", crate::term::socket_dir()), HANDED.with(|c| c.get()).unwrap_or(0).to_string());
-    let head = format!("[a task from {from}, through the mailbox] It is in the pasted text: do it, and end with your answer.");
+    let head = if letter["reply_to"].is_u64() {
+        format!("[the answer of {from} to what you asked it, through the mailbox] It is in the pasted text: carry on with what you asked it for, and end with your answer.")
+    } else {
+        format!("[a task from {from}, through the mailbox] It is in the pasted text: do it, and end with your answer.")
+    };
     let shown = read(id, 60);
     let mut took = false;
     for _ in 0..3 {
@@ -2032,15 +2043,24 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
         }
     })?;
     say(&[format!("fact mail.seq {}", crate::mail::seq())]);
-    // From another named terminal (a companion, however it posted it): its
-    // answer, typed back into it. Not to one waiting for it itself
-    // (`--no-reply`), nor to a routine or a table (no terminal has that name).
-    let sender = letter["from"].as_str().unwrap_or("");
-    if !sender.is_empty() && letter["noreply"] != true && sender != name {
-        if let Some((back, _)) = crate::term::layers().into_iter().find(|(_, i)| i.get("name").map(String::as_str) == Some(sender)) {
+    // From another companion (a named terminal or mailbox, however it posted
+    // it), and not itself an answer nor marked `--no-reply`: its answer, as a
+    // letter in that one's mailbox, from this one —it takes it in a turn of its
+    // own, when it is free, as OpenBot's agents take their teammates' replies;
+    // and its person sees it in that conversation—. Not to a routine or a
+    // table: no mailbox has those names.
+    let sender = letter["from"].as_str().unwrap_or("").to_owned();
+    if !sender.is_empty() && letter["noreply"] != true && sender != name && crate::mail::valid(&sender).is_ok() {
+        let known = crate::mail::all().iter().any(|b| b["name"].as_str() == Some(sender.as_str())) || crate::term::layers().iter().any(|(_, i)| i.get("name").map(String::as_str) == Some(sender.as_str()));
+        if known {
             let title = crate::mail::all().iter().find(|b| b["name"].as_str() == Some(name.as_str())).and_then(|b| b["card"]["title"].as_str().filter(|t| !t.is_empty()).map(str::to_owned)).unwrap_or_else(|| name.clone());
+            let asked: String = task.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
             let done = serde_json::json!({ "how": how, "answer": answer });
-            let _ = tell(back, &format!("[{title}'s answer to the letter you sent it, through its mailbox] It is in the pasted text."), &mail_answer_text(&title, &done));
+            let text = format!("{title}'s answer to «{asked}»:\n\n{}", mail_answer_text(&title, &done));
+            let id = letter["id"].as_u64().unwrap_or(0).to_string();
+            if let Err(e) = crate::mail::post(&[sender.clone(), text, "--from".into(), name.clone(), "--reply-to".into(), id]) {
+                eprintln!("link · the answer for {sender} was not posted: {e}");
+            }
         }
     }
     Ok(String::new())

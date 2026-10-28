@@ -112,11 +112,18 @@ pub(crate) fn post(args: &[String]) -> Result<String, String> {
     let mut from = String::new();
     let mut words = Vec::new();
     let mut noreply = false;
+    let mut reply_to: Option<u64> = None;
     let mut k = 0;
     while k < args.len() {
         if args[k] == "--no-reply" {
             noreply = true;
             k += 1;
+            continue;
+        }
+        if args[k] == "--reply-to" {
+            reply_to = args.get(k + 1).and_then(|v| v.parse::<u64>().ok());
+            noreply = true;
+            k += 2;
             continue;
         }
         if args[k] == "--from" {
@@ -142,6 +149,9 @@ pub(crate) fn post(args: &[String]) -> Result<String, String> {
             let mut l = json!({"id": id, "from": from, "text": text, "at": now_ms()});
             if noreply {
                 l["noreply"] = json!(true);
+            }
+            if let Some(r) = reply_to {
+                l["reply_to"] = json!(r);
             }
             w.push(l);
         }
@@ -330,11 +340,12 @@ pub(crate) fn keep_done(b: &mut Value, l: Value) {
     }
 }
 
-pub(crate) const USAGE: &str = "pleamar-wm link post NAME TEXT… [--from WHO] [--no-reply]
+pub(crate) const USAGE: &str = "pleamar-wm link post NAME TEXT… [--from WHO] [--no-reply] [--reply-to ID]
                                   a letter for the agent in the terminal named NAME (`link open
                                   --name`): handed to it when it is free, after those before it;
-                                  from a named terminal, its answer is typed back into it (not
-                                  with --no-reply)
+                                  from a named terminal, its answer comes back to that one's
+                                  mailbox as a letter of its own (not with --no-reply, nor for an
+                                  answer: --reply-to, which says to which of its letters)
 pleamar-wm link mail [NAME] [--json]
                                   the mailboxes: what waits, what each is at, its last answers
 pleamar-wm link mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID

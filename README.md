@@ -87,11 +87,14 @@ the open windows without closing anything.
   `--resume`, `--first ID` and `--cancel ID` change the order. Mailboxes are
   kept across sessions (`$XDG_STATE_HOME/pleamar-wm/mail`), and the scene's
   `mail.seq` changes whenever one does.
-  Named terminals are a team: an agent in one hands a task to another **by
-  name, with no wire** (`link_delegate`, `pleamar-wm link delegate NAME …`),
-  through its mailbox, and gets its answer back as a wired one's; `link
-  whoami` and `link list` name them. A terminal with no name has only its
-  wires.
+  Named terminals are a team, and work as OpenBot's agents do: an agent in
+  one asks another **by name, with no wire** (`link_delegate`, `pleamar-wm
+  link delegate NAME …`) through its mailbox, says so and ends its turn —it
+  never waits—; the answer comes back as a letter in its own mailbox
+  (`--reply-to`: an answer asks for none), which it takes in a later turn and
+  its person sees in that conversation. `expects_reply` false (`--no-reply`)
+  for a heads-up. `link whoami` and `link list` name the team. A terminal with
+  no name has only its wires.
 - **A gate for what agents ask to do**: `pleamar-wm gate setup` puts it in
   Claude Code and Codex (their `PermissionRequest` hook) and opencode (a
   plugin). What an agent would ask its person then stops for real until it is
