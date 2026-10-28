@@ -121,7 +121,9 @@ the open windows without closing anything.
   every few seconds, nothing while hidden. The desktop page keeps a
   «Caravan» panel too. A page that is only watching sees it all but does
   nothing; `pleamar-wm link caravan` gives the same from a shell
-  ([docs/phone.md](docs/phone.md)).
+  ([docs/phone.md](docs/phone.md)). And **notices to the phone** when one
+  needs you (Web Push, encrypted for that phone; by default only when you
+  are away from the computer).
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

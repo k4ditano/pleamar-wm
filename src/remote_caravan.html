@@ -131,6 +131,25 @@
   #toast.show { opacity: 1; transform: translateX(-50%); }
   #offline { display: none; position: fixed; top: calc(8px + var(--safe-t)); left: 50%; transform: translateX(-50%); z-index: 6; background: var(--raise); border: 1px solid var(--line); color: var(--amber); font-size: 12.5px; padding: 5px 12px; border-radius: 999px; }
   body.offline #offline { display: block; }
+  /* Notices: the bell, and its sheet from the bottom. */
+  .bell { width: 36px; height: 36px; padding: 0; display: grid; place-items: center; position: relative; }
+  .bell svg { width: 18px; height: 18px; }
+  .bell.on::after { content: ""; position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 4px; background: var(--sea); border: 2px solid var(--panel); }
+  #scrim { position: fixed; inset: 0; background: #0009; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 7; }
+  #scrim.show { opacity: 1; pointer-events: auto; }
+  #sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--panel); border-top: 1px solid var(--line); border-radius: 22px 22px 0 0; padding: 10px 20px calc(22px + var(--safe-b)); transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.8,.2,1); max-width: 560px; margin: 0 auto; }
+  #sheet.show { transform: none; }
+  #sheet .grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 14px; }
+  #sheet h3 { margin: 0 0 6px; font: 500 24px/1.15 var(--serif); }
+  #sheet p { margin: 0 0 14px; color: var(--faint); font-size: 14px; }
+  .switch { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  .switch span { flex: 1; } .switch small { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+  .switch input { appearance: none; width: 46px; height: 28px; border-radius: 14px; background: var(--raise); border: 1px solid var(--line); position: relative; flex: none; transition: background .2s; margin: 0; }
+  .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 10px; background: var(--faint); transition: transform .2s, background .2s; }
+  .switch input:checked { background: var(--sea); border-color: var(--sea); }
+  .switch input:checked::after { transform: translateX(18px); background: var(--sea-ink); }
+  .switch input:focus-visible { outline: 2px solid var(--sea); outline-offset: 2px; }
+  #sheet .row-btns { margin-top: 16px; }
   @media (min-width: 760px) {
     .scroll, #talk footer > * { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
     #talk .seg { max-width: 648px; margin-left: auto; margin-right: auto; }
@@ -144,6 +163,7 @@
 <section id="home" class="view">
   <header>
     <h1><span data-t="Caravan">Caravan</span><span class="host" id="host"></span></h1>
+    <button class="pill-btn bell" id="bell" aria-label="Notices" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button>
     <a class="pill-btn" href="/?desk" id="to-desk" data-t="Desktop">Desktop</a>
     <form method="post" action="/logout" style="margin:0"><button class="pill-btn" data-t="Sign out">Sign out</button></form>
   </header>
@@ -178,6 +198,22 @@
     </div>
   </footer>
 </section>
+<div id="scrim"></div>
+<section id="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-title" aria-hidden="true">
+  <div class="grip"></div>
+  <h3 id="sh-title" data-t="Notices">Notices</h3>
+  <p id="sh-text"></p>
+  <div id="sh-on" hidden>
+    <label class="switch"><span><span data-t="Only when I am not at the computer">Only when I am not at the computer</span><small data-t="Two minutes without touching it. What needed you meanwhile comes when you leave.">Two minutes without touching it. What needed you meanwhile comes when you leave.</small></span><input type="checkbox" role="switch" id="sw-away" checked></label>
+    <label class="switch"><span><span data-t="Also when one finishes">Also when one finishes</span><small data-t="Not only when they need you: when they answer a letter too.">Not only when they need you: when they answer a letter too.</small></span><input type="checkbox" role="switch" id="sw-done"></label>
+  </div>
+  <div class="row-btns">
+    <button class="btn" id="sh-close" data-t="Close">Close</button>
+    <button class="btn" id="sh-test" hidden data-t="Try it">Try it</button>
+    <button class="btn no" id="sh-off" hidden data-t="Turn off">Turn off</button>
+    <button class="btn go" id="sh-go" hidden data-t="Turn notices on">Turn notices on</button>
+  </div>
+</section>
 <div id="toast"></div>
 
 <script>
@@ -203,6 +239,17 @@
     'It took too long': 'Tardó demasiado', 'Its terminal closed': 'Se cerró su terminal', 'Lost when the session ended': 'Se perdió al cerrarse la sesión', 'It did not take the letter': 'No cogió la carta', 'from %s': 'de %s', 'Today': 'Hoy', 'Yesterday': 'Ayer', 'waits %d': '%d esperan',
     'routine': 'rutina', 'table': 'mesa', 'Removed': 'Quitada', 'It goes first': 'Va la primera', 'Held: nothing more is handed to it': 'Retenido: no le llega nada más', 'It goes on': 'Sigue',
     'What do you open?': '¿Qué abres?',
+    'Notices': 'Avisos', 'Close': 'Cerrar', 'Try it': 'Probar', 'Turn off': 'Desactivar', 'Turn notices on': 'Activar avisos',
+    'Only when I am not at the computer': 'Solo cuando no estoy en el ordenador',
+    'Two minutes without touching it. What needed you meanwhile comes when you leave.': 'Dos minutos sin tocarlo. Lo que te necesitó mientras tanto te llega al irte.',
+    'Also when one finishes': 'También cuando alguien termina',
+    'Not only when they need you: when they answer a letter too.': 'No solo cuando te necesitan: también cuando contestan una carta.',
+    'On this phone, a notice when a companion needs you: what waits for your permission, and what one asks you.': 'En este móvil, un aviso cuando un compañero te necesite: lo que espera tu permiso y lo que te pregunta.',
+    'Notices are on on this phone.': 'Los avisos están activados en este móvil.',
+    'This browser cannot get notices.': 'Este navegador no puede recibir avisos.',
+    'On an iPhone, notices come to the page on the home screen: Share › Add to Home Screen, and open it from there.': 'En el iPhone, los avisos llegan a la página de la pantalla de inicio: Compartir › Añadir a pantalla de inicio, y ábrela desde allí.',
+    'Notices are blocked for this page: allow them in the browser\'s settings for the site.': 'Los avisos están bloqueados para esta página: permítelos en los ajustes del sitio en el navegador.',
+    'Notices on': 'Avisos activados', 'Notices off': 'Avisos desactivados', 'Sent: it should be here in a moment': 'Enviado: te llegará en un momento',
     'Waiting for you to allow it': 'Te espera para seguir', 'Its answer': 'Su respuesta', 'nothing yet': 'nada aún',
   };
   const t = (s, ...a) => { let o = (ES && T[s]) || s; for (const x of a) o = o.replace(/%[sd]/, x); return o; };
@@ -472,6 +519,73 @@
     if (ok) { box.value = ''; fit(); drawChat.first = true; loadTalk(); } else send.disabled = false;
   }
   send.onclick = go;
+
+  // ---- Notices to this phone (Web Push): its service worker shows them; the server sends them encrypted for it.
+  const PUSH = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const IOS = /iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  const STANDALONE = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone;
+  let reg = null;
+  if (PUSH) navigator.serviceWorker.register('/sw.js').then(r => { reg = r; pushState(); }).catch(() => {});
+  const keyBytes = k => { const b = atob(k.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - k.length % 4) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  async function pushPost(what) {
+    const r = await fetch('/caravan/push', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(what) });
+    const said = await r.text();
+    if (!r.ok) throw new Error(said);
+    return said;
+  }
+  async function currentSub() { try { return reg ? await reg.pushManager.getSubscription() : null; } catch (_) { return null; } }
+  async function pushState() {
+    const sub = await currentSub();
+    let st = { on: false };
+    if (sub) { try { st = JSON.parse(await pushPost({ do: 'state', endpoint: sub.endpoint })); } catch (_) {} }
+    $('bell').classList.toggle('on', !!st.on);
+    $('sh-on').hidden = !st.on; $('sh-test').hidden = !st.on; $('sh-off').hidden = !st.on;
+    if (st.on) { $('sw-away').checked = st.away_only !== false; $('sw-done').checked = !!st.finished; }
+    let text, canOn = false;
+    if (!PUSH) text = IOS && !STANDALONE ? t('On an iPhone, notices come to the page on the home screen: Share › Add to Home Screen, and open it from there.') : t('This browser cannot get notices.');
+    else if (Notification.permission === 'denied') text = t("Notices are blocked for this page: allow them in the browser's settings for the site.");
+    else if (st.on) text = t('Notices are on on this phone.');
+    else { text = t('On this phone, a notice when a companion needs you: what waits for your permission, and what one asks you.'); canOn = true; }
+    $('sh-text').textContent = text;
+    $('sh-go').hidden = !canOn;
+    return st;
+  }
+  function sheet(show) {
+    $('sheet').classList.toggle('show', show); $('scrim').classList.toggle('show', show);
+    $('sheet').setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (show) { pushState(); setTimeout(() => ($('sh-go').hidden ? $('sh-close') : $('sh-go')).focus(), 250); } else $('bell').focus();
+  }
+  $('bell').setAttribute('aria-label', t('Notices'));
+  $('bell').onclick = () => sheet(true);
+  $('sh-close').onclick = $('scrim').onclick = () => sheet(false);
+  addEventListener('keydown', e => { if (e.key === 'Escape' && $('sheet').classList.contains('show')) sheet(false); });
+  $('sh-go').onclick = async () => {
+    $('sh-go').disabled = true;
+    try {
+      if ((await Notification.requestPermission()) !== 'granted') { await pushState(); return; }
+      reg = reg || await navigator.serviceWorker.ready;
+      const key = await (await fetch('/caravan/push/key', { credentials: 'same-origin' })).text();
+      const sub = (await currentSub()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key.trim()) });
+      await pushPost({ do: 'subscribe', sub: sub.toJSON(), away_only: true, finished: false, lang: ES ? 'es' : 'en' });
+      toast(t('Notices on'));
+    } catch (e) { toast(String(e.message || e)); }
+    $('sh-go').disabled = false;
+    pushState();
+  };
+  const setting = async () => {
+    const sub = await currentSub(); if (!sub) return;
+    try { await pushPost({ do: 'settings', endpoint: sub.endpoint, away_only: $('sw-away').checked, finished: $('sw-done').checked }); } catch (e) { toast(String(e.message || e)); }
+  };
+  $('sw-away').onchange = $('sw-done').onchange = setting;
+  $('sh-test').onclick = async () => {
+    const sub = await currentSub(); if (!sub) return;
+    try { await pushPost({ do: 'test', endpoint: sub.endpoint }); toast(t('Sent: it should be here in a moment')); } catch (e) { toast(String(e.message || e)); pushState(); }
+  };
+  $('sh-off').onclick = async () => {
+    const sub = await currentSub();
+    if (sub) { try { await pushPost({ do: 'unsubscribe', endpoint: sub.endpoint }); } catch (_) {} try { await sub.unsubscribe(); } catch (_) {} }
+    toast(t('Notices off')); pushState();
+  };
 
   // ---- Keeping up: every few seconds while in sight, nothing while hidden.
   async function refresh() {

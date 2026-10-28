@@ -505,6 +505,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
         .insert_source(fingers_rx, |event, _, state: &mut State| {
             if let smithay::reexports::calloop::channel::Event::Msg(f) = event {
                 state.last_input = std::time::Instant::now();
+                person_seen();
                 state.route.fingers(f);
             }
         })
@@ -1698,6 +1699,7 @@ impl State {
     /// (not more than a few times a second).
     fn touched(&mut self) {
         self.last_input = std::time::Instant::now();
+        person_seen();
         // Dark for lack of input: any input lights them again.
         if self.dark_for_idle {
             self.dark_for_idle = false;
@@ -1795,6 +1797,23 @@ impl State {
             }
         }
     }
+}
+
+/// The person is here: `person-seen` says when (seconds since 1970), at most
+/// every ten seconds, for whoever wants to know if they are away (the remote's
+/// notices to the phone, push.rs).
+fn person_seen() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static WRITTEN: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if now.saturating_sub(WRITTEN.load(Ordering::Relaxed)) < 10 {
+        return;
+    }
+    WRITTEN.store(now, Ordering::Relaxed);
+    let run = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/tmp".into());
+    let dir = format!("{run}/pleamar");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(format!("{dir}/person-seen"), now.to_string());
 }
 
 /// A mouse or a touchpad as the configuration says: its acceleration and

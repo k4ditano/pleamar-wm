@@ -203,7 +203,9 @@ impl Gate {
     }
 
     fn sign_out(&mut self, token: &str) {
-        self.sessions.remove(&hex(&sha2::Sha256::digest(token.as_bytes())));
+        let session = hex(&sha2::Sha256::digest(token.as_bytes()));
+        crate::push::forget_session(&session);
+        self.sessions.remove(&session);
         self.save();
     }
 
@@ -314,6 +316,9 @@ fn serve(view_only: bool) -> Result<(), String> {
     std::thread::spawn(move || keep_phone(keeper));
     let watcher = gate.clone();
     std::thread::spawn(move || watch_binary(watcher));
+    // Notices to the phone: who needs the person, every few seconds.
+    let pushing = gate.clone();
+    std::thread::spawn(move || crate::push::watch(move |s| pushing.lock().unwrap().sessions.contains_key(s)));
     let hands = Arc::new(Mutex::new(None::<Hands>));
     let mut tries = 0;
     let listener = loop {
@@ -387,7 +392,7 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
 
 fn respond(stream: &mut TcpStream, status: &str, kind: &str, extra: &str, body: &[u8]) -> Result<(), String> {
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; frame-ancestors 'none'\r\n{extra}Connection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'\r\n{extra}Connection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|e| e.to_string())
@@ -431,6 +436,7 @@ fn relay_of(address: &str) -> Option<&'static str> {
 }
 
 const CARAVAN: &str = include_str!("remote_caravan.html");
+const SW: &str = include_str!("remote_sw.js");
 
 fn caravan_page(view_only: bool) -> String {
     CARAVAN.replace("{{WATCH}}", if view_only { "true" } else { "false" })
@@ -573,6 +579,35 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             };
             respond(&mut stream, "200 OK", "application/json; charset=utf-8", "", body.as_bytes())
         }
+        // Notices to the phone (push.rs): the key to subscribe with, and what
+        // the page asks —subscribe, change, a test, unsubscribe—. A page that
+        // only watches may have them too: they do nothing.
+        ("GET", "/caravan/push/key") => {
+            if !signed_in {
+                return respond(&mut stream, "401 Unauthorized", "text/plain", "", b"sign in first");
+            }
+            match crate::push::public_key() {
+                Ok(k) => respond(&mut stream, "200 OK", "text/plain", "", k.as_bytes()),
+                Err(e) => respond(&mut stream, "500 Internal Server Error", "text/plain", "", e.as_bytes()),
+            }
+        }
+        ("POST", "/caravan/push") => {
+            let host = req.headers.get("host").cloned().unwrap_or_default();
+            let origin = req.headers.get("origin").cloned().unwrap_or_default();
+            if !signed_in {
+                return respond(&mut stream, "401 Unauthorized", "text/plain", "", b"sign in first");
+            }
+            if origin != format!("https://{host}") && origin != format!("http://{host}") {
+                return respond(&mut stream, "403 Forbidden", "text/plain", "", b"wrong origin");
+            }
+            let session = session_of(token.as_deref().unwrap_or_default());
+            match crate::push::act(&session, &String::from_utf8_lossy(&req.body)) {
+                Ok(o) => respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "", o.as_bytes()),
+                Err(e) => respond(&mut stream, "409 Conflict", "text/plain; charset=utf-8", "", e.as_bytes()),
+            }
+        }
+        // The page's service worker: it shows the notices and opens the page.
+        ("GET", "/sw.js") => respond(&mut stream, "200 OK", "text/javascript; charset=utf-8", "", SW.as_bytes()),
         ("POST", "/caravan/do") => {
             let host = req.headers.get("host").cloned().unwrap_or_default();
             let origin = req.headers.get("origin").cloned().unwrap_or_default();

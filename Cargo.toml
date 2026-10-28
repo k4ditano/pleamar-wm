@@ -30,6 +30,9 @@ tungstenite = { version = "0.24", default-features = false }
 sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
+# Notices to the phone (Web Push, push.rs): P-256 (ECDH, ECDSA) and AES-128-GCM.
+# Already here through str0m's DTLS.
+openssl = "0.10"
 # …and its direct way: WebRTC (the system's OpenSSL for its encryption).
 str0m = { version = "0.24", default-features = false, features = ["openssl"] }
 # …and its sound, Opus: the system's libopus (not the copy it would build).

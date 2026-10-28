@@ -37,6 +37,20 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   text, the last 80 lines.
 - A page that only watches (`--view-only`) sees all of it and does nothing.
 
+**Notices** (the bell): on that phone, a notice when an agent needs the
+person —what waits at the gate, what one asks on its screen— and, if asked,
+when one answers a letter. Web Push: the page's service worker (`/sw.js`)
+subscribes with this server's key (VAPID, made once, in
+`$XDG_STATE_HOME/pleamar/remote-push-key.pem`), and each notice is encrypted
+for that phone alone (RFC 8291) before it goes to its browser's push service,
+which can read nothing; sent with `curl`. By default only when the person is
+away —two minutes with no input in the session, which writes
+`$XDG_RUNTIME_DIR/pleamar/person-seen`—, and what needed them while they were
+there and still does is said when they leave. Each need is said once; what
+was there when the server started is not news. A sign-in that ends takes its
+phones' notices with it, and one the push service no longer knows (404, 410)
+is dropped. On an iPhone they come to the page added to the home screen.
+
 `/caravan/state`, `/caravan/talk?name=`, `/caravan/screen?name=` and `POST
 /caravan/do` are what it uses, behind the same sign-in; `pleamar-wm link
 caravan all | talk NAME | screen NAME | do JSON` gives the same from a shell.
