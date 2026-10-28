@@ -4570,6 +4570,11 @@ scene Session {
     // ── the mailboxes of the named terminals (pleamar-wm's mail.rs): a
     // number that changes whenever one does (`link mail --json` reads them) ──
     fact mail.seq = 0
+    // ── the gate (pleamar-wm's gate.rs): a number that changes when a request
+    // comes or goes (`gate list --json` reads them), and whether a shell
+    // answers them (it says so itself); with none, agents ask on their screen ──
+    fact gate.seq = 0
+    fact gate.listen = 0
 
     // ── the canvas kept from the last session (pleamar-wm's keep.rs):
     // offered on the first monitor until brought back or let go ──

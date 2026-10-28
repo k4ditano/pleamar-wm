@@ -87,6 +87,17 @@ the open windows without closing anything.
   `--resume`, `--first ID` and `--cancel ID` change the order. Mailboxes are
   kept across sessions (`$XDG_STATE_HOME/pleamar-wm/mail`), and the scene's
   `mail.seq` changes whenever one does.
+- **A gate for what agents ask to do**: `pleamar-wm gate setup` puts it in
+  Claude Code and Codex (their `PermissionRequest` hook) and opencode (a
+  plugin). What an agent would ask its person then stops for real until it is
+  decided: by the person's rules (`gate.rules` beside the session's
+  configuration, `deny|allow WHO TOOL WHAT` a line, denials first; a broken
+  line denies everything), or by the person from their shell (`gate list
+  --json`, `gate answer ID allow|deny`). A shell that answers says so in the
+  scene (`gate.listen`); with none, or no answer in 90 s, or outside a
+  session, the agent asks on its own screen as ever. Every decision is written
+  down before it is told (`gate log`, secrets hidden), and the scene's
+  `gate.seq` changes whenever a request comes or goes.
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

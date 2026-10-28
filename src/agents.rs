@@ -157,7 +157,7 @@ fn find(slot: &str) -> Result<Agent, String> {
 /// (`sk-…`, `ghp_…`, `github_pat_…`, `xoxb-…`, `glpat-…`, `AKIA…`), what follows
 /// `Bearer`, `password=`, `token=`, `secret=`, `--password`, and any run of 32
 /// or more letters and digits (a key, a hash).
-fn redact(text: &str) -> String {
+pub(crate) fn redact(text: &str) -> String {
     const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "github_pat_", "xoxb-", "xoxp-", "glpat-"];
     const AFTER: [&str; 6] = ["bearer", "password=", "passwd=", "token=", "secret=", "--password"];
     let words: Vec<&str> = text.split(' ').collect();

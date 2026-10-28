@@ -35,6 +35,7 @@ mod mcp;
 mod mcp_serve;
 mod keep;
 mod mail;
+mod gate;
 mod output;
 
 fn main() {
@@ -74,6 +75,10 @@ fn main() {
     // `pleamar-wm link …`: an agent in a terminal and the windows wired to its own (see link.rs).
     if args.first().map(String::as_str) == Some("link") {
         std::process::exit(link::run(&args[1..]));
+    }
+    // `pleamar-wm gate …`: what agents ask to do, decided by the person's rules or by the person (see gate.rs).
+    if args.first().map(String::as_str) == Some("gate") {
+        std::process::exit(gate::run(&args[1..]));
     }
     // `pleamar-wm agents …`: the session's agents and what they ask, for the person's shell (see agents.rs).
     if args.first().map(String::as_str) == Some("agents") {
