@@ -36,6 +36,7 @@ mod mcp_serve;
 mod keep;
 mod mail;
 mod gate;
+mod hands;
 mod output;
 
 fn main() {

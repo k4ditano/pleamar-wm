@@ -120,6 +120,13 @@ fn go(args: &[String]) -> R {
         }
         "done" => Hands::open()?.act("x")?,
         "stop" => Hands::open()?.act("s")?,
+        // The person's: the window the hands were last in is theirs now, and back.
+        "take" => Hands::open()?.act("Y")?,
+        "give-back" => Hands::open()?.act("G")?,
+        "steps" => {
+            let n = rest.iter().find_map(|a| a.parse().ok()).unwrap_or(20);
+            println!("{}", crate::hands::steps(n, rest.iter().any(|a| a == "--json")));
+        }
         "pace" => match rest.first() {
             None => println!("{}", Hands::open()?.pace.name()),
             Some(p) => {

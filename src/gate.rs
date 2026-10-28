@@ -157,6 +157,30 @@ fn by_rules(rules: &[Rule], a: &Ask) -> Option<(bool, String)> {
     None
 }
 
+/// Whether the hands of `name` (at a routine's letter: `routine`) may touch
+/// `what` (hands.rs): `Ok(None)` free, `Ok(Some(rule))` allowed by it,
+/// `Err(why)` refused. Only rules whose TOOL is `hands`: a `deny` that fits
+/// refuses, an `allow` that fits lets; one with any `allow` about its hands is
+/// fenced in to those. A broken rules file refuses all.
+pub(crate) fn hands(name: &str, routine: &str, what: &str) -> Result<Option<String>, String> {
+    hands_by(&rules().map_err(|e| format!("broken rules: {e}"))?, name, routine, what)
+}
+
+fn hands_by(rules: &[Rule], name: &str, routine: &str, what: &str) -> Result<Option<String>, String> {
+    let theirs = |r: &&Rule| r.tool == "hands" && (r.who == "*" || (!name.is_empty() && r.who == name.to_lowercase()) || (r.who == "routine" && !routine.is_empty()));
+    let fits = |r: &&Rule| glob(&r.what.to_lowercase(), what);
+    if let Some(r) = rules.iter().filter(theirs).find(|r| !r.allow && fits(r)) {
+        return Err(format!("rule on line {}", r.line));
+    }
+    if let Some(r) = rules.iter().filter(theirs).find(|r| r.allow && fits(r)) {
+        return Ok(Some(format!("rule on line {}", r.line)));
+    }
+    if rules.iter().filter(theirs).any(|r| r.allow) {
+        return Err("no rule lets its hands there".into());
+    }
+    Ok(None)
+}
+
 /// The window of the terminal the hook runs in (its layer, `PLEAMAR_TERMINAL`).
 fn slot_here() -> i64 {
     let Some(layer) = std::env::var("PLEAMAR_TERMINAL").ok().and_then(|v| v.parse::<i32>().ok()) else { return -1 };
@@ -517,6 +541,12 @@ const RULES_TEMPLATE: &str = "# The gate's rules (pleamar-wm gate): one a line, 
 # deny  *       Bash  git push*
 # allow claude  Bash  git status*
 # allow Prohard Edit  ~/Proyectos/calima/*
+#
+# Hands (`pleamar-wm agent`: clicks, keys, presses): TOOL `hands`, WHAT the window's program and title
+# in lower case (`panel` for a panel, `open COMMAND` for a program it opens). Naming where one may go
+# fences it in; one with no hands rule is as free as ever.
+# allow General hands zen*factorial*
+# deny  *       hands *aitems*
 ";
 
 /// `gate rules [--init]`: where the rules are; `--init` writes a first one
@@ -620,6 +650,19 @@ mod tests {
         assert!(by_rules(&rules, &a).is_none());
         let r = Ask { routine: "Factorial".into(), ..a.clone() };
         assert_eq!(by_rules(&rules, &r).map(|d| d.0), Some(true));
+    }
+
+    #[test]
+    fn hands_are_fenced_in_only_where_named() {
+        let r = |allow, who: &str, what: &str, line| Rule { allow, who: who.into(), tool: "hands".into(), what: what.into(), line };
+        let rules = [r(true, "general", "zen*factorial*", 1), r(false, "*", "*aitems*", 2), r(true, "routine", "zen*", 3)];
+        assert_eq!(hands_by(&rules, "General", "", "zen control horario - factorial"), Ok(Some("rule on line 1".into())));
+        assert!(hands_by(&rules, "General", "", "discord general").is_err());
+        assert_eq!(hands_by(&rules, "Prohard", "", "discord general"), Ok(None));
+        assert_eq!(hands_by(&rules, "Prohard", "", "alacritty aitems"), Err("rule on line 2".into()));
+        // At a routine's letter, the routine's fence too.
+        assert!(hands_by(&rules, "Prohard", "Factorial", "discord general").is_err());
+        assert!(hands_by(&rules, "Prohard", "Factorial", "zen inicio").is_ok());
     }
 
     #[test]

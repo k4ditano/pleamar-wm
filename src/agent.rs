@@ -154,6 +154,12 @@ pub struct Agent {
     /// it when it opens the socket.
     pace: crate::config::Pace,
     pub path: String,
+    /// The window an agent's hands last did something in, when, and who
+    /// (hands.rs): the person touching it takes it over.
+    hand: Option<(usize, Instant, String)>,
+    /// A window the person took over from the agent working in it, and from
+    /// whom: its hands are refused there until it is given back (`G`).
+    taken: Option<(usize, String)>,
 }
 
 /// A command whose answer comes later than its line.
@@ -196,6 +202,9 @@ struct Conn {
     writing: bool,
     /// Over: the agent went, or let too much go unread.
     closed: bool,
+    /// Whose hands these are: the name of the terminal its process runs in
+    /// (hands.rs), or none.
+    who: String,
 }
 
 /// What may wait unread down a connection before it is closed.
@@ -203,7 +212,7 @@ const UNREAD: usize = 16 << 20;
 
 impl Conn {
     fn new(stream: UnixStream) -> Conn {
-        Conn { stream, buffer: Vec::new(), hello: false, waiting: false, out: Vec::new(), writing: false, closed: false }
+        Conn { stream, buffer: Vec::new(), hello: false, waiting: false, out: Vec::new(), writing: false, closed: false, who: String::new() }
     }
 
     /// Bytes after the ones before them, written what the socket takes now.
@@ -440,7 +449,7 @@ pub fn start(state: &mut State) {
                 a.peer = pid;
             }
             let _ = stream.set_nonblocking(true);
-            state.agent_connection(stream);
+            state.agent_connection(stream, crate::hands::who_of(pid));
         }
         Ok(PostAction::Continue)
     });
@@ -449,7 +458,7 @@ pub fn start(state: &mut State) {
         return;
     }
     println!("agent · computer use: cua-inject v1 at {path}");
-    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace });
+    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace, hand: None, taken: None });
     // Whether it is at work, looked at every second: between one action and
     // the next an agent thinks, and that is still working.
     let timer = Timer::from_duration(Duration::from_secs(1));
@@ -460,9 +469,11 @@ pub fn start(state: &mut State) {
 }
 
 impl State {
-    fn agent_connection(&mut self, stream: UnixStream) {
+    fn agent_connection(&mut self, stream: UnixStream, who: String) {
         let Ok(reading) = stream.try_clone() else { return };
-        let conn = std::rc::Rc::new(std::cell::RefCell::new(Conn::new(stream)));
+        let mut c = Conn::new(stream);
+        c.who = who;
+        let conn = std::rc::Rc::new(std::cell::RefCell::new(c));
         let source = Generic::new(reading, Interest::READ, Mode::Level);
         let _ = self.handle.insert_source(source, move |_, stream, state: &mut State| {
             let stream: &mut UnixStream = unsafe { stream.get_mut() };
@@ -524,7 +535,8 @@ impl State {
                     return false;
                 }
             } else {
-                self.agent_command(&line)
+                let who = conn.borrow().who.clone();
+                self.agent_command(&line, &who)
             };
             if let Some(mut pending) = self.agent.as_mut().and_then(|a| a.pending.take()) {
                 conn.borrow_mut().waiting = true;
@@ -590,8 +602,27 @@ impl State {
         }
     }
 
-    /// One command, answered once it has been delivered.
-    fn agent_command(&mut self, line: &str) -> String {
+    /// One command, answered once it has been delivered: through the
+    /// person's rules first when it touches something (hands.rs), and written
+    /// down once done.
+    fn agent_command(&mut self, line: &str, who: &str) -> String {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        let touch = self.hand_touch(&w);
+        if let Some(t) = &touch {
+            if let Err(refused) = self.hand_check(t, who) {
+                return refused;
+            }
+        }
+        let reply = self.agent_command_now(line);
+        if let Some(t) = touch {
+            if reply.is_empty() || reply.starts_with("ok") {
+                self.hand_done(t, who);
+            }
+        }
+        reply
+    }
+
+    fn agent_command_now(&mut self, line: &str) -> String {
         let w: Vec<&str> = line.split_whitespace().collect();
         let result = match w.as_slice() {
             ["q", pid] => return self.agent_query(pid.parse().unwrap_or(0)),
@@ -634,6 +665,7 @@ impl State {
             ["v", pid, monitor] => self.agent_send(pid, monitor.parse().unwrap_or(usize::MAX)).map(|_| "ok".to_owned()),
             ["x"] => {
                 self.agent_done();
+                self.hand_give_back();
                 let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern("agent.name"), "agent".to_owned()));
                 if let Some(agent) = self.agent.as_mut() {
                     agent.stopped = None;
@@ -725,6 +757,13 @@ impl State {
                 }
                 _ => Err("bad-args"),
             },
+            // The person takes over the window an agent's hands are in (`Y`), and
+            // gives it back (`G`): hands.rs.
+            ["Y"] => self.hand_take(None).map(|_| "ok".to_owned()),
+            ["G"] => {
+                self.hand_give_back();
+                Ok("ok".to_owned())
+            }
             ["s"] => {
                 self.agent_done();
                 if let Some(agent) = self.agent.as_mut() {
@@ -2153,6 +2192,179 @@ impl State {
             self.agent_button(slot, 0, button, false)?;
         }
         Ok(())
+    }
+}
+
+/// What a command touches, for the person's rules and the record (hands.rs).
+struct Touch {
+    slot: Option<usize>,
+    app: String,
+    title: String,
+    did: &'static str,
+    detail: String,
+    picture: bool,
+    element: Option<u32>,
+    what: String,
+}
+
+impl State {
+    /// What that command would touch, if it is one that does.
+    fn hand_touch(&self, w: &[&str]) -> Option<Touch> {
+        let (verb, a) = (*w.first()?, w.get(1..).unwrap_or(&[]));
+        let target = |t: &str| self.agent_target(t).ok();
+        let pick = |p: &str| self.agent_pick(p).ok();
+        let text = |h: &str| String::from_utf8_lossy(&unhex_long(h).unwrap_or_default()).into_owned();
+        let (slot, did, detail, picture, element) = match (verb, a) {
+            ("b", [t, _, button, "1"]) => (target(t), "click", format!("button {button}"), true, None),
+            ("m", [t, ..]) => (target(t), "move", String::new(), false, None),
+            ("a", [t, ..]) => (target(t), "scroll", String::new(), false, None),
+            ("t", [t, hex]) => (target(t), "type", crate::agents::redact(&text(hex)), false, None),
+            ("k", [t, key]) => (target(t), "key", (*key).to_owned(), false, None),
+            ("h", [t, mods, key]) => (target(t), "keys", format!("{mods}+{key}"), false, None),
+            ("e", [t, id, act @ ..]) => (target(t), "press", act.join(" "), true, id.parse().ok()),
+            ("S", [t, id, _]) => (target(t), "set text", String::new(), false, id.parse().ok()),
+            ("f", [pid]) => (pick(pid), "focus", String::new(), false, None),
+            ("i", [pid, "w"]) => (pick(pid), "type in terminal", String::new(), false, None),
+            ("v", [pid, monitor]) => (pick(pid), "send", format!("to monitor {monitor}"), false, None),
+            ("d", [x, y, _, button]) => (self.agent_slot_at(num(x).ok()?, num(y).ok()?), "click", format!("button {button}"), true, None),
+            ("M", ..) | ("B", ..) => {
+                return Some(Touch { slot: None, app: "panel".into(), title: String::new(), did: if verb == "M" { "move" } else { "click" }, detail: String::new(), picture: false, element: None, what: "panel".into() });
+            }
+            ("L", [_, hex]) => {
+                let c = text(hex);
+                return Some(Touch { slot: None, app: String::new(), title: c.clone(), did: "open", detail: c.clone(), picture: false, element: None, what: format!("open {c}").to_lowercase() });
+            }
+            _ => return None,
+        };
+        let (app, title) = slot.and_then(|s| self.slots.get(s).and_then(Option::as_ref)).map(|w| (w.app.clone(), w.title.clone())).unwrap_or_default();
+        let what = crate::hands::what(&app, &title);
+        Some(Touch { slot, app, title, did, detail, picture, element, what })
+    }
+
+    /// The window at a point of the desktop (the one with the keyboard first).
+    fn agent_slot_at(&self, x: f64, y: f64) -> Option<usize> {
+        let mut hit = None;
+        for slot in self.slots_open().collect::<Vec<_>>() {
+            let Some((window, _, zoom, _)) = self.agent_place(slot) else { continue };
+            let g = self.slots[slot].as_ref().map_or([0; 4], |w| w.geometry);
+            let inside = x >= window[0] && y >= window[1] && x < window[0] + g[2] as f64 * zoom && y < window[1] + g[3] as f64 * zoom;
+            if inside && (hit.is_none() || self.focus == Some(slot)) {
+                hit = Some(slot);
+            }
+        }
+        hit
+    }
+
+    /// The person's word on it: a window they took over is theirs, and the
+    /// rules say where these hands may go. A refusal is written down before
+    /// it is told, and said on the scene.
+    fn hand_check(&mut self, t: &Touch, who: &str) -> Result<(), String> {
+        if let (Some(slot), Some((taken, _))) = (t.slot, self.agent.as_ref().and_then(|a| a.taken.as_ref()))
+            && slot == *taken
+        {
+            return Err("err taken-by-person".into());
+        }
+        // (A target it cannot find: the command says so itself.)
+        if t.slot.is_none() && t.app.is_empty() && t.did != "open" {
+            return Ok(());
+        }
+        match crate::hands::allowed(who, &t.what) {
+            Ok(_) => Ok(()),
+            Err(why) => {
+                crate::hands::record(serde_json::json!({ "who": who, "slot": t.slot, "app": t.app, "title": t.title, "did": t.did, "what": t.detail, "refused": why }), false);
+                let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern("hand.refused"), format!("{} · {}", if who.is_empty() { "agent" } else { who }, t.title)));
+                let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("hand.rseq"), (crate::mail::now_ms() % 10_000_000) as f32));
+                eprintln!("agent · hands of «{who}» refused in «{}»: {why}", t.title);
+                Err("err refused-by-rule".into())
+            }
+        }
+    }
+
+    /// Done: the window its hands are in, for the scene and for the person's
+    /// taking over; and the step written down —with the element's name and a
+    /// small picture of the window for presses and clicks, made off the loop—.
+    fn hand_done(&mut self, t: Touch, who: &str) {
+        let Some(slot) = t.slot else {
+            if t.did == "open" {
+                crate::hands::record(serde_json::json!({ "who": who, "did": t.did, "what": t.detail, "title": t.title, "rule": crate::hands::allowed(who, &t.what).ok().flatten() }), false);
+            }
+            return;
+        };
+        if let Some(a) = self.agent.as_mut() {
+            a.hand = Some((slot, Instant::now(), who.to_owned()));
+        }
+        let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("hand.slot"), slot as f32));
+        let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern("hand.who"), who.to_owned()));
+        let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("hand.seq"), (crate::mail::now_ms() % 10_000_000) as f32));
+        if matches!(t.did, "move" | "scroll") {
+            return;
+        }
+        let step = serde_json::json!({ "who": who, "slot": slot, "app": t.app, "title": t.title, "did": t.did, "what": t.detail, "rule": crate::hands::allowed(who, &t.what).ok().flatten() });
+        let private = layers::private(slot) || layers::locked();
+        let (picture, element) = (t.picture && !private, t.element);
+        if !picture && element.is_none() {
+            crate::hands::record(step, false);
+            return;
+        }
+        let Some(Some(w)) = self.slots.get(slot) else { return };
+        let (geometry, extent, pid, peer, age) = (w.geometry, self.agent_extent(slot), self.pid_of(slot), 0u32, 0u128);
+        static WHO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
+        let id = WHO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let to_render = self.to_render.clone();
+        std::thread::spawn(move || {
+            let mut step = step;
+            if let Some(n) = element.and_then(|e| crate::a11y_tree::key_of(pid, slot, e)).and_then(|k| crate::a11y_tree::element(slot, pid, k)) {
+                step["element"] = serde_json::json!({ "role": n.role, "name": n.name });
+            }
+            let path = crate::hands::record(step, picture);
+            if let Some(path) = path {
+                // A moment for what it did to show.
+                std::thread::sleep(Duration::from_millis(250));
+                let (tx, pictures) = std::sync::mpsc::channel::<pleamar::scene::WindowPicture>();
+                let _ = to_render.send(ToRender::WatchWindow(slot, id, Some(tx)));
+                let shot = Shot { slot, who: id, to_render, pictures, geometry, extent, hidpi: false, peer, age };
+                if let Some(p) = shot.first() {
+                    if let Ok((picture, _)) = look_picture(slot, &p, geometry, extent, false, None) {
+                        crate::hands::save_picture(&path, &picture);
+                    }
+                }
+            }
+        });
+    }
+
+    /// The person takes over a window (that one, or the one the hands were
+    /// last in, within a minute): the agent's hands are refused there.
+    fn hand_take(&mut self, slot: Option<usize>) -> Result<(), &'static str> {
+        let Some(a) = self.agent.as_mut() else { return Err("no-agent") };
+        let (slot, who) = match (slot, &a.hand) {
+            (Some(s), Some((h, _, who))) if *h == s => (s, who.clone()),
+            (Some(s), _) => (s, String::new()),
+            (None, Some((h, at, who))) if at.elapsed() < Duration::from_secs(60) => (*h, who.clone()),
+            (None, _) => return Err("no-hands"),
+        };
+        a.taken = Some((slot, who.clone()));
+        let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("hand.taken"), slot as f32));
+        let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern("hand.twho"), who.clone()));
+        crate::hands::record(serde_json::json!({ "who": who, "slot": slot, "did": "taken over by the person", "what": "" }), false);
+        eprintln!("agent · the person took over window {slot} from «{who}»");
+        Ok(())
+    }
+
+    fn hand_give_back(&mut self) {
+        let Some(a) = self.agent.as_mut() else { return };
+        if let Some((slot, who)) = a.taken.take() {
+            crate::hands::record(serde_json::json!({ "who": who, "slot": slot, "did": "given back", "what": "" }), false);
+        }
+        let _ = self.to_render.send(ToRender::Fact(pleamar::scene::intern("hand.taken"), -1.0));
+    }
+
+    /// The person's own click or key in a window: if an agent's hands were
+    /// working in it a moment ago, the person takes it over.
+    pub fn agent_person_touched(&mut self, slot: usize) {
+        let recent = self.agent.as_ref().is_some_and(|a| a.taken.is_none() && a.hand.as_ref().is_some_and(|(s, at, _)| *s == slot && at.elapsed() < Duration::from_secs(20)));
+        if recent {
+            let _ = self.hand_take(Some(slot));
+        }
     }
 }
 

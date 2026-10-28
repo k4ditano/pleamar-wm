@@ -121,6 +121,9 @@ Several steps
 The hands
   done                            finished: the light on the monitor goes out now
   stop                            the user's: what the agent tries next is refused until `done`
+  take · give-back                the user's: the window the hands were last in is theirs (the hands
+                                  are refused there) until given back; clicking or typing in it does it too
+  steps [N] [--json]              what the hands did, the last first: who, where, what, and by which rule
   pace [default|fast|instant]     how fast the hands go, for every agent of the session
   raw LINE...                     protocol lines, as they are (cua-inject v1)
 

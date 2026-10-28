@@ -1193,6 +1193,8 @@ impl State {
                 // the program is told its popup is done.
                 if down {
                     if let Some(slot) = self.pointer_on {
+                        // The person's click where an agent's hands are: they take it over (hands.rs).
+                        self.agent_person_touched(slot);
                         if let Some(Some(w)) = self.slots.get(slot) {
                             let root = w.surface.clone();
                             self.dismiss_popups_not_under(&root);
@@ -1257,9 +1259,11 @@ impl State {
                     k.input::<(), _>(self, (code + 8).into(), smithay::backend::input::KeyState::Released, serial, time, |_, _, _| FilterResult::Forward);
                     return;
                 }
-                if self.focus.is_none() {
+                let Some(focus) = self.focus else {
                     return;
-                }
+                };
+                // The person's key where an agent's hands are: they take it over (hands.rs).
+                self.agent_person_touched(focus);
                 // The keyboard was on a program's surface: back to the windows.
                 if self.panel_keyboard.take().is_some() {
                     self.set_focus(self.focus);

@@ -101,6 +101,17 @@ the open windows without closing anything.
   while at a letter from a routine (`link post --from "routine NAME"`) is held
   to less: rules can name it (`routine`), and unanswered it is denied, not
   left on a screen nobody watches.
+- **Rules for agents' hands, and taking over**: every click, key and press of
+  `pleamar-wm agent` goes through the compositor, which knows whose hands they
+  are (the name of the terminal the agent runs in) and keeps the person's
+  rules for them (`gate.rules`, tool `hands`, WHAT the window's program and
+  title): a `deny` refuses, an `allow` lets, and naming where one may go
+  fences it in; one with no rule is as free as ever. Each step is written down
+  with a small picture of the window for clicks and presses (`agent steps`);
+  the scene hears where hands work (`hand.slot`, `hand.who`) and what was
+  refused (`hand.refused`). The person clicking or typing in the window an
+  agent was just working in takes it over (`hand.taken`): its hands are
+  refused there until `agent give-back` (or `agent take` from a shell).
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

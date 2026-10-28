@@ -4575,6 +4575,17 @@ scene Session {
     // answers them (it says so itself); with none, agents ask on their screen ──
     fact gate.seq = 0
     fact gate.listen = 0
+    // ── the agents' hands (pleamar-wm's hands.rs): the window they last did
+    // something in and whose (`hand.seq` changes with each step); a window
+    // the person took over from them, and from whom; and the last refusal of
+    // the person's rules ──
+    fact hand.slot = -1
+    text hand.who = ""
+    fact hand.seq = 0
+    fact hand.taken = -1
+    text hand.twho = ""
+    text hand.refused = ""
+    fact hand.rseq = 0
 
     // ── the canvas kept from the last session (pleamar-wm's keep.rs):
     // offered on the first monitor until brought back or let go ──

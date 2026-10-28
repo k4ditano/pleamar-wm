@@ -74,6 +74,8 @@ pub(super) fn answered(reason: &str, of: Of) -> Fail {
         "private" => Fail::new(PRIVATE, format!("private: {w} is private (a `private` rule in session.conf), or the screen is locked: ask the user, never another way around it")),
         "locked" => Fail::new(PRIVATE, "locked: the screen is locked: ask the user"),
         "stopped-by-user" => stopped(),
+        "refused-by-rule" => Fail::new(PRIVATE, format!("refused: the person's rules (gate.rules, `hands`) do not let your hands into {w}: ask them, never another way around it")),
+        "taken-by-person" => Fail::new(PRIVATE, format!("taken: the person took {w} over from you (they clicked or typed in it): wait until they give it back, or ask")),
         "unknown-root-pid" | "target-not-found" | "unknown-pid" | "unknown-app-id" => Fail::new(WINDOW_GONE, format!("window gone: {w} is not open (`pleamar-wm agent windows` names them)")),
         "gone" | "unknown-id" => match e {
             Some(e) => Fail::new(GONE, format!("gone: {e} is no longer in {w} (or its tree never gave it): read it again with `tree {w}`")),

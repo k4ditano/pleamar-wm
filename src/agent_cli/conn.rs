@@ -206,9 +206,10 @@ pub(super) fn unhex(s: &str) -> String {
 }
 
 
-/// Who the agent is: `PLEAMAR_AGENT_NAME`, `agent` otherwise.
+/// Who the agent is: `PLEAMAR_AGENT_NAME`, the name of the terminal it runs
+/// in (`PLEAMAR_NAME`, a companion's), `agent` otherwise.
 pub(super) fn agent_name() -> String {
-    std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "agent".to_owned())
+    std::env::var("PLEAMAR_AGENT_NAME").ok().filter(|n| !n.trim().is_empty()).or_else(|| std::env::var("PLEAMAR_NAME").ok().filter(|n| !n.trim().is_empty())).unwrap_or_else(|| "agent".to_owned())
 }
 
 
