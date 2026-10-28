@@ -45,12 +45,15 @@ pub struct Route {
     /// Super held: the scene is told (`keys.super`), and with it a window is
     /// carried from anywhere on it.
     super_held: bool,
+    /// Caps Lock and Num Lock as the scene was last told them (`keys.caps`,
+    /// `keys.num`).
+    locks: (bool, bool),
     to_render: Sender<ToRender>,
 }
 
 impl Route {
     pub fn new(to_render: Sender<ToRender>) -> Route {
-        Route { hit: Hit::Scene(None), grab: None, scene_held: Vec::new(), client_held: Vec::new(), key_client: None, key_client_at: 0, bound: Vec::new(), repeating: None, repeat_new: false, layer_keys: Vec::new(), super_held: false, to_render }
+        Route { hit: Hit::Scene(None), grab: None, scene_held: Vec::new(), client_held: Vec::new(), key_client: None, key_client_at: 0, bound: Vec::new(), repeating: None, repeat_new: false, layer_keys: Vec::new(), super_held: false, locks: (false, false), to_render }
     }
 
     /// The pointer at that point of a monitor, in its pixels. Says whether it
@@ -330,6 +333,20 @@ impl Route {
         }
     }
 
+    /// Caps Lock and Num Lock, as the keyboard is after a key: the scene is
+    /// told when one turns on or off (`keys.caps`, `keys.num`), so a shell can
+    /// show it. A binding on the key could not: it keeps the key from the
+    /// programs, whose own keyboard state would then never see the lock change.
+    pub fn locks(&mut self, caps: bool, num: bool) {
+        if caps != self.locks.0 {
+            let _ = self.to_render.send(ToRender::Fact("keys.caps", if caps { 1.0 } else { 0.0 }));
+        }
+        if num != self.locks.1 {
+            let _ = self.to_render.send(ToRender::Fact("keys.num", if num { 1.0 } else { 0.0 }));
+        }
+        self.locks = (caps, num);
+    }
+
     /// A repeating binding just pressed: its key, once, for the loop to start its timer.
     pub fn take_new_repeat(&mut self) -> Option<u32> {
         if !std::mem::take(&mut self.repeat_new) {
@@ -432,5 +449,24 @@ mod tests {
         route.button(&screens, 0x110, true);
         route.button(&screens, 0x110, false);
         assert_eq!(route.key_owner(&screens), Some(9), "clicked again, it has them again");
+    }
+
+    /// The scene hears of Caps Lock and Num Lock only when one changes, not on
+    /// every key.
+    #[test]
+    fn the_lock_keys_reach_the_scene_when_they_change() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut route = Route::new(tx);
+        let told = |rx: &std::sync::mpsc::Receiver<ToRender>| -> Vec<(&'static str, f32)> {
+            rx.try_iter().filter_map(|m| match m { ToRender::Fact(name, v) => Some((name, v)), _ => None }).collect()
+        };
+        route.locks(false, false);
+        assert!(told(&rx).is_empty(), "nothing changed");
+        route.locks(true, false);
+        assert_eq!(told(&rx), vec![("keys.caps", 1.0)]);
+        route.locks(true, false);
+        assert!(told(&rx).is_empty(), "another key, the same locks");
+        route.locks(false, true);
+        assert_eq!(told(&rx), vec![("keys.caps", 0.0), ("keys.num", 1.0)]);
     }
 }

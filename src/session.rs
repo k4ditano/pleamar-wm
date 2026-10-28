@@ -1660,6 +1660,8 @@ impl State {
         let active = |s: &xkb::State, m: &str| s.mod_name_is_active(m, xkb::STATE_MODS_EFFECTIVE);
         let mods = Mods { ctrl: active(&self.keymap, xkb::MOD_NAME_CTRL), alt: active(&self.keymap, xkb::MOD_NAME_ALT), shift: active(&self.keymap, xkb::MOD_NAME_SHIFT), logo: active(&self.keymap, xkb::MOD_NAME_LOGO) };
         self.keymap.update_key(code, if down { xkb::KeyDirection::Down } else { xkb::KeyDirection::Up });
+        let locked = |s: &xkb::State, m: &str| s.mod_name_is_active(m, xkb::STATE_MODS_LOCKED);
+        self.route.locks(locked(&self.keymap, xkb::MOD_NAME_CAPS), locked(&self.keymap, xkb::MOD_NAME_NUM));
         let evdev = code.raw().saturating_sub(8);
         if down {
             // The way out, whatever the scene is doing.
