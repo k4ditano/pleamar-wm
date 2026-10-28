@@ -84,7 +84,7 @@ pub(crate) fn with<R>(name: &str, f: impl FnOnce(&mut Value) -> R) -> Result<R, 
 }
 
 /// Every mailbox, as kept.
-fn all() -> Vec<Value> {
+pub(crate) fn all() -> Vec<Value> {
     let mut out: Vec<Value> = std::fs::read_dir(dir())
         .into_iter()
         .flatten()

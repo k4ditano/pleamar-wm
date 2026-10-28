@@ -848,6 +848,8 @@ Mailboxes (the terminals named with `open --name`; they need no window of your o
   post NAME TEXT… [--from WHO]    a letter for the agent there: handed to it when it is free
   mail [NAME] [--json]            what waits in each, what each is at, its last answers
   mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID
+  caravan [--json]                what waits at the gate, the named terminals and their mailboxes
+                                  (what the remote page's «Caravan» shows); `caravan allow|deny ID`
 N is a window's number from `list`, its wire's name (`tests`), or the agent that runs there
 (`codex`) if only one is. A terminal whose one process has several windows (foot's server)
 has a shell named for each of those: `--shell ID`, its number in `pleamar-wm term list`.";
@@ -1199,6 +1201,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         "spawn" => spawn(rest),
         "open" => open(rest),
         "post" => crate::mail::post(rest),
+        // What the remote page's «Caravan» shows and does (caravan.rs), from a shell.
+        "caravan" => match rest.first().map(String::as_str) {
+            None | Some("--json") => Ok(crate::caravan::state()),
+            Some("allow" | "deny") => Ok(crate::caravan::answer(&format!("{} {}", rest.get(1).map_or("", String::as_str), rest[0]))),
+            _ => Err("link caravan [--json] | link caravan allow|deny ID".into()),
+        },
         "mail" => crate::mail::mail(rest),
         // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
         "_mail" => mail_deliver(rest),

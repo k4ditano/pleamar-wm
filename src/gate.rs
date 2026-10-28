@@ -350,7 +350,7 @@ fn ask(args: &[String]) -> i32 {
 }
 
 /// The requests waiting now; any whose hook is gone, taken away.
-fn pending() -> Vec<Value> {
+pub(crate) fn pending() -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for e in std::fs::read_dir(pending_dir()).into_iter().flatten().flatten() {
         let p = e.path();
@@ -370,7 +370,7 @@ fn pending() -> Vec<Value> {
 }
 
 /// `gate answer ID allow|deny [--by WHO] [--why WORDS]`.
-fn answer(args: &[String]) -> Result<String, String> {
+pub(crate) fn answer(args: &[String]) -> Result<String, String> {
     let id = args.first().filter(|i| i.chars().all(|c| c.is_ascii_hexdigit()) && !i.is_empty()).ok_or("gate answer ID allow|deny [--by WHO] [--why WORDS]")?;
     let verdict = args.get(1).map(String::as_str).filter(|v| matches!(*v, "allow" | "deny")).ok_or("allow or deny")?;
     let flag = |f: &str| args.iter().position(|a| a == f).and_then(|k| args.get(k + 1)).cloned().unwrap_or_default();

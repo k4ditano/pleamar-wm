@@ -133,6 +133,23 @@
   #dropzone { position: absolute; inset: 10px; z-index: 4; border: 2px dashed #9ed6bd; border-radius: 18px; background: #0d151966; display: none; align-items: center; justify-content: center; pointer-events: none; color: var(--ink); font-size: 15px; text-align: center; line-height: 1.6; }
   #dropzone.on { display: flex; }
   #dropzone b { display: block; font-size: 19px; }
+  /* The caravan (caravan.rs): what waits at the gate, the companions and their mailboxes, a task to send. */
+  #cv { position: fixed; z-index: 8; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.98); width: min(520px, calc(100% - 20px)); max-height: calc(100% - 40px); overflow: auto; padding: 16px; border-radius: 22px; background: #0d1519f5; border: 1px solid var(--line); backdrop-filter: blur(16px); color: var(--ink); font-size: 13.5px; display: none; box-shadow: 0 16px 50px #000a; }
+  #cv.open { display: block; transform: translate(-50%, -50%); }
+  #cv h2 { font-size: 18px; font-weight: 600; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  #cv h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 14px 0 6px; font-weight: 700; }
+  #cv .row { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 14px; background: #ffffff08; margin-bottom: 6px; }
+  #cv .row.sel { outline: 1px solid var(--sea); }
+  #cv .who { font-weight: 600; }
+  #cv .what { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  #cv .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--faint); flex: none; }
+  #cv .dot.working { background: var(--sea); } #cv .dot.asking { background: #e8b04b; }
+  #cv button { background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #cv button.go { background: var(--sea); color: var(--sea-ink); border-color: var(--sea); }
+  #cv button.no { color: var(--bad); }
+  #cv .send { display: flex; gap: 8px; margin-top: 8px; }
+  #cv .send input { flex: 1; min-width: 0; background: #ffffff0c; border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; color: var(--ink); font: inherit; }
+  #cv .none { color: var(--faint); font-size: 12.5px; padding: 4px 2px; }
   .pill { position: absolute; left: 50%; z-index: 6; display: none; gap: 12px; align-items: center; padding: 8px 8px 8px 16px; border-radius: 22px; background: #0d1519f2; border: 1px solid #9ed6bd55; backdrop-filter: blur(14px); color: var(--ink); font-size: 13.5px; white-space: nowrap; box-shadow: 0 8px 30px #0008; transform: translateX(-50%); max-width: calc(100% - 24px); }
   .pill.on { display: flex; }
   .pill span { overflow: hidden; text-overflow: ellipsis; }
@@ -164,6 +181,7 @@
     <button id="pastebtn" title="Your clipboard here into the one at home, then Ctrl+V">Paste here ↦</button>
     <button id="copybtn" title="The clipboard at home into yours">Copy home ↤</button>
     <button id="sendbtn" title="Files from here into «Remote» in the downloads folder at home. Or drop them on the desktop: on a window, it gets them too">Send files ↥</button>
+    <button id="cvbtn" title="The agents at home: what they ask you, how they are, and a task for one of them">Caravan</button>
     <input id="sendpick" type="file" multiple hidden>
     <span class="sep"></span>
     <span class="status" id="status">connecting…</span>
@@ -173,6 +191,14 @@
   <div id="stage"><canvas id="screen" tabindex="0"></canvas><video id="direct" autoplay muted playsinline disablepictureinpicture></video></div>
   <textarea id="keys" aria-hidden="true" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   <div id="toast"></div>
+  <div id="cv" role="dialog" aria-label="Caravan">
+    <h2>Caravan <button id="cv-close">✕</button></h2>
+    <h3>Waiting for you</h3>
+    <div id="cv-pending"></div>
+    <h3>Companions</h3>
+    <div id="cv-named"></div>
+    <div class="send"><input id="cv-task" placeholder="A task for the one you chose" autocomplete="off"><button class="go" id="cv-send">Send</button></div>
+  </div>
   <div id="dropzone"><div><b>Drop to send home</b>Into «Remote» in its downloads. On a window, the window gets them too.</div></div>
   <div id="xfer" class="pill"><span id="xfer-what">Sending…</span><span class="meter"><i></i></span><button id="xfer-stop" class="quiet">Cancel</button></div>
   <div id="offer" class="pill"><span id="offer-what"></span><button id="offer-go">Download</button><button id="offer-no" class="quiet">✕</button></div>
@@ -200,6 +226,7 @@
     <div id="ph-veil"></div>
     <div id="ph-menu">
       <div class="ph-info" id="ph-stat">—</div>
+      <button id="ph-m-cv">Caravan</button>
       <button id="ph-m-kbd">Keyboard</button>
       <button id="ph-m-zoom">Reset zoom</button>
       <button id="ph-m-desk">Give it back to the desk</button>
@@ -538,6 +565,8 @@
       }
       const [verb, ...rest] = e.data.split(' ');
       const arg = e.data.slice(verb.length + 1);
+      if (verb === 'caravan') { cvDraw(arg); return; }
+      if (verb === 'cvsaid') { toast(arg, 2600); send('caravan'); return; }
       if (verb === 'version') {
         // Asked to update and back: the new page, with the session coming back by itself.
         if (updating) reloadKeeping();
@@ -1491,6 +1520,41 @@
   $('ph-m-zoom').onclick = () => { closeMenu(); zoom = { k: 1, x: 0, y: 0 }; applyZoom(); };
   $('ph-m-desk').onclick = () => { closeMenu(); send('unphone'); phoneWanted = false; phoneBack('You gave it back: it is on your desk, as you left it.'); };
   $('ph-m-out').onclick = () => { closeMenu(); fetch('/logout', { method: 'POST' }).finally(() => location.href = '/'); };
+
+  // ── the caravan: the agents at home, from here (caravan.rs) ──
+  const cvEl = $('cv');
+  let cvTimer = null, cvTo = '';
+  const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  function cvOpen() { cvEl.classList.add('open'); send('caravan'); clearInterval(cvTimer); cvTimer = setInterval(() => send('caravan'), 3000); }
+  function cvClose() { cvEl.classList.remove('open'); clearInterval(cvTimer); cvTimer = null; }
+  function cvDraw(json) {
+    let c; try { c = JSON.parse(json); } catch { return; }
+    const p = c.pending || [];
+    $('cv-pending').innerHTML = p.length ? p.map((r) => `<div class="row"><div style="flex:1;min-width:0"><div class="who">${esc(r.who)} · ${esc(r.tool)}${r.routine ? ' · routine «' + esc(r.routine) + '»' : ''}</div><div class="what">${esc(r.what)}</div></div><button class="go" data-a="${esc(r.id)}">Allow</button><button class="no" data-d="${esc(r.id)}">Deny</button></div>`).join('') : '<div class="none">Nothing waits at the gate</div>';
+    const boxes = Object.fromEntries((c.boxes || []).map((b) => [b.name, b]));
+    const names = [...new Set([...(c.named || []).map((n) => n.name), ...Object.keys(boxes)])];
+    if (!cvTo && names.length) cvTo = names[0];
+    const st = Object.fromEntries((c.named || []).map((n) => [n.name, n.state]));
+    $('cv-named').innerHTML = names.length ? names.map((n) => {
+      const b = boxes[n] || {}, s = st[n] || 'away';
+      const said = b.doing ? 'at: ' + b.doing : b.waiting ? b.waiting + ' waiting' : b.last ? 'last: ' + b.last : (s === 'away' ? 'not started' : s);
+      return `<div class="row${n === cvTo ? ' sel' : ''}" data-n="${esc(n)}"><i class="dot ${s}"></i><span class="who">${esc(n)}</span><span class="what">${esc(said)}</span></div>`;
+    }).join('') : '<div class="none">No companion with a name at home</div>';
+    $('cv-task').placeholder = cvTo ? 'A task for ' + cvTo : 'A task for the one you chose';
+  }
+  cvEl.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-a]'), d = e.target.closest('[data-d]'), n = e.target.closest('[data-n]');
+    if (a) send('gate ' + a.dataset.a + ' allow');
+    else if (d) send('gate ' + d.dataset.d + ' deny');
+    else if (n) { cvTo = n.dataset.n; send('caravan'); }
+  });
+  const cvSend = () => { const t = $('cv-task').value.trim(); if (!t || !cvTo) return; send('post ' + cvTo + ' ' + t); $('cv-task').value = ''; };
+  $('cv-send').onclick = cvSend;
+  $('cv-task').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') cvSend(); });
+  $('cv-task').addEventListener('keyup', (e) => e.stopPropagation());
+  $('cv-close').onclick = cvClose;
+  $('cvbtn').onclick = () => (cvEl.classList.contains('open') ? cvClose() : cvOpen());
+  $('ph-m-cv').onclick = () => { closeMenu(); cvOpen(); };
 
   // ── updates ──
   // Two kinds: this page is older than its server (loading it again is

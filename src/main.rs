@@ -37,6 +37,7 @@ mod keep;
 mod mail;
 mod gate;
 mod hands;
+mod caravan;
 mod output;
 
 fn main() {

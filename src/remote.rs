@@ -1546,6 +1546,21 @@ fn viewer(stream: TcpStream, token: String, from: String, gate: &Arc<Mutex<Gate>
                         again();
                         break;
                     }
+                    // The caravan (caravan.rs): what waits at the gate, the named terminals and their
+                    // mailboxes; and, unless only watching, answering the gate and posting a letter.
+                    ("caravan", _) => {
+                        let _ = ws.send(Message::Text(format!("caravan {}", crate::caravan::state()).into()));
+                    }
+                    ("gate", _) if !view_only => {
+                        let said = crate::caravan::answer(rest);
+                        println!("remote · the gate, from here: {said}");
+                        let _ = ws.send(Message::Text(format!("cvsaid {said}").into()));
+                    }
+                    ("post", _) if !view_only => {
+                        let said = crate::caravan::post(rest);
+                        println!("remote · a letter, from here: {said}");
+                        let _ = ws.send(Message::Text(format!("cvsaid {said}").into()));
+                    }
                     // A phone: the session comes to a monitor of its size.
                     ("phone", [w, hh, scale]) if !view_only => {
                         // Already there and turned on its side: it takes the new
