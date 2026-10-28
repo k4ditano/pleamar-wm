@@ -430,6 +430,12 @@ fn relay_of(address: &str) -> Option<&'static str> {
     .map(|(_, _, who)| *who)
 }
 
+const CARAVAN: &str = include_str!("remote_caravan.html");
+
+fn caravan_page(view_only: bool) -> String {
+    CARAVAN.replace("{{WATCH}}", if view_only { "true" } else { "false" })
+}
+
 fn page(signed_in: bool, error: &str, relay: &str) -> String {
     let (login, app) = if signed_in { ("none", "block") } else { ("flex", "none") };
     PAGE.replace("{{LOGIN}}", login).replace("{{APP}}", app).replace("{{ERROR}}", error).replace("{{RELAY}}", relay).replace("{{VERSION}}", &format!("{PAGE_VERSION:016x}"))
@@ -543,6 +549,48 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
                 gate.lock().unwrap().sign_out(&t);
             }
             respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0\r\nLocation: /\r\n", b"")
+        }
+        // The caravan: the session's agents on a page of their own, without the
+        // desktop's picture —what a phone wants most of the time—. Small JSON,
+        // asked for every few seconds while the page is in sight.
+        ("GET", "/caravan") => {
+            if !signed_in {
+                return respond(&mut stream, "303 See Other", html, "Location: /\r\n", b"");
+            }
+            respond(&mut stream, "200 OK", html, "", caravan_page(view_only).as_bytes())
+        }
+        ("GET", p) if p.starts_with("/caravan/") => {
+            if !signed_in {
+                return respond(&mut stream, "401 Unauthorized", "text/plain", "", b"sign in first");
+            }
+            let q = form(req.path.split_once('?').map_or("", |(_, q)| q));
+            let name = q.get("name").cloned().unwrap_or_default();
+            let body = match p {
+                "/caravan/state" => crate::caravan::companions(),
+                "/caravan/talk" => crate::caravan::talk(&name),
+                "/caravan/screen" => crate::caravan::screen(&name),
+                _ => return respond(&mut stream, "404 Not Found", "text/plain", "", b"not here"),
+            };
+            respond(&mut stream, "200 OK", "application/json; charset=utf-8", "", body.as_bytes())
+        }
+        ("POST", "/caravan/do") => {
+            let host = req.headers.get("host").cloned().unwrap_or_default();
+            let origin = req.headers.get("origin").cloned().unwrap_or_default();
+            if !signed_in || view_only {
+                return respond(&mut stream, "403 Forbidden", "text/plain", "", b"this page only watches");
+            }
+            if origin != format!("https://{host}") && origin != format!("http://{host}") {
+                return respond(&mut stream, "403 Forbidden", "text/plain", "", b"wrong origin");
+            }
+            let body = String::from_utf8_lossy(&req.body).into_owned();
+            let from = who(&req, &stream);
+            let said = crate::caravan::act(&body);
+            let what = serde_json::from_str::<serde_json::Value>(&body).ok().and_then(|v| v["do"].as_str().map(str::to_owned)).unwrap_or_default();
+            println!("remote · caravan: {what} from {from}: {}", said.as_ref().map_or_else(|e| e.as_str(), |o| o.as_str()));
+            match said {
+                Ok(o) => respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "", o.as_bytes()),
+                Err(e) => respond(&mut stream, "409 Conflict", "text/plain; charset=utf-8", "", e.as_bytes()),
+            }
         }
         // A home screen's app: what it is and its icon. Nothing of this desktop in
         // them, so before signing in (a browser asks for them without the cookie).

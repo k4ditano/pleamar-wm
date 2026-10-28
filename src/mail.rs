@@ -150,6 +150,15 @@ pub(crate) fn mail(args: &[String]) -> Result<String, String> {
     let flag = |f: &str| args.iter().position(|a| a == f);
     let arg_of = |f: &str| flag(f).and_then(|k| args.get(k + 1)).and_then(|v| v.parse::<u64>().ok());
     let name = args.first().filter(|a| !a.starts_with("--")).cloned();
+    if let Some(k) = flag("--card") {
+        let name = name.ok_or("NAME first: whose card")?;
+        valid(&name)?;
+        let c = card(args.get(k + 1).map_or("", String::as_str))?;
+        if with(&name, |b| std::mem::replace(&mut b["card"], c.clone()) != c)? {
+            told();
+        }
+        return Ok(format!("«{name}»'s card is kept"));
+    }
     let change = ["--cancel", "--first", "--pause", "--resume", "--forget"].iter().find(|f| flag(f).is_some());
     if let Some(&what) = change {
         let name = name.ok_or("NAME first: whose mailbox")?;
@@ -222,6 +231,20 @@ pub(crate) fn mail(args: &[String]) -> Result<String, String> {
         }
     }
     Ok(out.trim_end().to_owned())
+}
+
+/// How a shell shows a name (`--card`), for the pages that show it (the
+/// remote's caravan): what to call it, its colour, a 5×5 glyph (five rows of
+/// 5 bits, bit c = column c) and a line under it. Only those, and short.
+fn card(raw: &str) -> Result<Value, String> {
+    let c: Value = serde_json::from_str(raw).map_err(|e| format!("--card JSON: {e}"))?;
+    let text = |k: &str, n: usize| c[k].as_str().map(|t| t.chars().filter(|ch| !ch.is_control()).take(n).collect::<String>()).unwrap_or_default();
+    let color = text("color", 7);
+    if !color.is_empty() && !(color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|h| h.is_ascii_hexdigit())) {
+        return Err("--card color: #rrggbb".into());
+    }
+    let glyph: Vec<u64> = c["glyph"].as_array().map(|g| g.iter().take(5).map(|r| r.as_u64().unwrap_or(0) & 31).collect()).unwrap_or_default();
+    Ok(json!({ "title": text("title", 40), "color": color, "glyph": glyph, "sub": text("sub", 80) }))
 }
 
 /// The watcher's turn, every second (term.rs): for each named terminal whose
@@ -302,4 +325,22 @@ pub(crate) const USAGE: &str = "pleamar-wm link post NAME TEXT… [--from WHO]
                                   --name`): handed to it when it is free, after those before it
 pleamar-wm link mail [NAME] [--json]
                                   the mailboxes: what waits, what each is at, its last answers
-pleamar-wm link mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID";
+pleamar-wm link mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID
+pleamar-wm link mail NAME --card JSON  (title, color #rrggbb, glyph: 5 rows, sub)
+                                  how a shell shows NAME, for the remote's caravan page";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_card_keeps_only_what_it_shows() {
+        let c = card(r##"{"title":"Prueba\u0007 con un nombre muy largo que no cabe en ningún sitio","color":"#7fb8a4","glyph":[4,14,31,40,4,9],"sub":"Claude Code","secret":"x"}"##).unwrap();
+        assert_eq!(c["title"].as_str().unwrap().chars().count(), 40);
+        assert!(!c["title"].as_str().unwrap().contains('\u{7}'));
+        assert_eq!(c["glyph"], json!([4, 14, 31, 8, 4]));
+        assert!(c.get("secret").is_none());
+        assert!(card(r#"{"color":"red"}"#).is_err());
+        assert!(card("not json").is_err());
+    }
+}

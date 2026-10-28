@@ -15,6 +15,34 @@ hands over one document at a time. Here the session is one, and it has two
 shapes: changing shape is changing scene, which is only possible because the
 window manager and the shell are scenes.
 
+## Or just the agents
+
+Most of the time, away from the desk, what is wanted is not the desktop but
+the agents working on it: what they answered, what they ask, a new task. So
+on a phone the page asks first —**Companions** or **Desktop**, once or
+remembered on that phone— and the first is a page of its own, `/caravan`:
+
+- **No picture.** No video, no WebRTC, no phone monitor: small JSON asked for
+  every few seconds while the page is in sight, nothing while it is not.
+- **What needs you**, on top: what waits at the gate (Allow, Deny) and what an
+  agent asks on its screen, with its options —answered only if the question
+  shown is still the one there (its key, as `pleamar-wm agents answer`)—.
+- **Everyone**: each mailbox and each named terminal, with the card its shell
+  gave it (`link mail NAME --card`: what to call it, a colour, a 5×5 glyph, a
+  line), how it is and its last word.
+- **A conversation with each**: the letters of its mailbox, oldest first, and
+  what each got back; the one it is at, the ones waiting (first, remove).
+  Writing posts a letter (`link post`), handed to it when it is free. Stop is
+  Ctrl+C; its mailbox can be held and let go. **Screen** shows its terminal as
+  text, the last 80 lines.
+- A page that only watches (`--view-only`) sees all of it and does nothing.
+
+`/caravan/state`, `/caravan/talk?name=`, `/caravan/screen?name=` and `POST
+/caravan/do` are what it uses, behind the same sign-in; `pleamar-wm link
+caravan all | talk NAME | screen NAME | do JSON` gives the same from a shell.
+A letter for a name with no terminal waits; a shell may start it (Calima
+does, for a letter that came while it was running).
+
 ## What happens
 
 1. **You open the page on the phone.** It says what it is: its size in pixels,

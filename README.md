@@ -112,12 +112,16 @@ the open windows without closing anything.
   refused (`hand.refused`). The person clicking or typing in the window an
   agent was just working in takes it over (`hand.taken`): its hands are
   refused there until `agent give-back` (or `agent take` from a shell).
-- **The caravan from your phone**: the remote page has a «Caravan» panel
-  (in the bar, and in the phone's menu): what waits at the gate, with Allow
-  and Deny; each named terminal, how it is and its mailbox (what it is at,
-  what waits, its last answer); and a task for one of them. A page that is
-  only watching sees it all but does nothing. `pleamar-wm link caravan`
-  gives the same from a shell.
+- **The caravan from your phone**: on a phone the remote page asks first
+  —your agents or your desktop—. The agents are a page of their own,
+  `/caravan`, with no picture: what waits at the gate and what they ask on
+  their screens, to answer there; each one, with its shell's card (`link mail
+  NAME --card`); a conversation with each (its letters and what it answered,
+  a new one, Stop, hold its mailbox) and its screen as text. Light: small JSON
+  every few seconds, nothing while hidden. The desktop page keeps a
+  «Caravan» panel too. A page that is only watching sees it all but does
+  nothing; `pleamar-wm link caravan` gives the same from a shell
+  ([docs/phone.md](docs/phone.md)).
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

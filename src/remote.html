@@ -43,6 +43,20 @@
   #keys { position: absolute; opacity: 0; width: 1px; height: 1px; left: -10px; top: -10px; }
   #toast { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 3; max-width: min(560px, 88vw); width: max-content; text-align: center; }
   #toast.show { opacity: 1; }
+  /* On a phone, first: the agents (/caravan) or the whole desktop. */
+  #choose { position: fixed; inset: 0; z-index: 9; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #choose[hidden] { display: none; }
+  .choose-in { width: 100%; max-width: 380px; display: grid; gap: 12px; }
+  .choose-in h1 { margin: 0 4px 6px; font: 500 26px/1.15 ui-serif, Georgia, serif; }
+  .choose-in h1 small { display: block; font: 12.5px/1.4 system-ui, sans-serif; color: var(--faint); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .choice { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; color: var(--ink); font: inherit; display: grid; gap: 4px; cursor: pointer; }
+  .choice b { font-size: 17px; }
+  .choice span { color: var(--faint); font-size: 13.5px; }
+  .choice:first-of-type { border-color: color-mix(in srgb, var(--sea) 55%, var(--line)); }
+  .choice:active { background: color-mix(in srgb, var(--sea) 10%, var(--panel)); }
+  .keep { display: flex; gap: 8px; align-items: center; color: var(--faint); font-size: 13.5px; margin: 4px 4px 0; }
+  .keep input { width: 18px; height: 18px; accent-color: var(--sea); }
+  #cv-page { margin-left: auto; margin-right: 10px; font-size: 12.5px; font-weight: 500; color: var(--sea); text-decoration: none; }
   /* Going over to the monitor beyond an edge: the edge fills with light while
      the push is held, and sweeps across when it goes over. */
   #edge { position: fixed; pointer-events: none; z-index: 1; opacity: 0; transition: opacity .2s ease; --hold: 700ms; }
@@ -192,12 +206,20 @@
   <textarea id="keys" aria-hidden="true" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   <div id="toast"></div>
   <div id="cv" role="dialog" aria-label="Caravan">
-    <h2>Caravan <button id="cv-close">✕</button></h2>
+    <h2>Caravan <a id="cv-page" href="/caravan">Full page ↗</a><button id="cv-close">✕</button></h2>
     <h3>Waiting for you</h3>
     <div id="cv-pending"></div>
     <h3>Companions</h3>
     <div id="cv-named"></div>
     <div class="send"><input id="cv-task" placeholder="A task for the one you chose" autocomplete="off"><button class="go" id="cv-send">Send</button></div>
+  </div>
+  <div id="choose" hidden>
+    <div class="choose-in">
+      <h1><span data-es="¿Qué abres?">What do you open?</span><small id="ch-host"></small></h1>
+      <button class="choice" id="ch-cv"><b data-es="Compañeros">Companions</b><span data-es="Habla con tus agentes, contesta lo que preguntan y aprueba lo que piden. Ligero y rápido.">Talk to your agents, answer what they ask and allow what they want to do. Light and quick.</span></button>
+      <button class="choice" id="ch-desk"><b data-es="Escritorio">Desktop</b><span data-es="Toda la pantalla, en directo.">The whole screen, live.</span></button>
+      <label class="keep"><input type="checkbox" id="ch-keep"> <span data-es="Recordarlo en este móvil">Remember on this phone</span></label>
+    </div>
   </div>
   <div id="dropzone"><div><b>Drop to send home</b>Into «Remote» in its downloads. On a window, the window gets them too.</div></div>
   <div id="xfer" class="pill"><span id="xfer-what">Sending…</span><span class="meter"><i></i></span><button id="xfer-stop" class="quiet">Cancel</button></div>
@@ -1586,7 +1608,26 @@
   let resume = false;
   try { resume = sessionStorage.getItem('pleamar-resume') === '1'; sessionStorage.removeItem('pleamar-resume'); } catch (_) {}
   bbLastOne();
-  if (PHONE && resume) bringHere(); else connect();
+  // On a phone, the agents alone are what is wanted most of the time —and
+  // they come without the desktop's picture—: it asks which, once or always.
+  const SIGNED = '{{APP}}' === 'block';
+  let start = '';
+  try { start = localStorage.getItem('pleamar-start') || ''; } catch (_) {}
+  function choose() {
+    const c = $('choose');
+    if (/^es\b/i.test(navigator.language || '')) c.querySelectorAll('[data-es]').forEach(e => { e.textContent = e.dataset.es; });
+    $('ch-host').textContent = location.hostname;
+    const keep = what => { if ($('ch-keep').checked) try { localStorage.setItem('pleamar-start', what); } catch (_) {} };
+    $('ch-cv').onclick = () => { keep('caravan'); location.href = '/caravan'; };
+    $('ch-desk').onclick = () => { keep('desk'); c.hidden = true; connect(); };
+    c.hidden = false;
+  }
+  if (PHONE && resume) bringHere();
+  else if (PHONE && SIGNED && !new URLSearchParams(location.search).has('desk')) {
+    if (start === 'caravan') location.replace('/caravan');
+    else if (start === 'desk') connect();
+    else choose();
+  } else connect();
 })();
 </script>
 </body>

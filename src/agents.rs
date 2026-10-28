@@ -78,6 +78,16 @@ fn agents() -> Result<Vec<Agent>, String> {
     Ok(out)
 }
 
+/// Every agent of the session as `agents --json` gives it (remote's caravan page).
+pub(crate) fn listed() -> Vec<serde_json::Value> {
+    agents().unwrap_or_default().iter().filter_map(|a| serde_json::from_str(&json(a)).ok()).collect()
+}
+
+/// `agents answer …` or `agents stop …`, for the remote's caravan page.
+pub(crate) fn act(args: &[String]) -> Result<String, String> {
+    go(args).map_err(|(_, e)| e)
+}
+
 /// The dialog round the question on a screen (see `Agent::detail`).
 fn detail_of(screen: &str) -> Vec<String> {
     let lines: Vec<&str> = screen.lines().collect();
