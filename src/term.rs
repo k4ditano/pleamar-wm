@@ -1231,6 +1231,7 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
     use pleamar::scene::{intern, ToRender};
     // Its session's layers: next to the windows file, as what it starts is told.
     let folder = std::path::Path::new(&windows).parent().map(|p| format!("{}/term", p.display())).unwrap_or_else(socket_dir);
+    let sockets = std::path::Path::new(&windows).parent().map(|p| p.display().to_string()).unwrap_or_default();
     std::thread::spawn(move || {
         let home = std::env::var("HOME").unwrap_or_default();
         let mut said: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
@@ -1245,6 +1246,7 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
             let all = if slots.is_empty() { Vec::new() } else { layers_in(&folder) };
             let mut now: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
             let mut names: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+            let mut mailable: Vec<(String, usize, i32, bool)> = Vec::new();
             for (slot, pid) in &slots {
                 let mine: Vec<&(i32, std::collections::BTreeMap<String, String>)> = all.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(*pid)).collect();
                 if let Some(n) = mine.iter().find_map(|(_, i)| i.get("name").filter(|n| !n.is_empty())) {
@@ -1267,6 +1269,13 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                     2
                 };
                 now.insert(*slot, (state, format!("{agent} · {cwd}")));
+                if let Some(n) = names.get(slot) {
+                    mailable.push((n.clone(), *slot, *id, state == 2 && info.get("draft").map(String::as_str) != Some("1")));
+                }
+            }
+            // The mailboxes of the named ones (mail.rs): the next letter to each that is free.
+            if !mailable.is_empty() && crate::mail::turn(&mailable, &sockets) {
+                let _ = to_render.send(ToRender::ExternalFact(intern("mail.seq"), crate::mail::seq()));
             }
             for slot in named.keys().chain(names.keys()).copied().collect::<std::collections::HashSet<usize>>() {
                 let new = names.get(&slot).cloned().unwrap_or_default();

@@ -4567,6 +4567,10 @@ scene Session {
         }
     }
 
+    // ── the mailboxes of the named terminals (pleamar-wm's mail.rs): a
+    // number that changes whenever one does (`link mail --json` reads them) ──
+    fact mail.seq = 0
+
     // ── the canvas kept from the last session (pleamar-wm's keep.rs):
     // offered on the first monitor until brought back or let go ──
     fact kept.n = 0

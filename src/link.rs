@@ -47,6 +47,10 @@ pub(crate) fn own_exe() -> std::path::PathBuf {
     std::path::PathBuf::from(me.to_string_lossy().trim_end_matches(" (deleted)"))
 }
 
+pub(crate) fn say_wm(orders: &[String]) -> Vec<String> {
+    say(orders)
+}
+
 fn say(orders: &[String]) -> Vec<String> {
     let me = own_exe();
     let out = std::process::Command::new(me).arg("--say").arg("wm").args(orders).output();
@@ -393,7 +397,7 @@ fn claude_said(text: &str, after: u64) -> Option<(bool, String)> {
             c => c.as_array().map(|c| c.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect()).unwrap_or_default(),
         };
         match v["type"].as_str() {
-            Some("user") if after > 0 && texts.iter().any(|t| t.contains("through a wire]")) => {
+            Some("user") if after > 0 && texts.iter().any(|t| marked_task(t)) => {
                 asked = true;
                 id.clear();
                 answer.clear();
@@ -476,7 +480,7 @@ fn codex_said(text: &str, cwd: &str, after: u64) -> Option<Option<String>> {
     let (mut asked, mut answer) = (after == 0, None);
     for v in lines {
         let p = &v["payload"];
-        if after > 0 && p["role"] == "user" && p["content"].as_array().is_some_and(|c| c.iter().any(|t| t["text"].as_str().is_some_and(|t| t.contains("through a wire]")))) {
+        if after > 0 && p["role"] == "user" && p["content"].as_array().is_some_and(|c| c.iter().any(|t| t["text"].as_str().is_some_and(marked_task))) {
             asked = true;
             answer = None;
         }
@@ -506,7 +510,7 @@ fn opencode_answer(cwd: &str, after: u64) -> Option<String> {
     let all = run(&["export", session["id"].as_str()?])?;
     let said = |m: &serde_json::Value| m["parts"].as_array().map(|ps| ps.iter().filter(|p| p["type"] == "text").filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
     let messages = all["messages"].as_array()?;
-    let from = if after == 0 { 0 } else { messages.iter().rposition(|m| m["info"]["role"] == "user" && said(m).contains("through a wire]"))? };
+    let from = if after == 0 { 0 } else { messages.iter().rposition(|m| m["info"]["role"] == "user" && marked_task(&said(m)))? };
     let last = messages[from..].iter().rev().find(|m| m["info"]["role"] == "assistant" && m["info"]["time"]["completed"].is_u64() && !said(m).trim().is_empty())?;
     Some(said(last).trim().to_owned())
 }
@@ -708,7 +712,15 @@ fn nothing(slot: usize) -> String {
 /// (Codex leaves «through a» on one and «wire]» on the next).
 fn handed_at(lines: &[&str]) -> Option<usize> {
     let bare = |ls: &[&str]| ls.concat().chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    (0..lines.len()).rev().find(|&k| lines[k].contains(']') && bare(&lines[k.saturating_sub(2)..=k]).contains("throughawire]"))
+    (0..lines.len()).rev().find(|&k| lines[k].contains(']') && {
+        let b = bare(&lines[k.saturating_sub(2)..=k]);
+        b.contains("throughawire]") || b.contains("throughthemailbox]")
+    })
+}
+
+/// The line that says what a task is, as a wire or a mailbox (mail.rs) hands it.
+fn marked_task(t: &str) -> bool {
+    t.contains("through a wire]") || t.contains("through the mailbox]")
 }
 
 /// Of what came out after the task, the answer: from the agent's first
@@ -832,6 +844,10 @@ const USAGE: &str = "pleamar-wm link — the windows wired to yours (on a canvas
                                   once, and its answer —or a question it stops to ask on the
                                   way— is typed into your terminal; with --wait, it is what
                                   this prints.
+Mailboxes (the terminals named with `open --name`; they need no window of your own):
+  post NAME TEXT… [--from WHO]    a letter for the agent there: handed to it when it is free
+  mail [NAME] [--json]            what waits in each, what each is at, its last answers
+  mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID
 N is a window's number from `list`, its wire's name (`tests`), or the agent that runs there
 (`codex`) if only one is. A terminal whose one process has several windows (foot's server)
 has a shell named for each of those: `--shell ID`, its number in `pleamar-wm term list`.";
@@ -1182,6 +1198,10 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         "setup" => setup(rest.iter().any(|a| a == "--yes"), rest.iter().any(|a| a == "--undo")),
         "spawn" => spawn(rest),
         "open" => open(rest),
+        "post" => crate::mail::post(rest),
+        "mail" => crate::mail::mail(rest),
+        // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
+        "_mail" => mail_deliver(rest),
         "restore" => crate::keep::restore(rest.iter().any(|a| a == "--dismiss")),
         _ => Err(USAGE.into()),
     }
@@ -1702,6 +1722,144 @@ fn hand_over(slot: usize, id: i32, told: &str, task: &str) -> Result<String, Str
             Ready::Late => return Err(format!("window {slot} was not ready in an hour: your task was not handed")),
         }
     }
+}
+
+/// A letter out of a mailbox (mail.rs), handed by the messenger the watcher
+/// left with it: typed into the terminal named so —a line that says what it
+/// is, the letter as a paste, Enter—, as `delegate` hands a task; then, until
+/// its agent is done, what it is at (working, asking its person) kept in the
+/// mailbox for whoever shows it; and at the end its answer, kept with the letter.
+fn mail_deliver(rest: &[String]) -> Result<String, String> {
+    // Its number first, for the watcher that left it, and nothing more out.
+    println!("{}", std::process::id());
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    if let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+        use std::os::fd::AsRawFd;
+        // SAFETY: both are open descriptors of this process; nothing else writes to stdout here.
+        unsafe { libc::dup2(null.as_raw_fd(), 1) };
+    }
+    let name = rest.first().ok_or(crate::mail::USAGE)?.clone();
+    let id: i32 = rest.get(2).and_then(|v| v.parse().ok()).ok_or(crate::mail::USAGE)?;
+    let me = std::process::id() as u64;
+    let letter = crate::mail::with(&name, |b| (b["out"]["pid"].as_u64() == Some(me)).then(|| b["out"].clone()))?.ok_or("no letter out for this messenger")?;
+    let set = |state: &str| {
+        let _ = crate::mail::with(&name, |b| {
+            if b["out"]["pid"].as_u64() == Some(me) {
+                b["out"]["state"] = serde_json::json!(state);
+                if state == "working" {
+                    b["out"]["given"] = serde_json::json!(now_ms());
+                }
+            }
+        });
+        say(&[format!("fact mail.seq {}", crate::mail::seq())]);
+    };
+    // The letter back where it was, first: not handed after all.
+    let undo = |why: &str| -> Result<String, String> {
+        let _ = crate::mail::with(&name, |b| {
+            if b["out"]["pid"].as_u64() == Some(me) {
+                let mut l = b["out"].take();
+                let tries = l["tries"].as_u64().unwrap_or(0) + 1;
+                for k in ["pid", "state", "slot"] {
+                    l.as_object_mut().map(|o| o.remove(k));
+                }
+                if tries >= 3 {
+                    l["how"] = serde_json::json!("refused");
+                    l["answer"] = serde_json::json!(why);
+                    l["ended"] = serde_json::json!(now_ms());
+                    crate::mail::keep_done(b, l);
+                } else {
+                    l["tries"] = serde_json::json!(tries);
+                    if let Some(w) = b["waiting"].as_array_mut() {
+                        w.insert(0, l);
+                    }
+                }
+            }
+        });
+        say(&[format!("fact mail.seq {}", crate::mail::seq())]);
+        Err(why.to_owned())
+    };
+    let i = info(id);
+    if i.get("name").map(String::as_str) != Some(name.as_str()) {
+        return undo("its terminal is not the one named so any more");
+    }
+    if !at_rest(&i) || asked(id, &i).is_some() || i.get("draft").map(String::as_str) == Some("1") {
+        return undo("it was not free after all");
+    }
+    let task = letter["text"].as_str().unwrap_or("").to_owned();
+    let from = letter["from"].as_str().filter(|f| !f.is_empty()).unwrap_or("your person");
+    let before = read(id, 2000).lines().count();
+    HANDED.with(|c| c.set(Some(hooked_answer(id).0)));
+    HANDED_AT.with(|c| c.set(now_ms()));
+    let _ = std::fs::write(format!("{}/{id}.handed", crate::term::socket_dir()), HANDED_AT.with(|c| c.get()).to_string());
+    let _ = std::fs::write(format!("{}/{id}.handed-answers", crate::term::socket_dir()), HANDED.with(|c| c.get()).unwrap_or(0).to_string());
+    let head = format!("[a task from {from}, through the mailbox] It is in the pasted text: do it, and end with your answer.");
+    let shown = read(id, 60);
+    let mut took = false;
+    for _ in 0..3 {
+        paste(id, &head)?;
+        let start = Instant::now();
+        while !took && start.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(250));
+            took = read(id, 60) != shown;
+        }
+        if took {
+            break;
+        }
+    }
+    if !took {
+        return undo("its screen did not change with what was typed: is its agent ready?");
+    }
+    std::thread::sleep(Duration::from_millis(120));
+    paste(id, &task)?;
+    std::thread::sleep(Duration::from_millis(150));
+    keys(id, "enter")?;
+    let started = (0..10).any(|_| {
+        std::thread::sleep(Duration::from_millis(400));
+        let i = info(id);
+        i.get("state").map(String::as_str) == Some("working") || i.get("quiet").and_then(|q| q.parse::<u64>().ok()).is_some_and(|q| q < 300)
+    });
+    if !started {
+        keys(id, "enter")?;
+    }
+    set("working");
+    // As long as it works (a day at most); six hours with no sign of it, and no more.
+    let deadline = Instant::now() + Duration::from_secs(24 * 3600);
+    let idle = Duration::from_secs(6 * 3600);
+    let how = loop {
+        match wait_for(id, deadline.saturating_duration_since(Instant::now()), true, Some(idle)) {
+            Waited::Done => break "done",
+            Waited::Late => break "late",
+            Waited::Gone => break "gone",
+            Waited::Asks(q) => {
+                set("asks");
+                let key = ask_key(&q);
+                let mut away = 0;
+                while Instant::now() < deadline && away < 2 {
+                    std::thread::sleep(Duration::from_millis(700));
+                    away = if asked(id, &info(id)).is_some_and(|n| ask_key(&n) == key) { 0 } else { away + 1 };
+                }
+                set("working");
+            }
+        }
+    };
+    let answer = match how {
+        "done" => brought(id, before, deadline).unwrap_or_default(),
+        "gone" => String::new(),
+        _ => since(id, before),
+    };
+    crate::mail::with(&name, |b| {
+        if b["out"]["pid"].as_u64() == Some(me) {
+            let mut l = b["out"].take();
+            l.as_object_mut().map(|o| o.remove("pid"));
+            l["state"] = serde_json::json!("ended");
+            l["how"] = serde_json::json!(how);
+            l["answer"] = serde_json::json!(answer);
+            l["ended"] = serde_json::json!(now_ms());
+            crate::mail::keep_done(b, l);
+        }
+    })?;
+    say(&[format!("fact mail.seq {}", crate::mail::seq())]);
+    Ok(String::new())
 }
 
 /// Into the asking agent's terminal, once it is free —not over its person

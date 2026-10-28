@@ -34,6 +34,7 @@ mod agents;
 mod mcp;
 mod mcp_serve;
 mod keep;
+mod mail;
 mod output;
 
 fn main() {

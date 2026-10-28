@@ -76,6 +76,17 @@ the open windows without closing anything.
   layer tells it (`name` in `term info`) and the scene has it as `who.N`, so a
   shell knows that window is that companion of yours wherever it goes. A named
   terminal is its namer's to bring back: the kept canvas leaves it out.
+- **A mailbox for each named terminal**: `pleamar-wm link post Prohard look at
+  issue 38` leaves a letter for the agent in the terminal named so, and the
+  session hands it over when that agent is free —at rest, asking nothing, its
+  person not halfway through writing to it—, one at a time and in order, then
+  keeps what it answered. Nobody has to wait for it or own a window: a shell's
+  finder, a routine or another agent (`--from Planipro`) can post, and a letter
+  for a name with no terminal yet waits for one. `link mail [NAME] [--json]`
+  says what waits, what each is at and its last answers; `--pause`,
+  `--resume`, `--first ID` and `--cancel ID` change the order. Mailboxes are
+  kept across sessions (`$XDG_STATE_HOME/pleamar-wm/mail`), and the scene's
+  `mail.seq` changes whenever one does.
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// Where it is kept: `$XDG_STATE_HOME/pleamar-wm`, or beside the configuration
 /// when that is somewhere of its own (a test session's `PLEAMAR_CONFIG`).
-fn dir() -> String {
+pub(crate) fn dir() -> String {
     if let Some(d) = std::env::var("PLEAMAR_CONFIG").ok().filter(|v| !v.is_empty()) {
         return format!("{d}/state");
     }
