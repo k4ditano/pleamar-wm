@@ -300,6 +300,43 @@ pub(crate) fn read(id: i32, lines: usize) -> String {
     crate::term::ask(&socket(id), &format!("read {lines}")).unwrap_or_default()
 }
 
+/// Its screen, once it holds still: two readings a quarter of a second apart
+/// that are the same (two seconds at most).
+fn settled(id: i32) -> String {
+    let start = Instant::now();
+    let mut last = read(id, 60);
+    while start.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(250));
+        let now = read(id, 60);
+        if now == last {
+            return now;
+        }
+        last = now;
+    }
+    last
+}
+
+/// The task, pasted after the line that says what it is, and taken: once its
+/// screen holds still after that line (an agent just started may still be
+/// taking it in, and drops a paste that comes meanwhile: the line came and
+/// the task did not), and again —up to three times— if its screen does not
+/// change with it. Then still again before Enter.
+fn paste_task(id: i32, task: &str) -> Result<(), String> {
+    let shown = settled(id);
+    for _ in 0..3 {
+        paste(id, task)?;
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(250));
+            if read(id, 60) != shown {
+                settled(id);
+                return Ok(());
+            }
+        }
+    }
+    Err("its screen did not change with the task pasted".into())
+}
+
 fn paste(id: i32, text: &str) -> Result<(), String> {
     match crate::term::ask(&socket(id), &format!("paste {}", hex(text.as_bytes())))? {
         r if r.starts_with("ok") => Ok(()),
@@ -1152,9 +1189,10 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                         flow(k, 0);
                         return Err(format!("window {} did not take what was typed (its screen did not change): is its agent ready? `pleamar-wm link read {}`", w.slot, w.slot));
                     }
-                    std::thread::sleep(Duration::from_millis(120));
-                    paste(id, &task)?;
-                    std::thread::sleep(Duration::from_millis(150));
+                    if let Err(e) = paste_task(id, &task) {
+                        flow(k, 0);
+                        return Err(format!("window {}: {e}: is its agent ready? `pleamar-wm link read {}`", w.slot, w.slot));
+                    }
                     keys(id, "enter")?;
                     // Taken? Its agent starts working (or something comes out).
                     let started = (0..10).any(|_| {
@@ -1944,9 +1982,9 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
     if !took {
         return undo("its screen did not change with what was typed: is its agent ready?", true);
     }
-    std::thread::sleep(Duration::from_millis(120));
-    paste(id, &task)?;
-    std::thread::sleep(Duration::from_millis(150));
+    if paste_task(id, &task).is_err() {
+        return undo("its screen did not change with the task pasted: is its agent ready?", true);
+    }
     keys(id, "enter")?;
     let started = (0..10).any(|_| {
         std::thread::sleep(Duration::from_millis(400));
