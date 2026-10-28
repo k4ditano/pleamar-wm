@@ -94,6 +94,9 @@ fn now(windows: &[(usize, u32)]) -> Option<Value> {
         .filter(|(slot, ..)| free(num(at(&format!("win.{slot}.screen"))) as usize) || wired(*slot))
         // (A place it never had is no place to bring it back to.)
         .filter(|(slot, ..)| num(at(&format!("fw.{slot}"))) > 1.0)
+        // (Nor one with a name: whoever named it brings it back, as it was —an
+        // agent started with its role and model—, and here it would come back twice.)
+        .filter(|(_, _, i)| i.get("name").is_none_or(|n| n.is_empty()))
         .filter_map(|(slot, pid, i)| {
             let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?.display().to_string();
             Some(json!({
@@ -190,7 +193,7 @@ pub fn restore(dismiss: bool) -> Result<String, String> {
     for w in kept["windows"].as_array().into_iter().flatten() {
         let program = w["program"].as_str().unwrap_or("");
         let folder = w["folder"].as_str().filter(|f| std::path::Path::new(f).is_dir()).map(str::to_owned).unwrap_or_else(|| std::env::var("HOME").unwrap_or_default());
-        let Ok((slot, id)) = crate::link::open_terminal(program, &folder, false) else { continue };
+        let Ok((slot, id)) = crate::link::open_terminal(program, &folder, false, None) else { continue };
         opened += 1;
         new_slot.insert(w["slot"].as_i64().unwrap_or(-1), slot);
         // On its monitor (where the agent's hands can take it), in its place.

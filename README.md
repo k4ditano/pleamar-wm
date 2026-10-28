@@ -68,6 +68,14 @@ the open windows without closing anything.
   Claude Code's hooks, which tell its terminal exactly how it is and its last
   answer. `link spawn codex "TASK"` opens a terminal with that agent beside
   yours, wired, and hands it the task. `link setup --undo` takes it away.
+- **Terminals with a name, for your shell**: `pleamar-wm link open --name
+  Prohard --folder ~/Proyectos --quiet claude --model claude-opus-5-5` opens a
+  terminal of its own —beside nobody's, wired to nobody— in that folder,
+  types the command into its shell and prints its window's number. The name
+  is in its environment (`PLEAMAR_NAME`, which what runs there inherits), its
+  layer tells it (`name` in `term info`) and the scene has it as `who.N`, so a
+  shell knows that window is that companion of yours wherever it goes. A named
+  terminal is its namer's to bring back: the kept canvas leaves it out.
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and

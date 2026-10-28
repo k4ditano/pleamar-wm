@@ -1801,6 +1801,8 @@ scene Session {
         // what and where («claude · ~/Proyectos/pleamar»).
         fact ag.$i = 0
         text agt.$i = ""
+        // The name its terminal was opened with (`link open --name`), if any.
+        text who.$i = ""
         // What it asked was answered by another window's agent: said on it a while.
         fact ansby.$i = -1
         prop ansv.$i = 0 ~260ms

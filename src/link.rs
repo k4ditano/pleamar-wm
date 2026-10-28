@@ -812,6 +812,11 @@ const USAGE: &str = "pleamar-wm link — the windows wired to yours (on a canvas
                                   (claude, codex…) started and TASK handed to it
   setup [--yes] [--undo]          lets your agents use wires by themselves: the skill, the MCP
                                   server (`link mcp`) for Claude Code and Codex, Claude's hooks
+  open [--folder D] [--name NAME] [--terminal PROGRAM] [--quiet] [COMMAND…]
+                                  a terminal of its own, wired to nobody, in D (home), named
+                                  (`who.N` in the scene, PLEAMAR_NAME inside), with COMMAND
+                                  typed into its shell; --quiet, without taking the keyboard.
+                                  Prints its window's number. Needs no window of your own
   label N NAME                    names the wire to N («tests»): shown on it, and N can be NAME
   list                            the windows wired to yours: number, title, what runs there
   read N [LINES]                  the last lines of its terminal (200)
@@ -1176,6 +1181,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         }
         "setup" => setup(rest.iter().any(|a| a == "--yes"), rest.iter().any(|a| a == "--undo")),
         "spawn" => spawn(rest),
+        "open" => open(rest),
         "restore" => crate::keep::restore(rest.iter().any(|a| a == "--dismiss")),
         _ => Err(USAGE.into()),
     }
@@ -1380,7 +1386,7 @@ pub(crate) fn pid_of_slot(slot: usize) -> Option<u32> {
 
 /// A program the session starts as it starts its own: loose from the caller.
 /// `quiet`: its window opens without taking the person's keyboard.
-fn start(exe: &str, cwd: &str, quiet: bool) -> Result<u32, String> {
+fn start(exe: &str, cwd: &str, quiet: bool, name: Option<&str>) -> Result<u32, String> {
     let mut c = std::process::Command::new(exe);
     c.current_dir(cwd).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     // Not as the caller's terminal: the new one gets a layer of its own. Inside
@@ -1401,6 +1407,11 @@ fn start(exe: &str, cwd: &str, quiet: bool) -> Result<u32, String> {
     if quiet {
         c.env(crate::term::QUIET, "1");
     }
+    // Its own name, or none: never the caller's.
+    match name {
+        Some(n) => c.env(crate::term::NAME, n),
+        None => c.env_remove(crate::term::NAME),
+    };
     use std::os::unix::process::CommandExt;
     c.process_group(0);
     c.spawn().map(|ch| ch.id()).map_err(|e| format!("{exe}: {e}"))
@@ -1415,10 +1426,10 @@ fn agent_marker(name: &str) -> bool {
 /// A terminal opened for an agent: the same program as the caller's (kitty,
 /// Alacritty…), in that folder. Its window's place and its layer, once both
 /// are there. `quiet`: the keyboard stays where the person has it.
-pub(crate) fn open_terminal(exe: &str, cwd: &str, quiet: bool) -> Result<(usize, i32), String> {
+pub(crate) fn open_terminal(exe: &str, cwd: &str, quiet: bool, name: Option<&str>) -> Result<(usize, i32), String> {
     let before: Vec<usize> = windows()?.iter().map(|w| w.slot).collect();
     let known: Vec<i32> = crate::term::layers().iter().map(|(id, _)| *id).collect();
-    let pid = start(exe, cwd, quiet)?;
+    let pid = start(exe, cwd, quiet, name)?;
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(300));
@@ -1478,7 +1489,7 @@ fn spawn(rest: &[String]) -> Result<String, String> {
     let terminal = h.info.get("terminal").and_then(|t| t.parse::<u32>().ok()).ok_or("this terminal's program is not known")?;
     let exe = std::fs::read_link(format!("/proc/{terminal}/exe")).map(|p| p.display().to_string()).map_err(|e| format!("this terminal's program: {e}"))?;
     // Beside the caller, for the caller: the person goes on typing where they were.
-    let (slot, id) = open_terminal(&exe, &cwd, true)?;
+    let (slot, id) = open_terminal(&exe, &cwd, true, None)?;
     // Beside the caller's window, on the plane, as big.
     let place: Vec<f64> = say(&[format!("get fx.{}", h.slot), format!("get fy.{}", h.slot), format!("get fw.{}", h.slot), format!("get fh.{}", h.slot)]).iter().filter_map(|v| v.trim().parse().ok()).collect();
     if let [x, y, w, hh] = place[..] {
@@ -1525,6 +1536,66 @@ fn spawn(rest: &[String]) -> Result<String, String> {
         Ready::Gone(why) => Err(format!("{opened} But {why}: your task was not handed.")),
         Ready::Late => Err(format!("{opened} But it did not get ready in 60 s: hand it the task with link_delegate {slot} when it is")),
     }
+}
+
+/// `link open [--folder D] [--name NAME] [--terminal PROGRAM] [--quiet]
+/// [COMMAND…]`: a terminal of its own, not beside anyone's and wired to
+/// nobody, named, in that folder, with COMMAND typed into its shell once it is
+/// there. What a shell starts its companions with (Calima's caravan): the name
+/// is how it knows them again (`who.N`), and a named terminal is theirs to
+/// bring back, so the kept canvas leaves it out.
+fn open(rest: &[String]) -> Result<String, String> {
+    const HOW: &str = "open [--folder DIR] [--name NAME] [--terminal PROGRAM] [--quiet] [COMMAND…]";
+    let mut flags: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let (mut words, mut quiet, mut k) = (Vec::new(), false, 0);
+    while k < rest.len() {
+        match rest[k].as_str() {
+            f @ ("--folder" | "--name" | "--terminal") => {
+                flags.insert(f, rest.get(k + 1).cloned().ok_or(HOW)?);
+                k += 2;
+            }
+            "--quiet" => {
+                quiet = true;
+                k += 1;
+            }
+            _ => {
+                words.extend(rest[k..].iter().cloned());
+                break;
+            }
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cwd = flags.get("--folder").map(|f| if f == "~" || f.starts_with("~/") { f.replacen('~', &home, 1) } else { f.clone() }).unwrap_or_else(|| home.clone());
+    if !std::path::Path::new(&cwd).is_dir() {
+        return Err(format!("«{cwd}» is not a folder"));
+    }
+    let name = flags.get("--name").map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
+    if let Some(n) = &name {
+        if n.chars().count() > 64 || n.chars().any(char::is_control) {
+            return Err(format!("«{n}» is not a name: one line, up to 64 letters"));
+        }
+    }
+    // The one asked for; or the one the person uses (`$TERMINAL`); or the first there is.
+    let on_path = |p: &str| std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(p).is_file()));
+    let exe = flags
+        .get("--terminal")
+        .cloned()
+        .or_else(|| std::env::var("TERMINAL").ok().filter(|t| !t.is_empty()))
+        .or_else(|| ["alacritty", "kitty", "foot", "ghostty", "wezterm"].into_iter().find(|t| on_path(t)).map(str::to_owned))
+        .ok_or("no terminal to open: --terminal PROGRAM, or $TERMINAL")?;
+    let (slot, id) = open_terminal(&exe, &cwd, quiet, name.as_deref())?;
+    let command = words.join(" ");
+    if !command.is_empty() {
+        // Once its shell is there to type into.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && info(id).is_empty() {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        paste(id, &command)?;
+        std::thread::sleep(Duration::from_millis(120));
+        keys(id, "enter")?;
+    }
+    Ok(slot.to_string())
 }
 
 /// How an agent just started came to be.

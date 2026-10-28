@@ -95,6 +95,11 @@ pub fn link_of(real: &str) -> Option<String> {
 /// shell starts, so what is started from that terminal takes it as ever.
 pub const QUIET: &str = "PLEAMAR_OPEN_QUIET";
 
+/// In a terminal's environment: its name (`link open --name Prohard`). Its
+/// layer tells it in `info`, the scene has it as `who.N`, and what runs in it
+/// inherits it, as any variable: an agent there can know who it is.
+pub const NAME: &str = "PLEAMAR_NAME";
+
 /// Whether that process was started with `QUIET`.
 pub fn started_quiet(pid: u32) -> bool {
     pid != 0 && std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|e| e.split(|b| *b == 0).any(|v| v == format!("{QUIET}=1").as_bytes()))
@@ -899,9 +904,12 @@ fn answer(s: &Shared, mut c: std::os::unix::net::UnixStream) {
             // prompt) goes into a reply of one line a field: a newline in it must
             // not start a field of its own.
             let (cmd, cwd, title, before) = (one_line(&cmd), one_line(&cwd), one_line(&title), one_line(&before));
+            // The name it was opened with (`link open --name`, or `PLEAMAR_NAME`
+            // set by whoever started its terminal): who it is, for a shell.
+            let name = one_line(&std::env::var(NAME).unwrap_or_default());
             let quiet = s.started.elapsed().as_millis() as u64 - s.last_out.load(std::sync::atomic::Ordering::Relaxed);
             format!(
-                "layer {}\nterminal {}\nshell {}\nforeground {pid}\ncommand {cmd}\ncwd {cwd}\nagent {}\ntitle {title}\nstate {}\nsize {cols}x{rows}\nfullscreen {}\nbells {bells}\nquiet {quiet}\ncursor {cursor}\nhook {}\nanswers {}\ndraft {}\nbefore {before}\n",
+                "layer {}\nterminal {}\nshell {}\nforeground {pid}\ncommand {cmd}\ncwd {cwd}\nagent {}\ntitle {title}\nstate {}\nsize {cols}x{rows}\nfullscreen {}\nbells {bells}\nquiet {quiet}\ncursor {cursor}\nhook {}\nanswers {}\ndraft {}\nbefore {before}\nname {name}\n",
                 // SAFETY: plain questions about this process.
                 unsafe { libc::getpid() },
                 unsafe { libc::getppid() },
@@ -1216,7 +1224,8 @@ fn unnumbered(tail: &[&str]) -> Option<Question> {
 /// For the scene, every second: in which windows (`windows`, `slot pid`, as
 /// pleamar-wm writes it) an agent runs in a terminal through a layer, and
 /// how it is —`ag.N` 1 working, 2 ready, 3 waiting for the person; `agt.N`
-/// «claude · ~/Proyectos/pleamar»—. Said only when it changes. In a thread of
+/// «claude · ~/Proyectos/pleamar»—, and the name its terminal was opened with
+/// (`who.N`, any terminal, agent or not). Said only when it changes. In a thread of
 /// its own: a terminal slow to answer never holds the compositor.
 pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar::scene::ToRender>) {
     use pleamar::scene::{intern, ToRender};
@@ -1225,6 +1234,7 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
     std::thread::spawn(move || {
         let home = std::env::var("HOME").unwrap_or_default();
         let mut said: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
+        let mut named: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let text = std::fs::read_to_string(&windows).unwrap_or_default();
@@ -1234,8 +1244,12 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
             }).collect();
             let all = if slots.is_empty() { Vec::new() } else { layers_in(&folder) };
             let mut now: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
+            let mut names: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
             for (slot, pid) in &slots {
                 let mine: Vec<&(i32, std::collections::BTreeMap<String, String>)> = all.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(*pid)).collect();
+                if let Some(n) = mine.iter().find_map(|(_, i)| i.get("name").filter(|n| !n.is_empty())) {
+                    names.insert(*slot, n.clone());
+                }
                 // A terminal with several shells: the one with an agent, the busiest.
                 let Some((id, info)) = mine.iter().filter(|(_, i)| i.get("agent").is_some_and(|a| !a.is_empty())).min_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX)) else { continue };
                 let agent = info.get("agent").cloned().unwrap_or_default();
@@ -1253,6 +1267,17 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                     2
                 };
                 now.insert(*slot, (state, format!("{agent} · {cwd}")));
+            }
+            for slot in named.keys().chain(names.keys()).copied().collect::<std::collections::HashSet<usize>>() {
+                let new = names.get(&slot).cloned().unwrap_or_default();
+                if named.get(&slot).cloned().unwrap_or_default() != new {
+                    let _ = to_render.send(ToRender::Text(intern(&format!("who.{slot}")), new.clone()));
+                    if new.is_empty() {
+                        named.remove(&slot);
+                    } else {
+                        named.insert(slot, new);
+                    }
+                }
             }
             let slots_known: std::collections::HashSet<usize> = said.keys().chain(now.keys()).copied().collect();
             for slot in slots_known {
