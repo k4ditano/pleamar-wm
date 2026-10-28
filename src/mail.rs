@@ -111,8 +111,14 @@ fn told() {
 pub(crate) fn post(args: &[String]) -> Result<String, String> {
     let mut from = String::new();
     let mut words = Vec::new();
+    let mut noreply = false;
     let mut k = 0;
     while k < args.len() {
+        if args[k] == "--no-reply" {
+            noreply = true;
+            k += 1;
+            continue;
+        }
         if args[k] == "--from" {
             from = args.get(k + 1).cloned().ok_or("--from WHO: who it is from")?;
             k += 2;
@@ -133,7 +139,11 @@ pub(crate) fn post(args: &[String]) -> Result<String, String> {
         b["next"] = json!(id + 1);
         let ahead = b["waiting"].as_array().map_or(0, Vec::len) + usize::from(!b["out"].is_null());
         if let Some(w) = b["waiting"].as_array_mut() {
-            w.push(json!({"id": id, "from": from, "text": text, "at": now_ms()}));
+            let mut l = json!({"id": id, "from": from, "text": text, "at": now_ms()});
+            if noreply {
+                l["noreply"] = json!(true);
+            }
+            w.push(l);
         }
         (id, ahead)
     })?;
@@ -320,9 +330,11 @@ pub(crate) fn keep_done(b: &mut Value, l: Value) {
     }
 }
 
-pub(crate) const USAGE: &str = "pleamar-wm link post NAME TEXT… [--from WHO]
+pub(crate) const USAGE: &str = "pleamar-wm link post NAME TEXT… [--from WHO] [--no-reply]
                                   a letter for the agent in the terminal named NAME (`link open
-                                  --name`): handed to it when it is free, after those before it
+                                  --name`): handed to it when it is free, after those before it;
+                                  from a named terminal, its answer is typed back into it (not
+                                  with --no-reply)
 pleamar-wm link mail [NAME] [--json]
                                   the mailboxes: what waits, what each is at, its last answers
 pleamar-wm link mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID

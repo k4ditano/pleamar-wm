@@ -207,27 +207,29 @@ fn crew_lines(h: &Here) -> Option<String> {
 
 /// A task for a companion of the caravan, by name, through its mailbox: its
 /// answer waited for here (`--wait`, or a shell), or —an agent— typed into
-/// the caller's terminal when it comes, by a messenger of its own.
+/// the caller's terminal when it comes, by the messenger that hands it.
 fn delegate_by_mail(h: &Here, to: &str, title: &str, rest: &[String]) -> Result<String, String> {
     let task = words(&rest[1..]);
     if task.is_empty() {
         return Err("delegate NAME TASK [--wait] [--timeout S]".into());
     }
     let me = h.info.get("name").cloned().unwrap_or_default();
-    let said = crate::mail::post(&[to.to_owned(), task, "--from".to_owned(), me])?;
-    let id: u64 = said.strip_prefix("letter ").and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()).ok_or("the mailbox did not say which letter it is")?;
     let caller_agent = h.info.get("agent").is_some_and(|a| !a.is_empty());
-    if rest.iter().any(|a| a == "--wait") || !caller_agent {
+    let waits = rest.iter().any(|a| a == "--wait") || !caller_agent;
+    // (Not waited for here: the messenger that hands it types its answer back into this terminal.)
+    let mut post = vec![to.to_owned(), task, "--from".to_owned(), me];
+    if waits {
+        post.push("--no-reply".to_owned());
+    }
+    let said = crate::mail::post(&post)?;
+    let id: u64 = said.strip_prefix("letter ").and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()).ok_or("the mailbox did not say which letter it is")?;
+    if waits {
         let timeout = number(rest, "--timeout", 600);
         return match mail_answer(to, id, Duration::from_secs(timeout)) {
             Some(l) => Ok(mail_answer_text(title, &l)),
             None => Err(format!("{title} has not answered in {timeout} s. It goes on: its answer stays in its mailbox (`pleamar-wm link mail {to}`).")),
         };
     }
-    let mut c = std::process::Command::new("setsid");
-    c.arg("-f").arg(own_exe()).args(["link", "_mailback", to, &id.to_string(), &h.layer.to_string(), title]);
-    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    c.spawn().map_err(|e| e.to_string())?;
     Ok(format!("Your task is in {title}'s mailbox (letter {id}): {title} gets it as soon as it is free —if it is not started, the desktop starts it— and its answer will be typed into this terminal when it comes."))
 }
 
@@ -1332,16 +1334,6 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         "mail" => crate::mail::mail(rest),
         // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
         "_mail" => mail_deliver(rest),
-        // The messenger of a task handed by name through a mailbox (`delegate_by_mail`): its answer, into the
-        // terminal of the one who handed it.
-        "_mailback" => {
-            let (to, id, mine, title) = (rest.first().cloned().unwrap_or_default(), rest.get(1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0), rest.get(2).and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1), rest.get(3).cloned().unwrap_or_default());
-            match mail_answer(&to, id, Duration::from_secs(24 * 3600)) {
-                Some(l) => tell(mine, &format!("[{title}'s answer to the task you handed it, through its mailbox] It is in the pasted text."), &mail_answer_text(&title, &l))?,
-                None => tell(mine, &format!("[{title} has not answered your task in a day] It is in the pasted text."), &format!("Its answer, if it comes, stays in its mailbox: `pleamar-wm link mail {to}`."))?,
-            }
-            Ok(String::new())
-        }
         "restore" => crate::keep::restore(rest.iter().any(|a| a == "--dismiss")),
         _ => Err(USAGE.into()),
     }
@@ -2002,6 +1994,17 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
         }
     })?;
     say(&[format!("fact mail.seq {}", crate::mail::seq())]);
+    // From another named terminal (a companion, however it posted it): its
+    // answer, typed back into it. Not to one waiting for it itself
+    // (`--no-reply`), nor to a routine or a table (no terminal has that name).
+    let sender = letter["from"].as_str().unwrap_or("");
+    if !sender.is_empty() && letter["noreply"] != true && sender != name {
+        if let Some((back, _)) = crate::term::layers().into_iter().find(|(_, i)| i.get("name").map(String::as_str) == Some(sender)) {
+            let title = crate::mail::all().iter().find(|b| b["name"].as_str() == Some(name.as_str())).and_then(|b| b["card"]["title"].as_str().filter(|t| !t.is_empty()).map(str::to_owned)).unwrap_or_else(|| name.clone());
+            let done = serde_json::json!({ "how": how, "answer": answer });
+            let _ = tell(back, &format!("[{title}'s answer to the letter you sent it, through its mailbox] It is in the pasted text."), &mail_answer_text(&title, &done));
+        }
+    }
     Ok(String::new())
 }
 

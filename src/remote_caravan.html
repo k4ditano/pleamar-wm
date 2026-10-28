@@ -99,6 +99,8 @@
   .bub.them { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
   .bub.them.bad { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
   .bub .from { display: block; font-size: 11.5px; font-weight: 600; color: var(--faint); margin-bottom: 2px; }
+  .bub .pic { display: block; margin-top: 8px; }
+  .bub .pic img { display: block; max-width: 100%; max-height: 260px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
   .bub .more { display: block; margin-top: 6px; color: var(--sea); font-size: 13px; font-weight: 600; }
   .stamp { font-size: 11px; color: var(--dim); margin: 0 6px 6px; }
   .stamp.me { align-self: flex-end; }
@@ -293,7 +295,7 @@
   }
   const HOW = { late: 'It took too long', gone: 'Its terminal closed', lost: 'Lost when the session ended', refused: 'It did not take the letter' };
   // Who a letter is from: a routine, a table, another companion.
-  const fromText = f => f.replace(/^routine /, t('routine') + ' ').replace(/^table /, t('table') + ' ');
+  const fromText = f => byName(f) ? look(byName(f)).title : f.replace(/^routine /, t('routine') + ' ').replace(/^table /, t('table') + ' ');
   const STATE = { free: 'Free', working: 'Working…', asking: 'Asks you', away: 'Not started', shell: 'Shell' };
   const stateText = c => c.paused && c.state !== 'asking' ? t('Paused') : t(STATE[c.state] || c.state);
 
@@ -376,7 +378,7 @@
       top.append(el('span', 'name', look(c).title));
       if (c.waiting) top.append(el('span', 'badge', String(c.waiting)));
       top.append(el('span', 'state', stateText(c)));
-      body.append(top, el('div', 'line', c.question ? c.question.text : c.doing || c.last || look(c).sub || ''));
+      body.append(top, el('div', 'line', c.question ? c.question.text : c.doing || unlink(c.last || '') || look(c).sub || ''));
       row.append(body);
       row.onclick = () => openTalk(c.name);
       list.append(row);
@@ -393,6 +395,23 @@
     if (d.toDateString() === y.toDateString()) return `${t('Yesterday')} ${hm}`;
     return `${d.toLocaleDateString(ES ? 'es' : undefined, { day: 'numeric', month: 'short' })} ${hm}`;
   };
+  // The pictures an answer names (`/…/fondo.png`, or a Markdown link to one): shown under it, from the server
+  // (`/caravan/file`, which gives only those a letter names). A link shows its words, not its path.
+  const PIC = /(\/[^\s)\]"'<>`]+\.(?:png|jpe?g|webp|gif))/gi;
+  const unlink = text => text.replace(/\[([^\]]+)\]\((\/[^)\s]+)\)/g, '$1');
+  function pictures(bub, text) {
+    const seen = new Set();
+    for (const m of text.matchAll(PIC)) {
+      const p = m[1];
+      if (seen.has(p)) continue;
+      seen.add(p);
+      const url = '/caravan/file?path=' + encodeURIComponent(p);
+      const a = el('a', 'pic'); a.href = url; a.target = '_blank'; a.rel = 'noopener';
+      const img = el('img'); img.src = url; img.loading = 'lazy'; img.alt = p.split('/').pop();
+      img.onerror = () => a.remove();
+      a.append(img); bub.append(a);
+    }
+  }
   function longText(bub, text, key) {
     const LIMIT = 900;
     if (text.length <= LIMIT) { bub.append(document.createTextNode(text)); return; }
@@ -440,7 +459,8 @@
       const bad = l.how && l.how !== 'done';
       const them = el('div', 'bub them' + (bad ? ' bad' : ''));
       if (bad) them.append(el('span', 'from', t(HOW[l.how] || l.how)));
-      longText(them, (l.answer || '').trim() || '—', 'a' + l.id);
+      longText(them, unlink((l.answer || '').trim()) || '—', 'a' + l.id);
+      pictures(them, l.answer || '');
       chat.append(them, el('div', 'stamp them', when(l.ended)));
     }
     if (atEnd || drawChat.first) { sc.scrollTop = sc.scrollHeight; drawChat.first = false; }

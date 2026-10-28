@@ -571,6 +571,12 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             }
             let q = form(req.path.split_once('?').map_or("", |(_, q)| q));
             let name = q.get("name").cloned().unwrap_or_default();
+            if p == "/caravan/file" {
+                return match crate::caravan::picture(&q.get("path").cloned().unwrap_or_default()) {
+                    Ok((bytes, kind)) => respond(&mut stream, "200 OK", kind, "", &bytes),
+                    Err(e) => respond(&mut stream, "404 Not Found", "text/plain", "", e.as_bytes()),
+                };
+            }
             let body = match p {
                 "/caravan/state" => crate::caravan::companions(),
                 "/caravan/talk" => crate::caravan::talk(&name),

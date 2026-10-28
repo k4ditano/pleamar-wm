@@ -185,3 +185,31 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
         other => Err(format!("«{other}»: nothing to do")),
     }
 }
+
+/// An image a companion's answer names (`/…/fondo.png`), for the caravan page
+/// to show (`/caravan/file?path=`): only a path that a letter or an answer
+/// of some mailbox says as it is, of a picture (png, jpg, webp, gif) that is
+/// there, and not over 20 MB. Nothing else of the disk.
+pub(crate) fn picture(path: &str) -> Result<(Vec<u8>, &'static str), String> {
+    let lower = path.to_lowercase();
+    let kind = [(".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".webp", "image/webp"), (".gif", "image/gif")]
+        .iter()
+        .find(|(e, _)| lower.ends_with(e))
+        .map(|(_, k)| *k)
+        .ok_or("not a picture")?;
+    if !path.starts_with('/') || path.contains("/../") {
+        return Err("not a path".into());
+    }
+    let said = crate::mail::all().iter().any(|b| {
+        let has = |l: &Value| l["answer"].as_str().is_some_and(|a| a.contains(path)) || l["text"].as_str().is_some_and(|t| t.contains(path));
+        b["done"].as_array().into_iter().flatten().any(has) || has(&b["out"])
+    });
+    if !said {
+        return Err("no letter names it".into());
+    }
+    let meta = std::fs::metadata(path).map_err(|_| "not there".to_owned())?;
+    if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
+        return Err("not a picture it shows".into());
+    }
+    Ok((std::fs::read(path).map_err(|e| e.to_string())?, kind))
+}
