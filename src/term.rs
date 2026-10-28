@@ -1270,7 +1270,8 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                 };
                 now.insert(*slot, (state, format!("{agent} · {cwd}")));
                 if let Some(n) = names.get(slot) {
-                    mailable.push((n.clone(), *slot, *id, state == 2 && info.get("draft").map(String::as_str) != Some("1")));
+                    // (Free as the messenger will see it: at rest too —an agent just started, still drawing, is not—.)
+                    mailable.push((n.clone(), *slot, *id, state == 2 && info.get("draft").map(String::as_str) != Some("1") && crate::link::at_rest(info)));
                 }
             }
             // The mailboxes of the named ones (mail.rs): the next letter to each that is free.

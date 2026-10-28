@@ -164,6 +164,97 @@ impl Here {
     }
 }
 
+/// The caller's caravan: when its terminal has a name (a companion, `link open
+/// --name`), every other name with a mailbox or a terminal of its own —its
+/// name, what to call it, how it is—. A team: they ask each other by name,
+/// through the mailbox (mail.rs), with no wire. A terminal with no name is no
+/// one's companion, and has only its wires.
+fn crew(h: &Here) -> Vec<(String, String, &'static str)> {
+    let Some(me) = h.info.get("name").filter(|n| !n.is_empty()) else { return Vec::new() };
+    let how = |name: &str| match h.layers.iter().find(|(_, i)| i.get("name").map(String::as_str) == Some(name)) {
+        None => "not started",
+        Some((_, i)) if at_rest(i) => "ready",
+        Some(_) => "working",
+    };
+    let mut out: Vec<(String, String, &'static str)> = Vec::new();
+    for b in crate::mail::all() {
+        let Some(name) = b["name"].as_str().filter(|n| n != me) else { continue };
+        let title = b["card"]["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(name).to_owned();
+        out.push((name.to_owned(), title, how(name)));
+    }
+    for (_, i) in &h.layers {
+        if let Some(n) = i.get("name").filter(|n| !n.is_empty() && *n != me) {
+            if !out.iter().any(|o| &o.0 == n) {
+                out.push((n.clone(), n.clone(), how(n)));
+            }
+        }
+    }
+    out
+}
+
+/// Said to an agent: its caravan, and how to ask them.
+fn crew_lines(h: &Here) -> Option<String> {
+    let crew = crew(h);
+    if crew.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = crew.iter().map(|(n, t, s)| if n == t { format!("  {n} ({s})") } else { format!("  {n} «{t}» ({s})") }).collect();
+    Some(format!(
+        "Your caravan —your team, no wire needed—: ask any of them by name with `link_delegate` (window: its name). It goes through their mailbox; one not started is started, and its answer comes back to you like a wired one's.\n{}",
+        list.join("\n")
+    ))
+}
+
+/// A task for a companion of the caravan, by name, through its mailbox: its
+/// answer waited for here (`--wait`, or a shell), or —an agent— typed into
+/// the caller's terminal when it comes, by a messenger of its own.
+fn delegate_by_mail(h: &Here, to: &str, title: &str, rest: &[String]) -> Result<String, String> {
+    let task = words(&rest[1..]);
+    if task.is_empty() {
+        return Err("delegate NAME TASK [--wait] [--timeout S]".into());
+    }
+    let me = h.info.get("name").cloned().unwrap_or_default();
+    let said = crate::mail::post(&[to.to_owned(), task, "--from".to_owned(), me])?;
+    let id: u64 = said.strip_prefix("letter ").and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()).ok_or("the mailbox did not say which letter it is")?;
+    let caller_agent = h.info.get("agent").is_some_and(|a| !a.is_empty());
+    if rest.iter().any(|a| a == "--wait") || !caller_agent {
+        let timeout = number(rest, "--timeout", 600);
+        return match mail_answer(to, id, Duration::from_secs(timeout)) {
+            Some(l) => Ok(mail_answer_text(title, &l)),
+            None => Err(format!("{title} has not answered in {timeout} s. It goes on: its answer stays in its mailbox (`pleamar-wm link mail {to}`).")),
+        };
+    }
+    let mut c = std::process::Command::new("setsid");
+    c.arg("-f").arg(own_exe()).args(["link", "_mailback", to, &id.to_string(), &h.layer.to_string(), title]);
+    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c.spawn().map_err(|e| e.to_string())?;
+    Ok(format!("Your task is in {title}'s mailbox (letter {id}): {title} gets it as soon as it is free —if it is not started, the desktop starts it— and its answer will be typed into this terminal when it comes."))
+}
+
+/// The letter `id` of `to`'s mailbox, once answered (or ended otherwise).
+fn mail_answer(to: &str, id: u64, timeout: Duration) -> Option<serde_json::Value> {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if let Some(l) = crate::mail::all().iter().find(|b| b["name"].as_str() == Some(to)).and_then(|b| b["done"].as_array()?.iter().find(|l| l["id"].as_u64() == Some(id)).cloned()) {
+            return Some(l);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    None
+}
+
+fn mail_answer_text(title: &str, l: &serde_json::Value) -> String {
+    let answer = l["answer"].as_str().unwrap_or("").trim().to_owned();
+    match l["how"].as_str().unwrap_or("done") {
+        "done" if !answer.is_empty() => answer,
+        "done" => format!("{title} answered nothing on its screen."),
+        "gone" => format!("{title}'s terminal closed before it answered."),
+        "late" => format!("{title} stopped answering. What it said so far:\n{answer}"),
+        "refused" => format!("{title} did not take the task: {answer}"),
+        other => format!("{title}: {other}. {answer}"),
+    }
+}
+
 fn line_of(slot: usize, w: &Win, layer: Option<&(i32, Info)>, label: &str) -> String {
     let g = |k: &str| layer.and_then(|(_, i)| i.get(k)).cloned().unwrap_or_default();
     let what = match layer {
@@ -226,7 +317,7 @@ pub(crate) fn keys(id: i32, names: &str) -> Result<(), String> {
 /// Code's «waiting for you» a minute after its last answer, landing just as
 /// a new task starts—, or shows it is ready (✳), or —no title to go by—
 /// nothing has come out of it for a while.
-fn at_rest(i: &Info) -> bool {
+pub(crate) fn at_rest(i: &Info) -> bool {
     if let Some(h) = i.get("hook").filter(|h| !h.is_empty()) {
         return h == "done" && i.get("state").map(String::as_str) != Some("working");
     }
@@ -887,15 +978,26 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     out.push_str(&format!("  {}\n", line_of(w.slot, w, layer_of(w.pid, &h.layers).as_ref(), h.label(k))));
                 }
             }
+            if let Some(c) = crew_lines(&h) {
+                out.push_str(&format!("\n{c}"));
+            }
             Ok(out)
         }
         "list" => {
             let h = here()?;
             let wired = h.wired();
+            let crew = crew_lines(&h);
             if wired.is_empty() {
-                return Ok("No window is wired to yours. The person wires them: on a free monitor (Super+W), dragging the drop at the start of a window's title bar onto another window.".into());
+                return Ok(match crew {
+                    Some(c) => format!("No window is wired to yours.\n{c}"),
+                    None => "No window is wired to yours. The person wires them: on a free monitor (Super+W), dragging the drop at the start of a window's title bar onto another window.".into(),
+                });
             }
-            Ok(wired.iter().map(|(k, w, _)| line_of(w.slot, w, layer_of(w.pid, &h.layers).as_ref(), h.label(*k))).collect::<Vec<_>>().join("\n"))
+            let lines = wired.iter().map(|(k, w, _)| line_of(w.slot, w, layer_of(w.pid, &h.layers).as_ref(), h.label(*k))).collect::<Vec<_>>().join("\n");
+            Ok(match crew {
+                Some(c) => format!("{lines}\n{c}"),
+                None => lines,
+            })
         }
         // The wire to that window, named («tests»): shown on it, and a name to give it.
         "label" => {
@@ -920,6 +1022,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             let rest = &rest[..];
             let name = rest.first().ok_or(USAGE)?;
             let h = here()?;
+            // A companion of the caravan not wired to this one: by name, through its mailbox.
+            if verb == "delegate" && h.target(name).is_err() {
+                if let Some((to, title, _)) = crew(&h).into_iter().find(|(n, t, _)| n.eq_ignore_ascii_case(name) || t.eq_ignore_ascii_case(name)) {
+                    return delegate_by_mail(&h, &to, &title, rest);
+                }
+            }
             let (k, w, mine_is_a) = h.target(name)?;
             let (id, tinfo) = h.shell_of(w, shell)?.ok_or_else(|| format!("window {} «{}» has no terminal of its own (through pleamar-wm's layer) to read or type in", w.slot, w.title))?;
             match verb {
@@ -1224,6 +1332,16 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         "mail" => crate::mail::mail(rest),
         // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
         "_mail" => mail_deliver(rest),
+        // The messenger of a task handed by name through a mailbox (`delegate_by_mail`): its answer, into the
+        // terminal of the one who handed it.
+        "_mailback" => {
+            let (to, id, mine, title) = (rest.first().cloned().unwrap_or_default(), rest.get(1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0), rest.get(2).and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1), rest.get(3).cloned().unwrap_or_default());
+            match mail_answer(&to, id, Duration::from_secs(24 * 3600)) {
+                Some(l) => tell(mine, &format!("[{title}'s answer to the task you handed it, through its mailbox] It is in the pasted text."), &mail_answer_text(&title, &l))?,
+                None => tell(mine, &format!("[{title} has not answered your task in a day] It is in the pasted text."), &format!("Its answer, if it comes, stays in its mailbox: `pleamar-wm link mail {to}`."))?,
+            }
+            Ok(String::new())
+        }
         "restore" => crate::keep::restore(rest.iter().any(|a| a == "--dismiss")),
         _ => Err(USAGE.into()),
     }
@@ -1775,12 +1893,15 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
         });
         say(&[format!("fact mail.seq {}", crate::mail::seq())]);
     };
-    // The letter back where it was, first: not handed after all.
-    let undo = |why: &str| -> Result<String, String> {
+    // The letter back where it was, first: not handed after all. `counts`: a
+    // try that failed (its screen did not take what was typed); one that was
+    // not free after all (an agent still starting, drawing its screen) is no
+    // try, and the letter only waits again.
+    let undo = |why: &str, counts: bool| -> Result<String, String> {
         let _ = crate::mail::with(&name, |b| {
             if b["out"]["pid"].as_u64() == Some(me) {
                 let mut l = b["out"].take();
-                let tries = l["tries"].as_u64().unwrap_or(0) + 1;
+                let tries = l["tries"].as_u64().unwrap_or(0) + u64::from(counts);
                 for k in ["pid", "state", "slot"] {
                     l.as_object_mut().map(|o| o.remove(k));
                 }
@@ -1802,10 +1923,10 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
     };
     let i = info(id);
     if i.get("name").map(String::as_str) != Some(name.as_str()) {
-        return undo("its terminal is not the one named so any more");
+        return undo("its terminal is not the one named so any more", true);
     }
     if !at_rest(&i) || asked(id, &i).is_some() || i.get("draft").map(String::as_str) == Some("1") {
-        return undo("it was not free after all");
+        return undo("it was not free after all", false);
     }
     let task = letter["text"].as_str().unwrap_or("").to_owned();
     let from = letter["from"].as_str().filter(|f| !f.is_empty()).unwrap_or("your person");
@@ -1829,7 +1950,7 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
         }
     }
     if !took {
-        return undo("its screen did not change with what was typed: is its agent ready?");
+        return undo("its screen did not change with what was typed: is its agent ready?", true);
     }
     std::thread::sleep(Duration::from_millis(120));
     paste(id, &task)?;

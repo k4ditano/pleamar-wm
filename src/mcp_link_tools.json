@@ -22,7 +22,7 @@
   },
   {
     "name": "link_delegate",
-    "description": "Hand a task to the agent in a wired window (another Claude Code, Codex…): it is typed there as a pasted task saying it comes from you, and its answer comes back. With wait=false (the default) this returns at once and the answer —or a question it stops to ask on the way— is typed into your terminal when it is there; with wait=true this call returns the answer (or the question). This is how you talk to another agent the person wired to you: never start another agent of your own for it (codex exec, claude -p…), and never use the screen's cursor.",
+    "description": "Hand a task to the agent in a wired window (another Claude Code, Codex…), or —if you are a companion of a caravan— to any companion of yours by name, through its mailbox, with no wire: it is typed there as a pasted task saying it comes from you, and its answer comes back. With wait=false (the default) this returns at once and the answer —or a question it stops to ask on the way— is typed into your terminal when it is there; with wait=true this call returns the answer (or the question). This is how you talk to another agent the person wired to you: never start another agent of your own for it (codex exec, claude -p…), and never use the screen's cursor.",
     "inputSchema": {
       "type": "object",
       "properties": {
