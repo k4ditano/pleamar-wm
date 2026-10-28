@@ -278,6 +278,17 @@ pub(crate) fn turn(named: &[(String, usize, i32, bool)], sockets: &str) -> bool 
     changed
 }
 
+/// Whether the letter the terminal named so is at now came from a routine
+/// (`--from "routine NAME"`): that routine's name. Read as it is, no lock: a
+/// glance, not a change.
+pub(crate) fn routine_of(name: &str) -> Option<String> {
+    if valid(name).is_err() {
+        return None;
+    }
+    let b: Value = serde_json::from_str(&std::fs::read_to_string(path(name)).ok()?).ok()?;
+    b["out"]["from"].as_str()?.strip_prefix("routine ").map(|r| r.trim().to_owned()).filter(|r| !r.is_empty())
+}
+
 /// An answer kept, the last first, so many at most.
 pub(crate) fn keep_done(b: &mut Value, l: Value) {
     if let Some(d) = b["done"].as_array_mut() {

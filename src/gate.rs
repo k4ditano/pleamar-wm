@@ -13,6 +13,11 @@
 //! permissions; the rest is asked. A line that cannot be read denies
 //! everything until it is mended.
 //!
+//! A request made while the agent is at a letter from a routine (its mailbox,
+//! mail.rs: `--from "routine NAME"`) is held to less: rules can name it
+//! (WHO `routine`), and with no rule it is asked, but nobody answering, or no
+//! shell listening, denies it —nobody watches its screen—.
+//!
 //! Every decision is written down before it is told (`gate.log`, JSON a line,
 //! secrets hidden): when, who, in which window, what, the decision and by
 //! whom. The scene's `gate.seq` changes when a request comes or goes; a shell
@@ -61,6 +66,8 @@ struct Ask {
     tool: String,
     what: String,
     cwd: String,
+    /// The routine whose letter it is at, if one.
+    routine: String,
 }
 
 /// One rule of `gate.rules`.
@@ -138,7 +145,7 @@ fn rules() -> Result<Vec<Rule>, String> {
 /// Whether a rule says something of that: denials first.
 fn by_rules(rules: &[Rule], a: &Ask) -> Option<(bool, String)> {
     let fits = |r: &Rule| {
-        (r.who == "*" || r.who == a.agent.to_lowercase() || (!a.name.is_empty() && r.who == a.name.to_lowercase()))
+        (r.who == "*" || r.who == a.agent.to_lowercase() || (!a.name.is_empty() && r.who == a.name.to_lowercase()) || (r.who == "routine" && !a.routine.is_empty()))
             && (r.tool == "*" || r.tool == a.tool.to_lowercase())
             && glob(&r.what, &a.what)
     };
@@ -171,7 +178,7 @@ fn record(a: &Ask, id: &str, decision: &str, by: &str, why: &str) {
     let _ = std::fs::create_dir_all(dir());
     let line = json!({
         "at": now_ms(), "id": id, "agent": a.agent, "name": a.name, "slot": a.slot, "tool": a.tool,
-        "what": crate::agents::redact(&a.what), "cwd": a.cwd, "decision": decision, "by": by, "why": crate::agents::redact(why),
+        "what": crate::agents::redact(&a.what), "cwd": a.cwd, "routine": a.routine, "decision": decision, "by": by, "why": crate::agents::redact(why),
     });
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -193,14 +200,20 @@ fn decide(a: &Ask, wait: Duration) -> Option<(bool, String, String)> {
         record(a, &id, if allow { "allow" } else { "deny" }, &by, &why);
         return Some((allow, by, why));
     }
-    // Nobody to ask: no session, or no shell in it that answers.
+    // Nobody to ask: no session, or no shell in it that answers. A routine's is
+    // denied: nobody is at its screen either.
     if std::env::var("PLEAMAR_SOCKETS").ok().filter(|v| !v.is_empty()).is_none() || scene_get("gate.listen").is_none_or(|v| v == "0" || v == "false") {
+        if !a.routine.is_empty() {
+            let why = "a routine, and nobody listening".to_owned();
+            record(a, &id, "deny", "routine", &why);
+            return Some((false, "routine".into(), why));
+        }
         record(a, &id, "screen", "nobody listening", "");
         return None;
     }
     let _ = std::fs::create_dir_all(pending_dir());
     let file = format!("{}/{id}.json", pending_dir());
-    let req = json!({ "id": id, "at": now_ms(), "pid": std::process::id(), "agent": a.agent, "name": a.name, "slot": a.slot, "tool": a.tool, "what": a.what, "cwd": a.cwd });
+    let req = json!({ "id": id, "at": now_ms(), "pid": std::process::id(), "agent": a.agent, "name": a.name, "slot": a.slot, "tool": a.tool, "what": a.what, "cwd": a.cwd, "routine": a.routine });
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
@@ -234,6 +247,12 @@ fn decide(a: &Ask, wait: Duration) -> Option<(bool, String, String)> {
     let _ = std::fs::remove_file(&answer_file);
     match &got {
         Some((allow, by, why)) => record(a, &id, if *allow { "allow" } else { "deny" }, by, why),
+        None if !a.routine.is_empty() => {
+            let why = "a routine, and nobody answered in time".to_owned();
+            record(a, &id, "deny", "routine", &why);
+            told();
+            return Some((false, "routine".into(), why));
+        }
         None => record(a, &id, "screen", "nobody answered in time", ""),
     }
     told();
@@ -264,9 +283,11 @@ fn hook(agent: &str) -> i32 {
         return 0;
     }
     let tool = v.get("tool_name").and_then(Value::as_str).unwrap_or("").to_owned();
+    let name = std::env::var(crate::term::NAME).unwrap_or_default();
     let a = Ask {
         agent: agent.to_owned(),
-        name: std::env::var(crate::term::NAME).unwrap_or_default(),
+        routine: crate::mail::routine_of(&name).unwrap_or_default(),
+        name,
         slot: slot_here(),
         what: what_of(&tool, v.get("tool_input").unwrap_or(&Value::Null)),
         tool,
@@ -289,7 +310,8 @@ fn hook(agent: &str) -> i32 {
 fn ask(args: &[String]) -> i32 {
     let flag = |f: &str| args.iter().position(|a| a == f).and_then(|k| args.get(k + 1)).cloned().unwrap_or_default();
     let what = args.iter().position(|a| a == "--").map(|k| args[k + 1..].join(" ")).unwrap_or_default();
-    let a = Ask { agent: flag("--agent"), name: std::env::var(crate::term::NAME).unwrap_or_default(), slot: slot_here(), tool: flag("--tool"), what, cwd: flag("--cwd") };
+    let name = std::env::var(crate::term::NAME).unwrap_or_default();
+    let a = Ask { agent: flag("--agent"), routine: crate::mail::routine_of(&name).unwrap_or_default(), name, slot: slot_here(), tool: flag("--tool"), what, cwd: flag("--cwd") };
     if a.agent.is_empty() || a.tool.is_empty() {
         eprintln!("gate ask --agent AGENT --tool TOOL [--cwd DIR] [--wait SECONDS] -- WHAT");
         return 2;
@@ -486,7 +508,8 @@ fn status(json_out: bool) -> Result<String, String> {
 
 /// What a new `gate.rules` says: how to write one, and nothing in force.
 const RULES_TEMPLATE: &str = "# The gate's rules (pleamar-wm gate): one a line, deny|allow WHO TOOL WHAT.
-# WHO: an agent (claude, codex, opencode) or a terminal's name (Prohard). TOOL: a tool (Bash, Edit,
+# WHO: an agent (claude, codex, opencode), a terminal's name (Prohard) or `routine` (a task a routine
+# handed: with no rule it is asked, and denied if nobody answers). TOOL: a tool (Bash, Edit,
 # Write, WebFetch…). WHAT: a pattern with * and ? over its command or its file. * for any.
 # Denials go first, then permissions; whatever no rule names is asked to you.
 # A line that cannot be read denies everything until it is mended.
@@ -556,7 +579,7 @@ const USAGE: &str = "pleamar-wm gate — what agents ask to do, decided by the p
   hook claude|codex               (their hook: the request on stdin, the decision on stdout)
   ask --agent A --tool T [--cwd D] [--wait S] -- WHAT
                                   (for a plugin: prints allow, deny or nothing)
-gate.rules, one a line: deny|allow WHO TOOL WHAT — WHO an agent or a terminal's name, TOOL a tool,
+gate.rules, one a line: deny|allow WHO TOOL WHAT — WHO an agent, a terminal's name or `routine`, TOOL a tool,
 WHAT a pattern (* and ?) over its command or file; * for any. Denials first; the rest is asked.";
 
 #[cfg(test)]
@@ -588,6 +611,15 @@ mod tests {
         let (_, r) = word("allow claude Bash git status *");
         let (_, r) = word(r);
         assert_eq!(word(r), ("Bash", "git status *"));
+    }
+
+    #[test]
+    fn routine_is_a_who_only_at_a_routine() {
+        let rules = [Rule { allow: true, who: "routine".into(), tool: "bash".into(), what: "echo*".into(), line: 1 }];
+        let a = Ask { agent: "claude".into(), tool: "Bash".into(), what: "echo hi".into(), ..Default::default() };
+        assert!(by_rules(&rules, &a).is_none());
+        let r = Ask { routine: "Factorial".into(), ..a.clone() };
+        assert_eq!(by_rules(&rules, &r).map(|d| d.0), Some(true));
     }
 
     #[test]

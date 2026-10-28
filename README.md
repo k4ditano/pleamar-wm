@@ -97,7 +97,10 @@ the open windows without closing anything.
   scene (`gate.listen`); with none, or no answer in 90 s, or outside a
   session, the agent asks on its own screen as ever. Every decision is written
   down before it is told (`gate log`, secrets hidden), and the scene's
-  `gate.seq` changes whenever a request comes or goes.
+  `gate.seq` changes whenever a request comes or goes. What an agent asks
+  while at a letter from a routine (`link post --from "routine NAME"`) is held
+  to less: rules can name it (`routine`), and unanswered it is denied, not
+  left on a screen nobody watches.
 - **The session's agents, for your shell**: `pleamar-wm agents --json` lists
   every window with an agent —its number, agent, folder and whether it works,
   is ready or asks— and, asking, the question with its options by number and
