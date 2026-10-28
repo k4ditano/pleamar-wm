@@ -709,12 +709,19 @@ fn nothing(slot: usize) -> String {
 
 /// The last line where the line that says what a task is ends: its
 /// «through a wire]», even when the agent wrapped it over two or three lines
-/// (Codex leaves «through a» on one and «wire]» on the next).
+/// (Codex leaves «through a» on one and «wire]» on the next). Not one the
+/// agent says itself, quoting it (`● Done: [a task from …, through the
+/// mailbox] …`): after that line is no answer, and its answer would be lost.
 fn handed_at(lines: &[&str]) -> Option<usize> {
     let bare = |ls: &[&str]| ls.concat().chars().filter(|c| !c.is_whitespace()).collect::<String>();
     (0..lines.len()).rev().find(|&k| lines[k].contains(']') && {
-        let b = bare(&lines[k.saturating_sub(2)..=k]);
-        b.contains("throughawire]") || b.contains("throughthemailbox]")
+        let from = k.saturating_sub(2);
+        let b = bare(&lines[from..=k]);
+        (b.contains("throughawire]") || b.contains("throughthemailbox]")) && {
+            // The line where «[a task» starts: the last one from which it is still all there.
+            let starts = (from..=k).rev().find(|&j| bare(&lines[j..=k]).contains("[atask")).unwrap_or(from);
+            !matches!(lines[starts].trim_start().chars().next(), Some('●' | '⏺' | '•'))
+        }
     })
 }
 
@@ -2046,6 +2053,23 @@ mod tests {
         let lines = ["old", "› [a task from claude in window 0 «x», through a wire] It is in the pasted text", "• hi"];
         assert_eq!(handed_at(&lines), Some(1));
         assert_eq!(handed_at(&["nothing", "here"]), None);
+    }
+
+    #[test]
+    fn an_answer_that_quotes_the_line_of_its_task_is_not_taken_for_it() {
+        // Both pieces pasted at once, and the agent says them back: the line of the task is still the one in its box.
+        let lines = [
+            "❯ [a task from your person, through the mailbox] It is in the pasted text: do it, and end with your answer.haz la prueba uno",
+            "",
+            "● Hecho: [a task from your person, through the mailbox] It is in the p",
+            "────────────────────────────────────────────────────────────",
+            "❯ ",
+        ];
+        assert_eq!(handed_at(&lines), Some(0));
+        assert_eq!(answer(&lines[1..]), "● Hecho: [a task from your person, through the mailbox] It is in the p");
+        // Wrapped over two lines, the quote too.
+        let wrapped = ["› [a task from your person, through the", "  mailbox] do it", "• Done: [a task from your person, through the", "  mailbox] do it"];
+        assert_eq!(handed_at(&wrapped), Some(1));
     }
 
     #[test]
