@@ -703,7 +703,8 @@ fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> W
     // Its agent seen and then gone, its shell in front again (it ended, or was
     // killed, and nothing starts it again): no answer will come, whatever its
     // hooks last said. (A command in a plain shell ends so too: that is done.)
-    let (mut seen, mut left) = (false, 0);
+    // A task handed was handed to an agent: seen, even if it left before a look.
+    let (mut seen, mut left) = (handed.is_some(), 0);
     while start.elapsed() < timeout {
         let i = info(id);
         if i.is_empty() {
