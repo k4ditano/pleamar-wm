@@ -51,6 +51,17 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   name and size (`/caravan/file?path=…&dl=1`)—. Only files some letter names
   are given, nothing else of the disk. Each letter's head line tells the
   agent so: «To hand over a file, give its full path».
+- **What the shell itself asks** goes there too, beside what the agents ask
+  on their screens: a shell puts it (`pleamar-wm link asks put ID JSON`, with
+  `name` —the companion it is for—, `kind` —`choose`, `routine`, `hands`—,
+  `title`, `text`, 2 to 4 `options`, and the `scene` and `event` to tell) and
+  drops it once answered or gone (`link asks drop ID`). Chosen on the page,
+  the option is left for the shell (`ID.answer`, in `$XDG_RUNTIME_DIR/pleamar/asks`),
+  the ask leaves the page and the scene is told (`pleamar --say SCENE "emit
+  EVENT"`); the shell takes it (`link asks take`) and does what its own button
+  does —the page only chooses—. The phone is told of it as of the rest.
+  Calima puts its cards that wait this way: a question, a routine an agent
+  proposes, an agent's hands for an app.
 - A page that only watches (`--view-only`) sees all of it and does nothing.
 
 **Notices** (the bell): on that phone, a notice when an agent needs the

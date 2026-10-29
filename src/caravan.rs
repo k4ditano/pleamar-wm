@@ -122,7 +122,119 @@ pub(crate) fn companions() -> String {
         .iter()
         .map(|p| json!({ "id": p["id"], "name": p["name"], "agent": p["agent"], "tool": p["tool"], "what": p["what"].as_str().map(|w| w.chars().take(600).collect::<String>()), "routine": p["routine"] }))
         .collect();
-    json!({ "companions": out, "pending": pending, "at": crate::mail::now_ms() }).to_string()
+    json!({ "companions": out, "pending": pending, "asks": asks(), "at": crate::mail::now_ms() }).to_string()
+}
+
+/// What a shell asks the person itself, beside what its agents ask on their
+/// screens (Calima's cards: choose one, turn a routine on, let an agent's
+/// hands use an app). The shell puts it (`link asks put ID JSON`: `name`, the
+/// companion it is for; `kind`; `title`; `text`; 2 to 4 `options`; `scene` and
+/// `event`, how to tell it) and drops it once answered or gone; the caravan
+/// page shows it and tells the phone. Answered there, the choice is left as
+/// `ID.answer` and the scene told (`pleamar --say SCENE "emit EVENT"`): the
+/// shell takes it (`link asks take`) and does what its own button does. The
+/// page only chooses; the shell decides what that means.
+fn asks_dir() -> std::path::PathBuf {
+    let term = crate::term::socket_dir();
+    std::path::Path::new(&term).parent().map_or_else(|| std::path::PathBuf::from(&term), std::path::Path::to_path_buf).join("asks")
+}
+
+fn plain(s: &str, most: usize) -> bool {
+    !s.is_empty() && s.len() <= most && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// The asks there are, the oldest first.
+pub(crate) fn asks() -> Vec<Value> {
+    let mut out: Vec<Value> = std::fs::read_dir(asks_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let id = e.file_name().to_string_lossy().strip_suffix(".json")?.to_owned();
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
+            Some(json!({ "id": id, "name": v["name"], "kind": v["kind"], "title": v["title"], "text": v["text"], "options": v["options"], "at": v["at"] }))
+        })
+        .collect();
+    out.sort_by_key(|a| a["at"].as_u64().unwrap_or(0));
+    out
+}
+
+/// `link asks put ID JSON | drop ID | take`.
+pub(crate) fn asks_cmd(rest: &[String]) -> Result<String, String> {
+    let dir = asks_dir();
+    let arg = |k: usize| rest.get(k).map_or("", String::as_str);
+    match arg(0) {
+        "put" => {
+            let id = arg(1);
+            if !plain(id, 40) {
+                return Err("an id is letters, digits, - and _".into());
+            }
+            let v: Value = serde_json::from_str(arg(2)).map_err(|_| "the ask is a JSON object".to_owned())?;
+            let text = |k: &str, n: usize| v[k].as_str().unwrap_or("").chars().take(n).collect::<String>();
+            let options: Vec<String> = v["options"].as_array().into_iter().flatten().filter_map(|o| o.as_str()).map(|o| o.chars().take(60).collect()).filter(|o: &String| !o.trim().is_empty()).take(4).collect();
+            let (scene, event) = (text("scene", 60), text("event", 60));
+            if options.len() < 2 || !plain(&scene, 60) || !plain(&event, 60) {
+                return Err("an ask has 2 to 4 options, and the scene and event to tell".into());
+            }
+            let ask = json!({ "name": text("name", 80), "kind": text("kind", 20), "title": text("title", 200), "text": text("text", 600), "options": options, "scene": scene, "event": event, "at": crate::mail::now_ms() });
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let path = dir.join(format!("{id}.json"));
+            write_private(&path, &ask.to_string())?;
+            let _ = std::fs::remove_file(dir.join(format!("{id}.answer")));
+            Ok(id.to_owned())
+        }
+        "drop" => {
+            let id = arg(1);
+            if !plain(id, 40) {
+                return Err("no such ask".into());
+            }
+            let _ = std::fs::remove_file(dir.join(format!("{id}.json")));
+            let _ = std::fs::remove_file(dir.join(format!("{id}.answer")));
+            Ok(String::new())
+        }
+        "take" => {
+            let mut got = serde_json::Map::new();
+            for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let Some(id) = name.strip_suffix(".answer") else { continue };
+                if let Some(n) = std::fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["n"].as_u64()) {
+                    got.insert(id.to_owned(), json!(n));
+                }
+                let _ = std::fs::remove_file(e.path());
+            }
+            Ok(Value::Object(got).to_string())
+        }
+        _ => Err("link asks put ID JSON | drop ID | take".into()),
+    }
+}
+
+/// Written whole (beside, then renamed) and for its owner alone.
+fn write_private(path: &std::path::Path, text: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let new = path.with_extension("new");
+    std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&new).and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes())).map_err(|e| e.to_string())?;
+    std::fs::rename(&new, path).map_err(|e| e.to_string())
+}
+
+/// The person chose on the page: the answer left for the shell, the ask gone
+/// from the page, and the shell told.
+fn answer_ask(id: &str, n: u64) -> Result<String, String> {
+    let dir = asks_dir();
+    let path = dir.join(format!("{id}.json"));
+    if !plain(id, 40) {
+        return Err("no such ask".into());
+    }
+    let ask: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or("it is no longer asked")?;
+    let options = ask["options"].as_array().map_or(0, Vec::len) as u64;
+    if n >= options {
+        return Err("no such option".into());
+    }
+    write_private(&dir.join(format!("{id}.answer")), &json!({ "n": n }).to_string())?;
+    let _ = std::fs::remove_file(&path);
+    let (scene, event) = (ask["scene"].as_str().unwrap_or(""), ask["event"].as_str().unwrap_or(""));
+    let pleamar = std::env::var("PLEAMAR").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "pleamar".into());
+    let _ = std::process::Command::new(pleamar).args(["--say", scene, &format!("emit {event}")]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    Ok(ask["options"][n as usize].as_str().unwrap_or("").to_owned())
 }
 
 /// One name's conversation, for `/caravan/talk`: its letters as they came, the
@@ -171,6 +283,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
     };
     let num = |k: &str| v[k].as_u64().map(|n| n.to_string()).unwrap_or_default();
     match s("do").as_str() {
+        // An ask of the shell's own (a card): the option chosen, counted from 0.
+        "card" => answer_ask(&s("id"), v["n"].as_u64().ok_or("which option?")?),
         // A letter, with what was sent up for it from the page (`files`, names in
         // the remote's inbox, as `/upload` gave them) and a voice note (`audio`):
         // transcribed here, the letter goes once it is (an agent cannot listen).

@@ -1380,6 +1380,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             }
             _ => Err("link caravan [--json] | allow|deny ID | all | talk NAME | screen NAME | do JSON".into()),
         },
+        "asks" => crate::caravan::asks_cmd(rest),
         "mail" => crate::mail::mail(rest),
         // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
         "_mail" => mail_deliver(rest),

@@ -352,6 +352,20 @@ pub(crate) fn needs(state: &Value) -> Vec<Need> {
                 name: name.clone(),
             });
         }
+        for a in state["asks"].as_array().into_iter().flatten().filter(|a| a["name"].as_str() == Some(name.as_str())) {
+            let opts: Vec<&str> = a["options"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            out.push(Need {
+                key: format!("card:{}", a["id"].as_str().unwrap_or("")),
+                needs: true,
+                title: match a["kind"].as_str() {
+                    Some("routine") => (format!("{who} proposes a routine"), format!("{who} te propone una rutina")),
+                    Some("hands") => (format!("{who} asks to use its hands"), format!("{who} pide usar sus manos")),
+                    _ => (format!("{who} asks you"), format!("{who} te pregunta")),
+                },
+                body: clip(&format!("{} · {}", [a["title"].as_str().unwrap_or(""), a["text"].as_str().unwrap_or("")].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" · "), opts.join(" / ")), 160),
+                name: name.clone(),
+            });
+        }
         if let (Some(at), Some(last)) = (c["last_at"].as_u64(), c["last"].as_str()) {
             out.push(Need {
                 key: format!("done:{name}:{at}"),
@@ -361,6 +375,17 @@ pub(crate) fn needs(state: &Value) -> Vec<Need> {
                 name,
             });
         }
+    }
+    // And what is asked for a name that is no companion of the caravan.
+    for a in state["asks"].as_array().into_iter().flatten().filter(|a| !comps.iter().any(|c| c["name"] == a["name"])) {
+        let who = a["name"].as_str().filter(|n| !n.is_empty()).unwrap_or("An agent").to_owned();
+        out.push(Need {
+            key: format!("card:{}", a["id"].as_str().unwrap_or("")),
+            needs: true,
+            title: (format!("{who} asks you"), format!("{who} te pregunta")),
+            body: clip(a["title"].as_str().unwrap_or(""), 160),
+            name: who,
+        });
     }
     out
 }
@@ -527,6 +552,25 @@ mod tests {
         assert_eq!(n[1].body, "¿Borro tmp? · Sí / No");
         assert!(n[0].needs && n[1].needs && !n[2].needs);
         assert_eq!(n[2].title.1, "Prueba ha terminado");
+    }
+
+    #[test]
+    fn what_the_shell_asks_is_told_too() {
+        let state = json!({
+            "pending": [],
+            "companions": [{ "name": "prueba", "card": { "title": "Prueba" }, "question": null, "last": null, "last_at": null }],
+            "asks": [
+                { "id": "c1", "name": "prueba", "kind": "routine", "title": "Copia nocturna", "text": "Cada día a las 23:00", "options": ["Encender", "Dejar apagada"] },
+                { "id": "c2", "name": "", "kind": "choose", "title": "¿Cuál?", "text": "", "options": ["A", "B"] },
+            ],
+        });
+        let n = needs(&state);
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0].key, "card:c1");
+        assert_eq!(n[0].title.1, "Prueba te propone una rutina");
+        assert_eq!(n[0].body, "Copia nocturna · Cada día a las 23:00 · Encender / Dejar apagada");
+        assert_eq!((n[1].key.as_str(), n[1].title.0.as_str()), ("card:c2", "An agent asks you"));
+        assert!(n[0].needs && n[1].needs);
     }
 
     /// Through `curl` to a push service of mentira (`PUSH_TEST_ENDPOINT`, https, its certificate in

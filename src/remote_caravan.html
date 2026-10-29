@@ -155,6 +155,7 @@
   .bub .file .sz { color: var(--faint); font-size: 12px; }
   .bub audio, .bub video { width: 100%; max-width: 280px; border-radius: 10px; }
   .bub .voice { display: block; font-size: 11.5px; font-weight: 700; color: var(--faint); margin-bottom: 3px; }
+  .card .say { color: var(--faint); font-size: 14.5px; line-height: 1.4; margin: -4px 0 12px; }
   .watch-only { color: var(--faint); font-size: 13px; text-align: center; padding: 6px; }
 
   #toast { position: fixed; left: 50%; bottom: calc(86px + var(--safe-b)); transform: translateX(-50%) translateY(8px); background: var(--raise); border: 1px solid var(--line); border-radius: 12px; padding: 9px 14px; font-size: 13.5px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 5; max-width: calc(100vw - 32px); width: max-content; text-align: center; }
@@ -288,6 +289,7 @@
     'On an iPhone, notices come to the page on the home screen: Share › Add to Home Screen, and open it from there.': 'En el iPhone, los avisos llegan a la página de la pantalla de inicio: Compartir › Añadir a pantalla de inicio, y ábrela desde allí.',
     'Notices are blocked for this page: allow them in the browser\'s settings for the site.': 'Los avisos están bloqueados para esta página: permítelos en los ajustes del sitio en el navegador.',
     'Notices on': 'Avisos activados', 'Notices off': 'Avisos desactivados', 'Sent: it should be here in a moment': 'Enviado: te llegará en un momento',
+    'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
     'Recording a voice note…': 'Grabando una nota de voz…', 'Cancel': 'Cancelar', 'Attach a file': 'Adjuntar un fichero', 'Record a voice note': 'Grabar una nota de voz',
     'Voice note': 'Nota de voz', 'Voice note sent: it is transcribed on your computer and goes to it': 'Nota de voz enviada: se transcribe en tu ordenador y se la paso',
     'The microphone is not allowed for this page': 'El micrófono no está permitido para esta página', 'This browser cannot record': 'Este navegador no puede grabar',
@@ -398,13 +400,36 @@
     btns.append(no, yes); card.append(btns);
     return card;
   }
+  // What the shell itself asks for a companion (Calima's cards): a choice, a routine to turn on, hands for an app.
+  // The shell does what the choice means, as with its own buttons.
+  const ASK_META = { routine: 'proposes a routine', hands: 'asks to use its hands in', choose: 'asks' };
+  function askCard(a) {
+    const c = byName(a.name) || { name: a.name || '?' };
+    const card = el('div', 'card needs');
+    const who = el('div', 'who'); who.append(avatar(c));
+    const w = el('div'); w.append(el('b', '', look(c).title), el('div', 'meta', t(ASK_META[a.kind] || ASK_META.choose)));
+    who.append(w); card.append(who);
+    if (a.title) card.append(el('div', 'q', a.title));
+    if (a.text) card.append(el('div', 'say', a.text));
+    const btns = el('div', 'row-btns');
+    (a.options || []).forEach((o, n) => {
+      const b = el('button', 'btn opt' + (n === 0 ? ' go' : ''), o);
+      b.disabled = WATCH;
+      b.onclick = () => { btns.querySelectorAll('button').forEach(x => x.disabled = true); act({ do: 'card', id: a.id, n }, t('Answered')); };
+      btns.append(b);
+    });
+    card.append(btns);
+    return card;
+  }
   function drawHome() {
     const needs = $('needs'); needs.replaceChildren();
     const asking = state.companions.filter(c => c.question);
-    if (state.pending.length || asking.length) {
+    const asks = state.asks || [];
+    if (state.pending.length || asking.length || asks.length) {
       needs.append(el('h2', '', t('Needs you')));
       state.pending.forEach(p => needs.append(gateCard(p)));
       asking.forEach(c => needs.append(questionCard(c)));
+      asks.forEach(a => needs.append(askCard(a)));
     }
     const list = $('list'); list.replaceChildren();
     if (!state.companions.length) {
@@ -490,6 +515,7 @@
     const asks = $('asks'); asks.replaceChildren();
     if (c.question) asks.append(questionCard(c, false));
     for (const p of state.pending.filter(p => p.name === open)) asks.append(gateCard(p));
+    for (const a of (state.asks || []).filter(a => a.name === open)) asks.append(askCard(a));
     const letters = (talk && talk.letters) || [];
     if (!letters.length) {
       const e = el('div', 'empty'); e.append(el('span', '', c.state === 'away' ? t('Not started: your letter waits for it, and your desktop may start it.') : t('Nothing yet. Write the first task below.')));
@@ -553,7 +579,7 @@
       if (got.name !== open) return;
       // (Drawn again only when something changed: a tap on it is not lost under a fresh copy.)
       const c = byName(open) || {};
-      const seen = JSON.stringify([got, c.question, c.detail, state.pending.filter(p => p.name === open).map(p => p.id), [...expanded]]);
+      const seen = JSON.stringify([got, c.question, c.detail, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
       if (seen === loadTalk.seen && !drawChat.first) return;
       loadTalk.seen = seen; talk = got; drawChat();
     } catch (_) {}
