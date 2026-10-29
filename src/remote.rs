@@ -468,6 +468,17 @@ fn manifest() -> String {
     )
 }
 
+/// The caravan page as an app of its own, beside the desktop's: on a phone
+/// (added to the home screen) or a computer (installed from the browser), it
+/// opens straight on the agents, in a window of its own.
+fn caravan_manifest() -> String {
+    let host = std::fs::read_to_string("/etc/hostname").map(|h| h.trim().to_owned()).unwrap_or_default();
+    let name = if host.is_empty() { "Caravan".to_owned() } else { format!("Caravan · {}", host.replace(['"', '\\'], "")) };
+    format!(
+        r##"{{"name":"{name}","short_name":"Caravan","id":"/caravan","start_url":"/caravan","scope":"/caravan","display":"standalone","orientation":"any","background_color":"#0b1114","theme_color":"#0b1114","icons":[{{"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"}},{{"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}}]}}"##
+    )
+}
+
 /// This program on disk, as it was when it started: when it changes (an
 /// update installed), the one running starts again from it —at once if no
 /// page is connected, or when a page asks (`update`)—.
@@ -589,6 +600,14 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
                 std::io::copy(&mut file, &mut stream).map_err(|e| e.to_string())?;
                 return Ok(());
             }
+            // Live (caravan.rs `events`): open while the page is; the sign-in is looked at again
+            // every few seconds.
+            if p == "/caravan/events" {
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n";
+                stream.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
+                let tok = token.clone().unwrap_or_default();
+                return crate::caravan::events(&mut stream, &name, || gate.lock().unwrap().valid(&tok));
+            }
             let body = match p {
                 "/caravan/state" => crate::caravan::companions(),
                 "/caravan/talk" => crate::caravan::talk(&name),
@@ -648,6 +667,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
         // A home screen's app: what it is and its icon. Nothing of this desktop in
         // them, so before signing in (a browser asks for them without the cookie).
         ("GET", "/manifest.webmanifest") => respond(&mut stream, "200 OK", "application/manifest+json", "", manifest().as_bytes()),
+        ("GET", "/caravan.webmanifest") => respond(&mut stream, "200 OK", "application/manifest+json", "", caravan_manifest().as_bytes()),
         ("GET", "/icon-180.png") => respond(&mut stream, "200 OK", "image/png", "", ICON_180),
         ("GET", "/icon-192.png") => respond(&mut stream, "200 OK", "image/png", "", ICON_192),
         ("GET", "/icon-512.png") => respond(&mut stream, "200 OK", "image/png", "", ICON_512),

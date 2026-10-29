@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<link rel="manifest" href="/manifest.webmanifest">
+<link rel="manifest" href="/caravan.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <meta name="robots" content="noindex">
 <title>Caravan</title>
@@ -37,6 +37,7 @@
   header .host { display: block; font: 12px/1.3 system-ui, sans-serif; color: var(--faint); letter-spacing: 0; margin-top: 2px; }
   .pill-btn { text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font-size: 13px; color: var(--ink); background: var(--panel); white-space: nowrap; }
   .pill-btn:active { background: var(--raise); }
+  #t-scroll { overflow-anchor: none; }
   .scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 16px calc(24px + var(--safe-b)); }
 
   h2 { font: 600 11.5px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 18px 4px 10px; }
@@ -181,6 +182,23 @@
   .switch input:checked::after { transform: translateX(18px); background: var(--sea-ink); }
   .switch input:focus-visible { outline: 2px solid var(--sea); outline-offset: 2px; }
   #sheet .row-btns { margin-top: 16px; }
+  .typing.live { flex-direction: column; align-items: stretch; gap: 8px; max-width: 86%; }
+  .typing.live .dots { display: flex; gap: 4px; }
+  .typing.live pre { margin: 0; font: 12.5px/1.45 var(--mono); color: var(--faint); white-space: pre-wrap; word-break: break-word; max-height: 11.5em; overflow: hidden; }
+  .typing.live .wlabel { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+  .comp.on { background: var(--raise); box-shadow: inset 3px 0 0 var(--sea); }
+  #talk.drop::after { content: attr(data-drop); position: absolute; inset: 12px; border: 2px dashed var(--sea); border-radius: 18px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 80%, transparent); color: var(--sea); font-size: 17px; font-weight: 600; z-index: 9; pointer-events: none; }
+  #t-empty { display: none; }
+  /* A wide window (a computer): the list and the conversation side by side. */
+  @media (min-width: 1000px) {
+    #home { right: auto; width: 380px; border-right: 1px solid var(--line); transform: none !important; opacity: 1 !important; }
+    #talk { left: 380px; transform: none; box-shadow: none; transition: none; }
+    body:not(.in-talk) #talk > :not(#t-empty) { display: none; }
+    body:not(.in-talk) #t-empty { display: grid; place-items: center; flex: 1; color: var(--faint); text-align: center; padding: 24px; }
+    #t-empty b { display: block; font: 500 24px/1.2 var(--serif); color: var(--ink); margin-bottom: 6px; }
+    #back { display: none; }
+    .bub { max-width: 72%; }
+  }
   @media (min-width: 760px) {
     .scroll, #talk footer > * { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
     #talk .seg { max-width: 648px; margin-left: auto; margin-right: auto; }
@@ -206,7 +224,8 @@
   </div>
 </section>
 
-<section id="talk" class="view" aria-hidden="true">
+<section id="talk" class="view" aria-hidden="true" data-drop="Drop to attach">
+  <div id="t-empty"><div><b data-t="Choose a companion">Choose a companion</b><span data-t="Its conversation opens here.">Its conversation opens here.</span></div></div>
   <header>
     <button class="back" id="back" aria-label="Back">‹</button>
     <div class="avatar" id="t-av"></div>
@@ -289,7 +308,8 @@
     'On an iPhone, notices come to the page on the home screen: Share › Add to Home Screen, and open it from there.': 'En el iPhone, los avisos llegan a la página de la pantalla de inicio: Compartir › Añadir a pantalla de inicio, y ábrela desde allí.',
     'Notices are blocked for this page: allow them in the browser\'s settings for the site.': 'Los avisos están bloqueados para esta página: permítelos en los ajustes del sitio en el navegador.',
     'Notices on': 'Avisos activados', 'Notices off': 'Avisos desactivados', 'Sent: it should be here in a moment': 'Enviado: te llegará en un momento',
-    'Restart': 'Reiniciar', 'Start it again in the same conversation (loads new MCP servers and settings)': 'Arrancarlo otra vez en la misma conversación (carga los MCP y ajustes nuevos)',
+    'Choose a companion': 'Elige un compañero', 'Its conversation opens here.': 'Su conversación se abre aquí.', 'Drop to attach': 'Suelta para adjuntar',
+    'Writing now': 'Escribiendo ahora', 'Restart': 'Reiniciar', 'Start it again in the same conversation (loads new MCP servers and settings)': 'Arrancarlo otra vez en la misma conversación (carga los MCP y ajustes nuevos)',
     'Restart %s? It keeps its conversation; what it is doing now is cut.': '¿Reiniciar a %s? Sigue en la misma conversación; lo que esté haciendo ahora se corta.', 'Restarting: it comes back in a few seconds': 'Reiniciando: vuelve en unos segundos',
     'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
     'Recording a voice note…': 'Grabando una nota de voz…', 'Cancel': 'Cancelar', 'Attach a file': 'Adjuntar un fichero', 'Record a voice note': 'Grabar una nota de voz',
@@ -439,7 +459,7 @@
       list.append(e);
     }
     for (const c of state.companions) {
-      const row = el('button', 'comp s-' + c.state);
+      const row = el('button', 'comp s-' + c.state + (c.name === open ? ' on' : ''));
       row.append(avatar(c));
       const body = el('div', 'body'), top = el('div', 'top');
       top.append(el('span', 'name', look(c).title));
@@ -465,6 +485,19 @@
   // The pictures an answer names (`/…/fondo.png`, or a Markdown link to one): shown under it, from the server
   // (`/caravan/file`, which gives only those a letter names). A link shows its words, not its path.
   const unlink = text => text.replace(/\[([^\]]+)\]\((\/[^)\s]+)\)/g, '$1');
+  // The conversation stays at its end while nobody scrolls up, also when an image or an audio loads later.
+  // Only the person moving it takes it off the end (the wheel, a finger, a key), not what grows in it.
+  let atBottom = true, moving = 0;
+  const scEl = $('t-scroll');
+  const moved = () => { moving = Date.now(); };
+  for (const ev of ['wheel', 'touchmove', 'pointerdown']) scEl.addEventListener(ev, moved, { passive: true });
+  addEventListener('keydown', e => { if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) moved(); });
+  scEl.addEventListener('scroll', () => {
+    const near = scEl.scrollHeight - scEl.scrollTop - scEl.clientHeight < 60;
+    if (near) atBottom = true; else if (Date.now() - moving < 1000) atBottom = false;
+  }, { passive: true });
+  function keepEnd() { if (atBottom) scEl.scrollTop = scEl.scrollHeight; }
+  if (window.ResizeObserver) new ResizeObserver(keepEnd).observe($('chat'));
   // The files a letter names (the server gives them: those that are there): an image shown, an audio and a video
   // played, the rest to download with its name and size.
   const size = n => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
@@ -476,10 +509,10 @@
       const url = '/caravan/file?path=' + encodeURIComponent(f.path);
       if (f.kind === 'image') {
         const a = el('a', 'pic'); a.href = url; a.target = '_blank'; a.rel = 'noopener';
-        const img = el('img'); img.src = url; img.loading = 'lazy'; img.alt = f.name;
+        const img = el('img'); img.src = url; img.loading = 'lazy'; img.alt = f.name; img.onload = keepEnd;
         a.append(img); box.append(a);
       } else if (f.kind === 'audio' || f.kind === 'video') {
-        const m = el(f.kind); m.controls = true; m.preload = 'metadata'; m.src = url; m.setAttribute('aria-label', f.name);
+        const m = el(f.kind); m.controls = true; m.preload = 'metadata'; m.src = url; m.setAttribute('aria-label', f.name); m.onloadedmetadata = keepEnd;
         box.append(m);
       } else {
         const a = el('a', 'file'); a.href = url + '&dl=1'; a.setAttribute('download', f.name); a.setAttribute('aria-label', t('Download') + ' ' + f.name);
@@ -511,7 +544,7 @@
   }
   function drawChat() {
     const chat = $('chat'), sc = $('t-scroll');
-    const atEnd = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 60;
+    const atEnd = atBottom;
     chat.replaceChildren();
     const c = byName(open) || { name: open, state: 'away' };
     const asks = $('asks'); asks.replaceChildren();
@@ -548,7 +581,7 @@
         continue;
       }
       chat.append(el('div', 'stamp me', when(l.at)));
-      if (l.state !== 'done') { const ty = el('div', 'typing'); ty.append(el('i'), el('i'), el('i')); chat.append(ty); continue; }
+      if (l.state !== 'done') { const ty = el('div', 'typing'); ty.id = 'live'; ty.append(el('i'), el('i'), el('i')); chat.append(ty); drawLive(); continue; }
       const bad = l.how && l.how !== 'done';
       const them = el('div', 'bub them' + (bad ? ' bad' : ''));
       if (bad) them.append(el('span', 'from', t(HOW[l.how] || l.how)));
@@ -557,7 +590,7 @@
       filesOf(them, theirFiles);
       chat.append(them, el('div', 'stamp them', when(l.ended)));
     }
-    if (atEnd || drawChat.first) { sc.scrollTop = sc.scrollHeight; drawChat.first = false; }
+    if (atEnd || drawChat.first) { sc.scrollTop = sc.scrollHeight; atBottom = true; drawChat.first = false; }
   }
   function drawTalkHead() {
     const c = byName(open) || { name: open, state: 'away' };
@@ -584,14 +617,18 @@
     if (!open) return;
     try {
       const got = await get('/caravan/talk?name=' + encodeURIComponent(open));
-      if (got.name !== open) return;
-      // (Drawn again only when something changed: a tap on it is not lost under a fresh copy.)
-      const c = byName(open) || {};
-      const seen = JSON.stringify([got, c.question, c.detail, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
-      if (seen === loadTalk.seen && !drawChat.first) return;
-      loadTalk.seen = seen; talk = got; drawChat();
+      if (got.name === open) loadTalk.apply(got);
     } catch (_) {}
   }
+  // (Drawn again only when something changed: a tap on it is not lost under a fresh copy.)
+  loadTalk.apply = got => {
+    const c = byName(open) || {};
+    const seen = JSON.stringify([got, c.question, c.detail, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
+    if (seen === loadTalk.seen && !drawChat.first) return;
+    loadTalk.seen = seen; talk = got; drawChat();
+  };
+  // The state changed (what it asks, the gate): the same conversation, drawn again if that changes it.
+  loadTalk.state = () => { if (talk && talk.name === open) loadTalk.apply(talk); };
   async function loadScreen() {
     if (!open || tab !== 'screen') return;
     try {
@@ -607,10 +644,12 @@
     setTab('chat');
     document.body.classList.add('in-talk'); $('talk').setAttribute('aria-hidden', 'false');
     if (!fromHistory) history.pushState({ talk: name }, '', '#' + encodeURIComponent(name));
-    drawTalkHead(); loadTalk(); restartTimers();
+    live = null;
+    drawTalkHead(); loadTalk(); drawHome(); connect();
+    if (matchMedia('(min-width: 1000px) and (pointer: fine)').matches) $('box').focus();
   }
   function closeTalk() {
-    open = null; document.body.classList.remove('in-talk'); $('talk').setAttribute('aria-hidden', 'true'); $('box').blur(); restartTimers();
+    open = null; live = null; document.body.classList.remove('in-talk'); $('talk').setAttribute('aria-hidden', 'true'); $('box').blur(); drawHome(); connect();
   }
   $('back').onclick = () => (history.state && history.state.talk ? history.back() : (history.replaceState(null, '', location.pathname), closeTalk()));
   addEventListener('popstate', e => { if (e.state && e.state.talk) openTalk(e.state.talk, true); else closeTalk(); });
@@ -662,6 +701,15 @@
     fit();
   }
   $('clip').onclick = () => $('pick').click();
+  // On a computer: files dropped on the conversation, or pasted (a screenshot), are attached the same.
+  const talkEl = $('talk');
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  talkEl.addEventListener('dragover', e => { if (!open || WATCH || !hasFiles(e)) return; e.preventDefault(); talkEl.classList.add('drop'); });
+  talkEl.addEventListener('dragleave', e => { if (e.target === talkEl || !talkEl.contains(e.relatedTarget)) talkEl.classList.remove('drop'); });
+  talkEl.addEventListener('drop', e => { talkEl.classList.remove('drop'); if (!open || WATCH || !hasFiles(e)) return; e.preventDefault(); addFiles(e.dataTransfer.files); });
+  box.addEventListener('paste', e => { const f = e.clipboardData && e.clipboardData.files; if (f && f.length && !WATCH) { e.preventDefault(); addFiles(f); } });
+  // Esc: out of the conversation (if nothing is being written in it).
+  addEventListener('keydown', e => { if (e.key === 'Escape' && open && !box.value && !$('sheet').classList.contains('show') && !recording) $('back').click(); });
   $('pick').onchange = () => { addFiles($('pick').files); $('pick').value = ''; };
   const fit = () => {
     box.style.height = 'auto'; box.style.height = Math.min(box.scrollHeight + 2, 160) + 'px';
@@ -786,30 +834,63 @@
   };
 
   // ---- Keeping up: every few seconds while in sight, nothing while hidden.
+  function applyState(got) {
+    const seen = JSON.stringify({ ...got, at: 0 });
+    document.body.classList.remove('offline');
+    state = got;
+    if (seen !== refresh.seen) { refresh.seen = seen; drawHome(); }
+    if (open) { drawTalkHead(); loadTalk.state(); }
+  }
   async function refresh() {
     try {
-      const got = await get('/caravan/state'), seen = JSON.stringify({ ...got, at: 0 });
-      document.body.classList.remove('offline');
-      state = got;
-      if (seen !== refresh.seen) { refresh.seen = seen; drawHome(); }
-      if (open) { drawTalkHead(); loadTalk(); }
+      applyState(await get('/caravan/state'));
+      if (open) loadTalk();
     } catch (e) {
       if (e.message !== 'signed out') { $('offline').textContent = t('No connection with the desktop'); document.body.classList.add('offline'); }
     }
+  }
+  // What it is writing now, in its «writing» bubble (from the live channel).
+  let live = null;
+  function drawLive() {
+    const ty = $('live');
+    if (!ty) return;
+    const text = live && live.name === open ? live.text : '';
+    if (!text) { if (ty.classList.contains('live')) { ty.className = 'typing'; ty.replaceChildren(el('i'), el('i'), el('i')); } return; }
+    if (!ty.classList.contains('live')) {
+      ty.className = 'typing live'; ty.replaceChildren();
+      const head = el('div', 'dots'); head.append(el('i'), el('i'), el('i'), el('span', 'wlabel', t('Writing now')));
+      ty.append(head, el('pre'));
+    }
+    ty.querySelector('pre').textContent = text;
+    keepEnd();
+  }
+  // The live channel (/caravan/events): what changes comes as it changes. While it is open, asking every few
+  // seconds is only a safety net; if it cannot be opened, the page asks as before.
+  let es = null, esUp = false;
+  function connect() {
+    if (es) { es.close(); es = null; esUp = false; }
+    if (document.hidden || !window.EventSource) { restartTimers(); return; }
+    const me = es = new EventSource('/caravan/events' + (open ? '?name=' + encodeURIComponent(open) : ''));
+    me.onopen = () => { if (es === me) { esUp = true; restartTimers(); } };
+    me.onerror = () => { if (es === me && esUp) { esUp = false; restartTimers(); } };
+    me.addEventListener('state', e => { try { applyState(JSON.parse(e.data)); } catch (_) {} });
+    me.addEventListener('talk', e => { try { const got = JSON.parse(e.data); if (got.name === open) loadTalk.apply(got); } catch (_) {} });
+    me.addEventListener('live', e => { try { live = JSON.parse(e.data); drawLive(); } catch (_) {} });
+    me.addEventListener('bye', () => { me.close(); if (es === me) { es = null; esUp = false; } location.href = '/'; });
   }
   let timers = [];
   function restartTimers() {
     timers.forEach(clearInterval); timers = [];
     if (document.hidden) return;
-    timers.push(setInterval(refresh, open ? 2500 : 3500));
+    timers.push(setInterval(refresh, esUp ? 20000 : open ? 2500 : 3500));
     if (open && tab === 'screen') timers.push(setInterval(loadScreen, 2000));
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); restartTimers(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); connect(); });
   addEventListener('online', refresh);
 
   refresh().then(() => {
     const h = decodeURIComponent(location.hash.slice(1));
-    if (h) { history.replaceState({ talk: h }, '', location.hash); openTalk(h, true); }
+    if (h) { history.replaceState({ talk: h }, '', location.hash); openTalk(h, true); } else connect();
   });
   restartTimers();
 })();

@@ -126,6 +126,82 @@ pub(crate) fn companions() -> String {
     json!({ "companions": out, "pending": pending, "asks": asks(), "at": crate::mail::now_ms() }).to_string()
 }
 
+/// The caravan page's live channel (`/caravan/events?name=`, Server-Sent
+/// Events), instead of asking every few seconds: looked at here every 0.7 s,
+/// and only what changed goes —`state` (as `/caravan/state`), `talk` (the
+/// conversation open, as `/caravan/talk`) and `live` (what it is writing now,
+/// while it works: the last lines of its screen)—. A comment every few
+/// seconds keeps the way open and finds a page that went; it ends when the page goes or `still` says the
+/// sign-in no longer holds (`bye`).
+pub(crate) fn events(out: &mut impl std::io::Write, name: &str, still: impl Fn() -> bool) -> Result<(), String> {
+    let send = |out: &mut dyn std::io::Write, event: &str, data: &str| -> bool { write!(out, "event: {event}\ndata: {data}\n\n").and_then(|_| out.flush()).is_ok() };
+    let (mut was_state, mut was_talk, mut was_live) = (String::new(), String::new(), String::from("-"));
+    let (mut beat, mut check) = (std::time::Instant::now(), std::time::Instant::now());
+    if write!(out, "retry: 2000\n\n").and_then(|_| out.flush()).is_err() {
+        return Ok(());
+    }
+    loop {
+        let state = companions();
+        // (Its time, the last key, changes every time: what is compared is the rest.)
+        let same = state.rsplit_once(",\"at\":").map_or(state.as_str(), |(a, _)| a).to_owned();
+        if same != was_state {
+            if !send(out, "state", &state) {
+                return Ok(());
+            }
+            was_state = same;
+            beat = std::time::Instant::now();
+        }
+        if !name.is_empty() {
+            let talk = talk(name);
+            if talk != was_talk {
+                if !send(out, "talk", &talk) {
+                    return Ok(());
+                }
+                was_talk = talk;
+                beat = std::time::Instant::now();
+            }
+            let working = serde_json::from_str::<Value>(&state).ok().and_then(|v| v["companions"].as_array().and_then(|c| c.iter().find(|c| c["name"].as_str() == Some(name)).map(|c| c["state"] == "working")));
+            let now = if working == Some(true) { live_of(&crate::link::read(terminal(name).map_or(-1, |(id, _)| id), 60)) } else { String::new() };
+            if now != was_live {
+                if !send(out, "live", &json!({ "name": name, "text": now }).to_string()) {
+                    return Ok(());
+                }
+                was_live = now;
+                beat = std::time::Instant::now();
+            }
+        }
+        // (A page gone is only known when something is written to it: so a word every 5 s.)
+        if beat.elapsed() > std::time::Duration::from_secs(5) {
+            if write!(out, ": ·\n\n").and_then(|_| out.flush()).is_err() {
+                return Ok(());
+            }
+            beat = std::time::Instant::now();
+        }
+        if check.elapsed() > std::time::Duration::from_secs(10) {
+            if !still() {
+                send(out, "bye", "{}");
+                return Ok(());
+            }
+            check = std::time::Instant::now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(700));
+    }
+}
+
+/// What an agent is writing, from its screen: its last lines, without its
+/// input box, the frames round it and what is blank. At most eight.
+fn live_of(screen: &str) -> String {
+    let frame = |l: &str| {
+        let t = l.trim();
+        t.is_empty() || t.chars().all(|c| "─━│┃╭╮╰╯┌┐└┘├┤═ ".contains(c)) || t.starts_with('❯') || t.starts_with('›') || t.starts_with('│') || t.starts_with('╭') || t.starts_with('╰')
+    };
+    let lines: Vec<&str> = screen.lines().collect();
+    // Up to its input box: the last line that begins it.
+    let end = lines.iter().rposition(|l| { let t = l.trim_start(); t.starts_with('❯') || t.starts_with('›') }).map_or(lines.len(), |k| k.saturating_sub(1));
+    let kept: Vec<String> = lines[..end.min(lines.len())].iter().filter(|l| !frame(l)).map(|l| l.trim_end().chars().take(200).collect()).collect();
+    kept[kept.len().saturating_sub(8)..].join("\n")
+}
+
 /// What a shell asks the person itself, beside what its agents ask on their
 /// screens (Calima's cards: choose one, turn a routine on, let an agent's
 /// hands use an app). The shell puts it (`link asks put ID JSON`: `name`, the
@@ -504,6 +580,43 @@ mod tests {
         let long = format!("Hecho: [fondo]({}). {}", pic.display(), "una palabra más ".repeat(30));
         assert_eq!(files_in(&long).len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A page that reads two things and goes.
+    struct Page(Vec<u8>, usize);
+    impl std::io::Write for Page {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if self.1 == 0 {
+                return Err(std::io::Error::other("gone"));
+            }
+            self.0.extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.1 = self.1.saturating_sub(1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_live_channel_says_the_state_at_once_and_ends_when_the_page_goes() {
+        let mut page = Page(Vec::new(), 2);
+        let start = std::time::Instant::now();
+        events(&mut page, "", || true).unwrap();
+        let said = String::from_utf8(page.0).unwrap();
+        assert!(said.starts_with("retry: 2000\n\nevent: state\ndata: {\"companions\":"), "{said}");
+        assert!(said.ends_with("}\n\n"));
+        // (Gone, it is known at the next word: within 5 s.)
+        assert!(start.elapsed() < std::time::Duration::from_secs(7));
+    }
+
+    #[test]
+    fn what_it_writes_now_is_its_last_lines_without_its_box() {
+        let screen = "● Mirando el buzón\n  ⎿  Read src/mail.rs (120 lines)\n\n● Ahora el arreglo:\n  la marca se busca en 160 letras\n✻ Pensando… (12 s · esc para parar)\n\n────────────────────\n❯ \n────────────────────\n  ? for shortcuts";
+        assert_eq!(live_of(screen), "● Mirando el buzón\n  ⎿  Read src/mail.rs (120 lines)\n● Ahora el arreglo:\n  la marca se busca en 160 letras\n✻ Pensando… (12 s · esc para parar)");
+        let many: String = (1..=20).map(|n| format!("línea {n}\n")).collect();
+        assert_eq!(live_of(&many).lines().count(), 8);
+        assert!(live_of(&many).ends_with("línea 20"));
     }
 
     #[test]

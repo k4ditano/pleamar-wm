@@ -22,8 +22,17 @@ the agents working on it: what they answered, what they ask, a new task. So
 on a phone the page asks first —**Companions** or **Desktop**, once or
 remembered on that phone— and the first is a page of its own, `/caravan`:
 
-- **No picture.** No video, no WebRTC, no phone monitor: small JSON asked for
-  every few seconds while the page is in sight, nothing while it is not.
+- **No picture.** No video, no WebRTC, no phone monitor. **Live**: one
+  channel (`/caravan/events`, Server-Sent Events) while the page is in sight,
+  nothing while it is not: the server looks every 0.7 s and sends only what
+  changed —the state, the conversation open, and **what that agent is writing
+  now** (the last lines of its screen, in its «writing» bubble)—. If the
+  channel cannot be opened, the page asks every few seconds instead.
+- **On a computer too**: a wide window shows the list and the conversation
+  side by side; files are dropped on it or pasted (a screenshot, Ctrl+V);
+  Enter sends, Esc leaves it. It installs as an app of its own on the phone
+  (add to the home screen) and on the computer (the browser's «Install»):
+  `/caravan.webmanifest`, opening straight on the agents.
 - **What needs you**, on top: what waits at the gate (Allow, Deny) and what an
   agent asks on its screen, with its options —answered only if the question
   shown is still the one there (its key, as `pleamar-wm agents answer`)—.
@@ -80,8 +89,8 @@ was there when the server started is not news. A sign-in that ends takes its
 phones' notices with it, and one the push service no longer knows (404, 410)
 is dropped. On an iPhone they come to the page added to the home screen.
 
-`/caravan/state`, `/caravan/talk?name=`, `/caravan/screen?name=` and `POST
-/caravan/do` are what it uses, behind the same sign-in; `pleamar-wm link
+`/caravan/events?name=`, `/caravan/state`, `/caravan/talk?name=`,
+`/caravan/screen?name=` and `POST /caravan/do` are what it uses, behind the same sign-in; `pleamar-wm link
 caravan all | talk NAME | screen NAME | do JSON` gives the same from a shell.
 A letter for a name with no terminal waits; a shell may start it (Calima
 does, for a letter that came while it was running).
