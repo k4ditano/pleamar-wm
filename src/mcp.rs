@@ -133,6 +133,14 @@ fn tools() -> Vec<Tool<Words>> {
             },
         },
         Tool {
+            name: "link_restart_me",
+            about: "Restart your own session, in this same conversation: what you added or changed since you started (an MCP server with `claude mcp add`, a skill, your settings) is only loaded by starting again. Only a companion (a named terminal) started by its shell can. After it, end your turn: a letter tells you to carry on, with `then` if you give it.",
+            args: json!({ "then": { "type": "string", "description": "What to carry on with once you are back (your letter says it)." } }),
+            needed: &[],
+            eager: false,
+            run: |a| vec!["restart-me".into(), s(a, "then")],
+        },
+        Tool {
             name: "link_label",
             about: "Give the wire to a window a name («tests», «frontend»): it is shown on the wire, and the window can be named by it.",
             args: json!({ "window": window, "name": { "type": "string" } }),
@@ -161,7 +169,7 @@ fn tools() -> Vec<Tool<Words>> {
 
 /// What the agent is told when it starts: where it is and what it can do.
 fn instructions() -> String {
-    let base = "You run in a terminal of a pleamar-wm desktop. The person can wire windows together (a current of water between them): an agent in a window wired to yours —another Claude Code, Codex, Gemini…— is reached with these tools. To tell, ask or hand a task to another agent the person names («dile a codex…», «ask the one in tests…»), use link_delegate with that window, never another agent of your own (codex exec, claude -p…) and never the screen's cursor. If it stops to ask its person something, link_ask and link_answer. If what they name is not wired to you, say so and ask them to wire it: on a free monitor (Super+W), drag the drop at the start of a window's title bar onto the other window. But if you are a companion of a caravan (your terminal has a name), the others of your caravan are your team: ask any of them by name with link_delegate, no wire needed —it goes through their mailbox, and one not started is started—. Work with your team as teammates do: hand the request, say so, and end your turn; never wait for them nor check on them. Their answer comes to you as a new message, and you carry on with it then. For information that asks for no answer (a heads-up, «done»), expects_reply false.";
+    let base = "You run in a terminal of a pleamar-wm desktop. The person can wire windows together (a current of water between them): an agent in a window wired to yours —another Claude Code, Codex, Gemini…— is reached with these tools. To tell, ask or hand a task to another agent the person names («dile a codex…», «ask the one in tests…»), use link_delegate with that window, never another agent of your own (codex exec, claude -p…) and never the screen's cursor. If it stops to ask its person something, link_ask and link_answer. If what they name is not wired to you, say so and ask them to wire it: on a free monitor (Super+W), drag the drop at the start of a window's title bar onto the other window. But if you are a companion of a caravan (your terminal has a name), the others of your caravan are your team: ask any of them by name with link_delegate, no wire needed —it goes through their mailbox, and one not started is started—. Work with your team as teammates do: hand the request, say so, and end your turn; never wait for them nor check on them. Their answer comes to you as a new message, and you carry on with it then. For information that asks for no answer (a heads-up, «done»), expects_reply false. If you add an MCP server, a skill or a setting that only loads when you start, do not ask your person to restart you: link_restart_me does it, in this same conversation.";
     match crate::link::briefing() {
         Ok(now) => format!("{base}\n\nNow: {now}"),
         Err(e) => format!("{base}\n\nNow: {e}"),

@@ -33,7 +33,9 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
 - **A conversation with each**: the letters of its mailbox, oldest first, and
   what each got back; the one it is at, the ones waiting (first, remove).
   Writing posts a letter (`link post`), handed to it when it is free. Stop is
-  Ctrl+C; its mailbox can be held and let go. **Screen** shows its terminal as
+  Ctrl+C; its mailbox can be held and let go. **Restart** starts it again in
+  the same conversation (to load an MCP server or settings added since), when
+  its script can (`link restart`). **Screen** shows its terminal as
   text, the last 80 lines.
 - **Files and voice notes, both ways.** The clip attaches files: each goes up
   as soon as it is picked (`/upload`, into «Remote» in the downloads folder,

@@ -1381,6 +1381,9 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             _ => Err("link caravan [--json] | allow|deny ID | all | talk NAME | screen NAME | do JSON".into()),
         },
         "asks" => crate::caravan::asks_cmd(rest),
+        "session" => crate::sessions::session(rest),
+        "restart" => crate::sessions::restart(rest),
+        "restart-me" => crate::sessions::restart_me(&rest.join(" ")),
         "mail" => crate::mail::mail(rest),
         // (The messenger the agents' watcher leaves with a letter it hands: mail.rs.)
         "_mail" => mail_deliver(rest),
@@ -1415,6 +1418,9 @@ fn hook(agent: &str) {
     // Where it keeps this conversation (a new one after /clear or /resume).
     if let Some(path) = v.get("transcript_path").and_then(|t| t.as_str()).filter(|_| matches!(event, "SessionStart" | "UserPromptSubmit" | "Stop")) {
         let _ = std::fs::write(format!("{}/{layer}.transcript", crate::term::socket_dir()), path);
+    }
+    if matches!(event, "SessionStart" | "UserPromptSubmit" | "Stop") {
+        crate::sessions::heard(agent, &v);
     }
     let _ = crate::term::ask(&sock, &format!("note state {state}"));
     if event == "Stop" {

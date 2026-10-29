@@ -35,6 +35,7 @@ mod mcp;
 mod mcp_serve;
 mod keep;
 mod mail;
+mod sessions;
 mod gate;
 mod hands;
 mod caravan;

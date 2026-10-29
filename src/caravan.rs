@@ -108,6 +108,7 @@ pub(crate) fn companions() -> String {
                 "question": agent.map_or(Value::Null, |a| a["question"].clone()),
                 "detail": agent.map_or(Value::Null, |a| a["detail"].clone()),
                 "paused": b["paused"] == true,
+                "restartable": crate::sessions::restartable(&name),
                 "waiting": b["waiting"].as_array().map_or(0, Vec::len),
                 "doing": b["out"]["text"].as_str().map(first_line),
                 "last": last.and_then(|l| l["answer"].as_str()).map(first_line),
@@ -328,6 +329,25 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
         "gate" => crate::gate::answer(&[s("id"), s("verdict"), "--by".to_owned(), "phone".to_owned()]),
         "answer" => crate::agents::act(&["answer".to_owned(), slot()?, num("n"), "--key".to_owned(), s("key")]),
         "stop" => crate::agents::act(&["stop".to_owned(), slot()?]),
+        // Started again in its conversation (sessions.rs): it waits for the agent to end, so
+        // apart; a command waits for it ([`heard`]).
+        "restart" => {
+            if !crate::sessions::restartable(&name) {
+                return Err(format!("«{name}» cannot be restarted from here"));
+            }
+            let then = s("then");
+            let job = std::thread::spawn(move || {
+                let mut args = vec![name];
+                if !then.trim().is_empty() {
+                    args.extend(["--then".to_owned(), then]);
+                }
+                if let Err(e) = crate::sessions::restart(&args) {
+                    eprintln!("remote · not restarted: {e}");
+                }
+            });
+            HEARING.lock().unwrap().push(job);
+            Ok("restarting".into())
+        }
         "pause" | "resume" => crate::mail::mail(&[name, format!("--{}", s("do"))]),
         "cancel" | "first" => crate::mail::mail(&[name, format!("--{}", s("do")), num("id")]),
         other => Err(format!("«{other}»: nothing to do")),

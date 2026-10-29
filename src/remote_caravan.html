@@ -289,6 +289,8 @@
     'On an iPhone, notices come to the page on the home screen: Share › Add to Home Screen, and open it from there.': 'En el iPhone, los avisos llegan a la página de la pantalla de inicio: Compartir › Añadir a pantalla de inicio, y ábrela desde allí.',
     'Notices are blocked for this page: allow them in the browser\'s settings for the site.': 'Los avisos están bloqueados para esta página: permítelos en los ajustes del sitio en el navegador.',
     'Notices on': 'Avisos activados', 'Notices off': 'Avisos desactivados', 'Sent: it should be here in a moment': 'Enviado: te llegará en un momento',
+    'Restart': 'Reiniciar', 'Start it again in the same conversation (loads new MCP servers and settings)': 'Arrancarlo otra vez en la misma conversación (carga los MCP y ajustes nuevos)',
+    'Restart %s? It keeps its conversation; what it is doing now is cut.': '¿Reiniciar a %s? Sigue en la misma conversación; lo que esté haciendo ahora se corta.', 'Restarting: it comes back in a few seconds': 'Reiniciando: vuelve en unos segundos',
     'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
     'Recording a voice note…': 'Grabando una nota de voz…', 'Cancel': 'Cancelar', 'Attach a file': 'Adjuntar un fichero', 'Record a voice note': 'Grabar una nota de voz',
     'Voice note': 'Nota de voz', 'Voice note sent: it is transcribed on your computer and goes to it': 'Nota de voz enviada: se transcribe en tu ordenador y se la paso',
@@ -568,6 +570,12 @@
     if (WATCH) return;
     if (c.state === 'working' || c.state === 'asking') {
       const s = el('button', 'chip no', t('Stop')); s.onclick = () => act({ do: 'stop', name: open }, t('Stopped (Ctrl+C)')); tools.append(s);
+    }
+    if (c.restartable) {
+      const r = el('button', 'chip', t('Restart'));
+      r.title = t('Start it again in the same conversation (loads new MCP servers and settings)');
+      r.onclick = () => { if (confirm(t('Restart %s? It keeps its conversation; what it is doing now is cut.', look(c).title))) act({ do: 'restart', name: open }, t('Restarting: it comes back in a few seconds')); };
+      tools.append(r);
     }
     const p = el('button', 'chip', c.paused ? t('Let it go on') : t('Hold the mailbox'));
     p.onclick = () => act({ do: c.paused ? 'resume' : 'pause', name: open }, c.paused ? t('It goes on') : t('Held: nothing more is handed to it')); tools.append(p);

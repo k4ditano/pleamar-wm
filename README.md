@@ -95,6 +95,19 @@ the open windows without closing anything.
   its person sees in that conversation. `expects_reply` false (`--no-reply`)
   for a heads-up. `link whoami` and `link list` name the team. A terminal with
   no name has only its wires.
+- **Each named terminal's conversation, kept and restarted**: its agent's
+  hooks say which conversation it is in, and it is kept by that name across
+  sessions (`$XDG_STATE_HOME/pleamar-wm/sessions`): `link session NAME` gives
+  it, so a shell starts it again in **its own** conversation, not «the last of
+  this folder», which may be another's. What an agent loads when it starts
+  (an MCP server just added, a skill, its settings) is only loaded by starting
+  it again: `link restart NAME [--then TEXT]` ends it and its script starts it
+  again in that conversation, in the same window, and a letter tells it to
+  carry on; the agent itself asks it with `link_restart_me`, the phone with
+  «Restart». Only for a terminal whose script loops (`link session NAME
+  --loop`, then `--again` after it ends; `set -m` so that the terminal still
+  sees the agent). Codex tells its hooks no conversation: there, `codex resume
+  --last` (the last of its folder).
 - **A gate for what agents ask to do**: `pleamar-wm gate setup` puts it in
   Claude Code and Codex (their `PermissionRequest` hook) and opencode (a
   plugin). What an agent would ask its person then stops for real until it is

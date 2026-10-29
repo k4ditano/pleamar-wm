@@ -180,6 +180,20 @@
     }
   },
   {
+    "name": "link_restart_me",
+    "description": "Restart your own session, in this same conversation: what you added or changed since you started (an MCP server with `claude mcp add`, a skill, your settings) is only loaded by starting again. Only a companion (a named terminal) started by its shell can. After it, end your turn: a letter tells you to carry on, with `then` if you give it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "then": {
+          "type": "string",
+          "description": "What to carry on with once you are back (your letter says it)."
+        }
+      },
+      "required": []
+    }
+  },
+  {
     "name": "link_label",
     "description": "Give the wire to a window a name («tests», «frontend»): it is shown on the wire, and the window can be named by it.",
     "inputSchema": {
