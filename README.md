@@ -108,8 +108,28 @@ the open windows without closing anything.
   carry on; the agent itself asks it with `link_restart_me`, the phone with
   «Restart». Only for a terminal whose script loops (`link session NAME
   --loop`, then `--again` after it ends; `set -m` so that the terminal still
-  sees the agent). Codex tells its hooks no conversation: there, `codex resume
-  --last` (the last of its folder).
+  sees the agent). Codex tells its hooks no conversation: the watcher finds it
+  in the file Codex keeps open (`~/.codex/sessions/…/rollout-…-UUID.jsonl`),
+  so `codex resume UUID` comes back to its own too.
+  `link restart NAME --fresh` starts it in a **new** conversation instead
+  (`link session` says `-` until it has one): a long conversation is read
+  again whole at every turn, and costs so. How long each one is, in tokens,
+  is in `link caravan all` (`context`, from its last answer), and the phone
+  offers Compact (`/compact`) or a new conversation once it passes 120k.
+- **When an agent could not start**: its script says when the agent ended
+  (`link session NAME --ended T RC`). One that ended within 15 s, on its own
+  (not a signal) and not asked to, could not start —a conversation it did not
+  find, a CLI missing—: that is kept with the last lines of its screen
+  (`failed`, for 30 minutes), told as a notification and on the phone, and to
+  each companion that left it a letter (once, «your letter waits»).
+- **A journal per named terminal**, with its hour (`link journal NAME [N]
+  [--json]`, `$XDG_STATE_HOME/pleamar-wm/journal`): its agent running and
+  gone (and how it exited), a new conversation, a restart, could not start, and each letter
+  posted, handed and ended. The phone shows it as «History».
+- **Where a letter is**: `link sent [FROM]` (and the MCP tool `link_sent`)
+  lists the letters FROM sent —waiting and how many before, handed, answered
+  or not— with how each one it went to is. Agents are told to look there
+  instead of asking each other whether a letter arrived.
 - **A gate for what agents ask to do**: `pleamar-wm gate setup` puts it in
   Claude Code and Codex (their `PermissionRequest` hook) and opencode (a
   plugin). What an agent would ask its person then stops for real until it is

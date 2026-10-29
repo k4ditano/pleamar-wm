@@ -45,7 +45,17 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   Ctrl+C; its mailbox can be held and let go. **Restart** starts it again in
   the same conversation (to load an MCP server or settings added since), when
   its script can (`link restart`). **Screen** shows its terminal as
-  text, the last 80 lines.
+  text, the last 80 lines. **History** is its journal (`link journal`), with
+  the hour of each thing: letters posted, handed and ended, its agent running
+  and gone, restarts, a start that failed.
+- **What costs.** The head shows how long its conversation is («Context
+  152k», red past 120k: every turn reads it all again). Past that, **Compact**
+  types `/compact` (`/compress` for Gemini) when it is free, and **New
+  conversation** restarts it in a new one (`link restart --fresh`; the old one
+  stays on disk).
+- **One that could not start** says so in the list and in its head, with the
+  last lines of its screen («No conversation found to continue»), and the
+  phone gets a notice (`fail:NAME:AT`).
 - **Files and voice notes, both ways.** The clip attaches files: each goes up
   as soon as it is picked (`/upload`, into «Remote» in the downloads folder,
   as from the desktop page), with its progress, and the letter lists their

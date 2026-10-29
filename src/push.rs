@@ -366,6 +366,15 @@ pub(crate) fn needs(state: &Value) -> Vec<Need> {
                 name: name.clone(),
             });
         }
+        if let Some(at) = c["failed"]["at"].as_u64() {
+            out.push(Need {
+                key: format!("fail:{name}:{at}"),
+                needs: true,
+                title: (format!("{who} could not start"), format!("{who} no pudo arrancar")),
+                body: clip(c["failed"]["text"].as_str().unwrap_or(""), 160),
+                name: name.clone(),
+            });
+        }
         if let (Some(at), Some(last)) = (c["last_at"].as_u64(), c["last"].as_str()) {
             out.push(Need {
                 key: format!("done:{name}:{at}"),
@@ -571,6 +580,19 @@ mod tests {
         assert_eq!(n[0].body, "Copia nocturna · Cada día a las 23:00 · Encender / Dejar apagada");
         assert_eq!((n[1].key.as_str(), n[1].title.0.as_str()), ("card:c2", "An agent asks you"));
         assert!(n[0].needs && n[1].needs);
+    }
+
+    #[test]
+    fn one_that_could_not_start_is_told() {
+        let state = json!({
+            "pending": [], "asks": [],
+            "companions": [{ "name": "prohard", "card": { "title": "Prohard" }, "question": null, "last": null, "last_at": null,
+                             "failed": { "at": 1793259643276u64, "text": "No conversation found to continue", "rc": "1" } }],
+        });
+        let n = needs(&state);
+        assert_eq!(n.len(), 1);
+        assert_eq!((n[0].key.as_str(), n[0].title.1.as_str(), n[0].body.as_str()), ("fail:prohard:1793259643276", "Prohard no pudo arrancar", "No conversation found to continue"));
+        assert!(n[0].needs);
     }
 
     /// Through `curl` to a push service of mentira (`PUSH_TEST_ENDPOINT`, https, its certificate in

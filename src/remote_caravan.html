@@ -116,6 +116,15 @@
   #asks { margin: 10px 0 2px; }
   #screen { margin: 12px 0 0; font: 11.5px/1.35 var(--mono); white-space: pre; overflow-x: auto; background: #070b0d; border: 1px solid var(--line); border-radius: 12px; padding: 10px; min-height: 50vh; color: #cfe0de; }
   .screen-note { color: var(--dim); font-size: 12px; margin-top: 8px; text-align: center; }
+  #log { margin: 12px 0 0; display: flex; flex-direction: column; gap: 2px; }
+  .logrow { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: baseline; font-size: 13px; padding: 5px 2px; border-bottom: 1px solid var(--line); }
+  .logrow .at { color: var(--dim); font: 11.5px var(--mono); white-space: nowrap; }
+  .logrow .k { font-weight: 600; white-space: nowrap; }
+  .logrow .tx { color: var(--dim); overflow-wrap: anywhere; }
+  .logrow.bad .k { color: var(--bad); }
+  .chip.warn { border-color: var(--bad); color: var(--bad); }
+  .chip.info { color: var(--dim); }
+  .comp .line.bad { color: var(--bad); }
 
   footer { border-top: 1px solid var(--line); background: var(--bg); padding: 8px 12px calc(8px + var(--safe-b)); }
   .tools { display: flex; gap: 8px; margin-bottom: 8px; overflow-x: auto; }
@@ -234,10 +243,12 @@
   <div class="seg" role="tablist">
     <button class="on" id="tab-chat" data-t="Conversation">Conversation</button>
     <button id="tab-screen" data-t="Screen">Screen</button>
+    <button id="tab-log" data-t="History">History</button>
   </div>
   <div class="scroll" id="t-scroll">
     <div id="asks"></div>
     <div id="chat"></div>
+    <div id="log-wrap" hidden><div id="log"></div><div class="screen-note" data-t="What happened to it, with its hour.">What happened to it, with its hour.</div></div>
     <div id="screen-wrap" hidden><pre id="screen"></pre><div class="screen-note" data-t="Its terminal, as text: the last 80 lines.">Its terminal, as text: the last 80 lines.</div></div>
   </div>
   <footer id="t-foot">
@@ -309,6 +320,15 @@
     'Notices are blocked for this page: allow them in the browser\'s settings for the site.': 'Los avisos están bloqueados para esta página: permítelos en los ajustes del sitio en el navegador.',
     'Notices on': 'Avisos activados', 'Notices off': 'Avisos desactivados', 'Sent: it should be here in a moment': 'Enviado: te llegará en un momento',
     'Choose a companion': 'Elige un compañero', 'Its conversation opens here.': 'Su conversación se abre aquí.', 'Drop to attach': 'Suelta para adjuntar',
+    'History': 'Historial', 'What happened to it, with its hour.': 'Lo que le ha pasado, con su hora.', 'Nothing yet.': 'Nada todavía.',
+    'letter': 'carta', 'handed': 'entregada', 'ended': 'terminó', 'running': 'en marcha', 'left': 'se fue', 'failed': 'no pudo arrancar',
+    'restart': 'reinicio', 'restarting': 'reiniciando', 'exit': 'salió', 'conversation': 'conversación', 'compact': 'compactada',
+    'Could not start: %s': 'No pudo arrancar: %s', 'Could not start': 'No pudo arrancar',
+    'Context %s': 'Contexto %s', 'Its conversation is %s tokens long: each turn reads it all again.': 'Su conversación ocupa %s tokens: cada turno la vuelve a leer entera.',
+    'Compact': 'Compactar', 'New conversation': 'Nueva conversación',
+    'Compact %s\'s conversation? It is summed up in its place, and it goes on from the summary.': '¿Compactar la conversación de %s? Se resume en su sitio y sigue desde el resumen.',
+    'Start %s in a new conversation? The one it has now ends (it stays on disk); what it is doing now is cut.': '¿Empezar a %s en una conversación nueva? La de ahora se cierra (queda guardada); lo que esté haciendo se corta.',
+    'Compacting': 'Compactando', 'Starting a new conversation': 'Empezando una conversación nueva',
     'Writing now': 'Escribiendo ahora', 'Restart': 'Reiniciar', 'Start it again in the same conversation (loads new MCP servers and settings)': 'Arrancarlo otra vez en la misma conversación (carga los MCP y ajustes nuevos)',
     'Restart %s? It keeps its conversation; what it is doing now is cut.': '¿Reiniciar a %s? Sigue en la misma conversación; lo que esté haciendo ahora se corta.', 'Restarting: it comes back in a few seconds': 'Reiniciando: vuelve en unos segundos',
     'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
@@ -465,7 +485,8 @@
       top.append(el('span', 'name', look(c).title));
       if (c.waiting) top.append(el('span', 'badge', String(c.waiting)));
       top.append(el('span', 'state', stateText(c)));
-      body.append(top, el('div', 'line', c.question ? c.question.text : c.doing || unlink(c.last || '') || look(c).sub || ''));
+      if (c.failed && !c.question) body.append(top, el('div', 'line bad', t('Could not start: %s', c.failed.text || '')));
+      else body.append(top, el('div', 'line', c.question ? c.question.text : c.doing || unlink(c.last || '') || look(c).sub || ''));
       row.append(body);
       row.onclick = () => openTalk(c.name);
       list.append(row);
@@ -604,6 +625,28 @@
     if (c.state === 'working' || c.state === 'asking') {
       const s = el('button', 'chip no', t('Stop')); s.onclick = () => act({ do: 'stop', name: open }, t('Stopped (Ctrl+C)')); tools.append(s);
     }
+    if (c.failed) {
+      const f = el('button', 'chip warn', t('Could not start'));
+      f.title = c.failed.text || ''; f.onclick = () => setTab('log'); tools.append(f);
+    }
+    if (c.context && c.context.tokens) {
+      const k = c.context.tokens >= 1000 ? Math.round(c.context.tokens / 1000) + 'k' : String(c.context.tokens);
+      const x = el('span', 'chip ' + (c.context.long ? 'warn' : 'info'), t('Context %s', k));
+      x.title = t('Its conversation is %s tokens long: each turn reads it all again.', c.context.tokens.toLocaleString());
+      tools.append(x);
+      if (c.context.long && (c.state === 'free' || c.state === 'shell')) {
+        if (c.state === 'free') {
+          const cp = el('button', 'chip', t('Compact'));
+          cp.onclick = () => { if (confirm(t('Compact %s\'s conversation? It is summed up in its place, and it goes on from the summary.', look(c).title))) act({ do: 'compact', name: open }, t('Compacting')); };
+          tools.append(cp);
+        }
+        if (c.restartable) {
+          const nw = el('button', 'chip', t('New conversation'));
+          nw.onclick = () => { if (confirm(t('Start %s in a new conversation? The one it has now ends (it stays on disk); what it is doing now is cut.', look(c).title))) act({ do: 'fresh', name: open }, t('Starting a new conversation')); };
+          tools.append(nw);
+        }
+      }
+    }
     if (c.restartable) {
       const r = el('button', 'chip', t('Restart'));
       r.title = t('Start it again in the same conversation (loads new MCP servers and settings)');
@@ -638,9 +681,26 @@
       if (atEnd) sc.scrollTop = sc.scrollHeight;
     } catch (_) {}
   }
+  async function loadLog() {
+    if (!open || tab !== 'log') return;
+    try {
+      const got = await get('/caravan/journal?name=' + encodeURIComponent(open));
+      const box = $('log'), sc = $('t-scroll'), atEnd = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 60;
+      const key = JSON.stringify(got);
+      if (key === loadLog.seen) return;
+      loadLog.seen = key; box.replaceChildren();
+      if (!got.length) box.append(el('div', 'screen-note', t('Nothing yet.')));
+      for (const l of got) {
+        const row = el('div', 'logrow' + (l.kind === 'failed' ? ' bad' : ''));
+        row.append(el('span', 'at', when(l.at)), el('span', 'k', t(l.kind)), el('span', 'tx', l.text || ''));
+        box.append(row);
+      }
+      if (atEnd) sc.scrollTop = sc.scrollHeight;
+    } catch (_) {}
+  }
   function openTalk(name, fromHistory) {
     open = name; talk = null; expanded.clear(); drawChat.first = true; loadTalk.seen = '';
-    $('chat').replaceChildren(); $('asks').replaceChildren(); $('screen').textContent = '';
+    $('chat').replaceChildren(); $('asks').replaceChildren(); $('screen').textContent = ''; $('log').replaceChildren(); loadLog.seen = '';
     setTab('chat');
     document.body.classList.add('in-talk'); $('talk').setAttribute('aria-hidden', 'false');
     if (!fromHistory) history.pushState({ talk: name }, '', '#' + encodeURIComponent(name));
@@ -655,13 +715,14 @@
   addEventListener('popstate', e => { if (e.state && e.state.talk) openTalk(e.state.talk, true); else closeTalk(); });
   function setTab(which) {
     tab = which;
-    $('tab-chat').classList.toggle('on', which === 'chat'); $('tab-screen').classList.toggle('on', which === 'screen');
-    $('chat').hidden = $('asks').hidden = which !== 'chat'; $('screen-wrap').hidden = which !== 'screen';
-    if (which === 'screen') { loadScreen(); } else { drawChat.first = true; drawChat(); }
+    $('tab-chat').classList.toggle('on', which === 'chat'); $('tab-screen').classList.toggle('on', which === 'screen'); $('tab-log').classList.toggle('on', which === 'log');
+    $('chat').hidden = $('asks').hidden = which !== 'chat'; $('screen-wrap').hidden = which !== 'screen'; $('log-wrap').hidden = which !== 'log';
+    if (which === 'screen') { loadScreen(); } else if (which === 'log') { loadLog(); } else { drawChat.first = true; drawChat(); }
     restartTimers();
   }
   $('tab-chat').onclick = () => setTab('chat');
   $('tab-screen').onclick = () => setTab('screen');
+  $('tab-log').onclick = () => setTab('log');
 
   // ---- Writing to it.
   const box = $('box'), send = $('send');
@@ -884,6 +945,7 @@
     if (document.hidden) return;
     timers.push(setInterval(refresh, esUp ? 20000 : open ? 2500 : 3500));
     if (open && tab === 'screen') timers.push(setInterval(loadScreen, 2000));
+    if (open && tab === 'log') timers.push(setInterval(loadLog, 5000));
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); connect(); });
   addEventListener('online', refresh);

@@ -299,7 +299,7 @@ fn socket(id: i32) -> String {
     format!("{}/{id}.sock", crate::term::socket_dir())
 }
 
-fn info(id: i32) -> Info {
+pub(crate) fn info(id: i32) -> Info {
     crate::term::info(&socket(id)).unwrap_or_default()
 }
 
@@ -344,7 +344,7 @@ fn paste_task(id: i32, task: &str) -> Result<(), String> {
     Err("its screen did not change with the task pasted".into())
 }
 
-fn paste(id: i32, text: &str) -> Result<(), String> {
+pub(crate) fn paste(id: i32, text: &str) -> Result<(), String> {
     match crate::term::ask(&socket(id), &format!("paste {}", hex(text.as_bytes())))? {
         r if r.starts_with("ok") => Ok(()),
         r => Err(r.trim().to_owned()),
@@ -1003,6 +1003,12 @@ Mailboxes (the terminals named with `open --name`; they need no window of your o
   post NAME TEXT… [--from WHO]    a letter for the agent there: handed to it when it is free
   mail [NAME] [--json]            what waits in each, what each is at, its last answers
   mail NAME --cancel ID | --first ID | --pause | --resume | --forget ID
+  sent [FROM] [--json]            where the letters FROM sent are (yours, in a named terminal):
+                                  waiting, handed, answered; and how each one it went to is
+  journal NAME [N] [--json]       what happened to NAME, with its hour: started, left, could
+                                  not start, restarted, each letter posted, handed and ended
+  session NAME [--json]           the conversation NAME resumes (`-`: a new one); `--ended T RC`
+                                  from its script; `restart NAME [--fresh] [--then TEXT]`
   caravan [--json]                what waits at the gate, the named terminals and their mailboxes
                                   (what the remote page's «Caravan» shows); `caravan allow|deny ID`;
                                   `caravan all | talk NAME | screen NAME | do JSON`: what its
@@ -1393,6 +1399,8 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
         },
         "asks" => crate::caravan::asks_cmd(rest),
         "session" => crate::sessions::session(rest),
+        "journal" => crate::journal::cmd(rest),
+        "sent" => crate::mail::sent(rest),
         "restart" => crate::sessions::restart(rest),
         "restart-me" => crate::sessions::restart_me(&rest.join(" ")),
         "mail" => crate::mail::mail(rest),

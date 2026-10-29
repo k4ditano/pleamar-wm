@@ -1236,6 +1236,9 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
         let home = std::env::var("HOME").unwrap_or_default();
         let mut said: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
         let mut named: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        // The agents of named terminals, as last seen: which, since when, and when
+        // Codex's conversation was last looked for (sessions.rs).
+        let mut up: std::collections::HashMap<String, (String, std::time::Instant, std::time::Instant)> = std::collections::HashMap::new();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let text = std::fs::read_to_string(&windows).unwrap_or_default();
@@ -1247,6 +1250,7 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
             let mut now: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
             let mut names: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
             let mut mailable: Vec<(String, usize, i32, bool)> = Vec::new();
+            let mut running: std::collections::HashMap<String, (String, i32)> = std::collections::HashMap::new();
             for (slot, pid) in &slots {
                 let mine: Vec<&(i32, std::collections::BTreeMap<String, String>)> = all.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(*pid)).collect();
                 if let Some(n) = mine.iter().find_map(|(_, i)| i.get("name").filter(|n| !n.is_empty())) {
@@ -1255,6 +1259,9 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                 // A terminal with several shells: the one with an agent, the busiest.
                 let Some((id, info)) = mine.iter().filter(|(_, i)| i.get("agent").is_some_and(|a| !a.is_empty())).min_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX)) else { continue };
                 let agent = info.get("agent").cloned().unwrap_or_default();
+                if let Some(n) = names.get(slot) {
+                    running.insert(n.clone(), (agent.clone(), *id));
+                }
                 let cwd = info.get("cwd").cloned().unwrap_or_default();
                 let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
                 let hook = info.get("hook").map(String::as_str).unwrap_or("");
@@ -1273,6 +1280,28 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                     // (Free as the messenger will see it: at rest too —an agent just started, still drawing, is not—.)
                     mailable.push((n.clone(), *slot, *id, state == 2 && info.get("draft").map(String::as_str) != Some("1") && crate::link::at_rest(info)));
                 }
+            }
+            // Their journal (journal.rs): an agent up, an agent gone; and Codex's conversation.
+            if !slots.is_empty() {
+                let now_t = std::time::Instant::now();
+                for (name, (agent, id)) in &running {
+                    let seen = up.entry(name.clone()).or_insert_with(|| {
+                        crate::journal::note(name, "running", agent);
+                        (agent.clone(), now_t, now_t - std::time::Duration::from_secs(60))
+                    });
+                    if agent == "codex" && now_t.duration_since(seen.2) >= std::time::Duration::from_secs(20) {
+                        seen.2 = now_t;
+                        crate::sessions::look_codex(name, *id);
+                    }
+                }
+                up.retain(|name, (agent, since, _)| {
+                    let still = running.contains_key(name);
+                    if !still {
+                        let s = since.elapsed().as_secs();
+                        crate::journal::note(name, "left", &format!("{agent}, after {}", if s < 120 { format!("{s} s") } else { format!("{} min", s / 60) }));
+                    }
+                    still
+                });
             }
             // The mailboxes of the named ones (mail.rs): the next letter to each that is free.
             if !mailable.is_empty() && crate::mail::turn(&mailable, &sockets) {

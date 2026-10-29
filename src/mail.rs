@@ -157,6 +157,8 @@ pub(crate) fn post(args: &[String]) -> Result<String, String> {
         }
         (id, ahead)
     })?;
+    let first: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+    crate::journal::note(&name, "letter", &format!("#{id} from {}: {first}", if from.is_empty() { "the person" } else { &from }));
     told();
     Ok(match ahead {
         0 => format!("letter {id} for «{name}»: handed to it as soon as it is free"),
@@ -307,6 +309,7 @@ pub(crate) fn turn(named: &[(String, usize, i32, bool)], sockets: &str) -> bool 
                 .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()?.trim().parse::<u64>().ok());
             match pid {
                 Some(pid) => {
+                    crate::journal::note(name, "handed", &format!("#{}", l["id"]));
                     l["slot"] = json!(slot);
                     l["state"] = json!("handing");
                     l["pid"] = json!(pid);
@@ -334,6 +337,11 @@ pub(crate) fn routine_of(name: &str) -> Option<String> {
 
 /// An answer kept, the last first, so many at most.
 pub(crate) fn keep_done(b: &mut Value, l: Value) {
+    if let Some(name) = b["name"].as_str() {
+        let how = l["how"].as_str().unwrap_or("done");
+        let answer: String = l["answer"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+        crate::journal::note(name, "ended", &format!("#{} {how}{}", l["id"], if answer.is_empty() { String::new() } else { format!(": {answer}") }));
+    }
     if let Some(d) = b["done"].as_array_mut() {
         d.insert(0, l);
         d.truncate(KEPT);
@@ -366,4 +374,85 @@ mod tests {
         assert!(card(r#"{"color":"red"}"#).is_err());
         assert!(card("not json").is_err());
     }
+}
+
+/// `link sent [FROM] [--json]`: where the letters FROM sent are —waiting (and
+/// how many before), handed, being worked on, asking, answered or not—, each
+/// with how the one it went to is (free, working, in its shell, not started,
+/// could not start). FROM is the companion asking (`PLEAMAR_NAME`) if not said.
+/// So that nobody asks another whether it got a letter: that costs a turn of
+/// each, and this says it.
+pub(crate) fn sent(rest: &[String]) -> Result<String, String> {
+    let from = rest
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .or_else(|| std::env::var("PLEAMAR_NAME").ok())
+        .filter(|f| !f.trim().is_empty())
+        .ok_or("link sent [FROM] [--json]: whose letters (or run it in a named terminal)")?;
+    let mine = |l: &Value| l["from"].as_str().is_some_and(|f| f.eq_ignore_ascii_case(&from));
+    let since = now_ms().saturating_sub(24 * 3600 * 1000);
+    let layers = crate::term::layers();
+    let mut out: Vec<Value> = Vec::new();
+    for b in all() {
+        let to = b["name"].as_str().unwrap_or("").to_owned();
+        let term = layers.iter().find(|(_, i)| i.get("name").map(String::as_str) == Some(to.as_str()));
+        let them = match term {
+            _ if crate::sessions::failed(&to).is_some() => "could not start",
+            None => "not started",
+            Some((_, i)) if i.get("agent").is_none_or(String::is_empty) => "in its shell, no agent",
+            Some((_, i)) if i.get("hook").map(String::as_str) == Some("working") || i.get("state").map(String::as_str) == Some("working") => "working",
+            Some(_) => "free",
+        };
+        let mut row = |l: &Value, state: String| {
+            out.push(json!({
+                "to": to, "id": l["id"], "state": state, "them": them, "at": l["at"],
+                "text": l["text"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect::<String>(),
+                "answer": l["answer"].as_str().map(|a| a.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect::<String>()),
+            }));
+        };
+        if mine(&b["out"]) {
+            let s = match b["out"]["state"].as_str() {
+                Some("asks") => "handed; it is asking its person something",
+                Some("handing") => "being handed now",
+                _ => "handed; being worked on",
+            };
+            row(&b["out"], s.to_owned());
+        }
+        let ahead = usize::from(!b["out"].is_null());
+        for (k, l) in b["waiting"].as_array().into_iter().flatten().enumerate() {
+            if mine(l) {
+                let state = if b["paused"] == true { "waiting (its mailbox is paused)".to_owned() } else { format!("waiting, {} before it", k + ahead) };
+                row(l, state);
+            }
+        }
+        for l in b["done"].as_array().into_iter().flatten().filter(|l| mine(l) && l["ended"].as_u64().unwrap_or(0) >= since) {
+            let s = match l["how"].as_str().unwrap_or("done") {
+                "done" => "answered",
+                "gone" => "not answered: its agent left",
+                "late" => "not answered: it stopped answering",
+                "refused" => "not taken",
+                "lost" => "lost: the session ended under it",
+                other => other,
+            };
+            row(l, s.to_owned());
+        }
+    }
+    if rest.iter().any(|a| a == "--json") {
+        return Ok(Value::Array(out).to_string());
+    }
+    if out.is_empty() {
+        return Ok(format!("no letters from «{from}» in the last day"));
+    }
+    Ok(out
+        .iter()
+        .map(|r| {
+            let mut line = format!("to {} #{} «{}»: {} ({} is {})", r["to"].as_str().unwrap_or(""), r["id"], r["text"].as_str().unwrap_or(""), r["state"].as_str().unwrap_or(""), r["to"].as_str().unwrap_or(""), r["them"].as_str().unwrap_or(""));
+            if let Some(a) = r["answer"].as_str().filter(|a| !a.is_empty()) {
+                line.push_str(&format!(" — {a}"));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
 }

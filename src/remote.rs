@@ -612,6 +612,7 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
                 "/caravan/state" => crate::caravan::companions(),
                 "/caravan/talk" => crate::caravan::talk(&name),
                 "/caravan/screen" => crate::caravan::screen(&name),
+                "/caravan/journal" => serde_json::Value::Array(crate::journal::last(&name, 60)).to_string(),
                 _ => return respond(&mut stream, "404 Not Found", "text/plain", "", b"not here"),
             };
             respond(&mut stream, "200 OK", "application/json; charset=utf-8", "", body.as_bytes())

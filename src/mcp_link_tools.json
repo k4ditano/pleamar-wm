@@ -194,6 +194,15 @@
     }
   },
   {
+    "name": "link_sent",
+    "description": "Where the letters you sent to your companions are: waiting (and how many before), handed, being worked on, answered or not, each with how the one it went to is (free, working, in its shell, not started, could not start). Look here instead of asking a companion whether it got your letter: asking costs a turn of yours and of theirs. Only for a companion (a named terminal).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
     "name": "link_label",
     "description": "Give the wire to a window a name («tests», «frontend»): it is shown on the wire, and the window can be named by it.",
     "inputSchema": {
