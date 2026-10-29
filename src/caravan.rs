@@ -125,7 +125,41 @@ pub(crate) fn companions() -> String {
         .iter()
         .map(|p| json!({ "id": p["id"], "name": p["name"], "agent": p["agent"], "tool": p["tool"], "what": p["what"].as_str().map(|w| w.chars().take(600).collect::<String>()), "routine": p["routine"] }))
         .collect();
-    json!({ "companions": out, "pending": pending, "asks": asks(), "at": crate::mail::now_ms() }).to_string()
+    json!({ "companions": out, "pending": pending, "asks": asks(), "theme": theme(), "at": crate::mail::now_ms() }).to_string()
+}
+
+/// How the shell looks, for the page to look the same (`link caravan theme
+/// JSON`, said by the shell when its palette changes): its colours as `#rrggbb`
+/// (`accent`, `on_accent`, `surface`, `ink`), `dark`, how round its corners are
+/// (`round`: 0 round, 1 soft, 2 square) and whether its grains move (`grains`).
+/// The page keeps its own sea without one.
+fn theme_file() -> String {
+    format!("{}/caravan-theme.json", crate::keep::dir())
+}
+
+fn theme() -> Value {
+    std::fs::read_to_string(theme_file()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or(Value::Null)
+}
+
+pub(crate) fn set_theme(arg: &str) -> Result<String, String> {
+    if arg.is_empty() {
+        return Ok(theme().to_string());
+    }
+    let v: Value = serde_json::from_str(arg).map_err(|e| format!("not JSON: {e}"))?;
+    let Some(o) = v.as_object() else { return Err("a theme is a JSON object".into()) };
+    let colour = |k: &str| o.get(k).and_then(Value::as_str).filter(|c| c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|h| h.is_ascii_hexdigit())).map(str::to_owned);
+    let kept = json!({
+        "accent": colour("accent"),
+        "on_accent": colour("on_accent"),
+        "surface": colour("surface"),
+        "ink": colour("ink"),
+        "dark": o.get("dark").and_then(Value::as_bool).unwrap_or(true),
+        "round": o.get("round").and_then(Value::as_u64).unwrap_or(0).min(2),
+        "grains": o.get("grains").and_then(Value::as_bool).unwrap_or(false),
+    });
+    let _ = std::fs::create_dir_all(crate::keep::dir());
+    std::fs::write(theme_file(), kept.to_string()).map_err(|e| format!("could not keep the theme: {e}"))?;
+    Ok("kept".into())
 }
 
 /// The caravan page's live channel (`/caravan/events?name=`, Server-Sent
@@ -163,9 +197,12 @@ pub(crate) fn events(out: &mut impl std::io::Write, name: &str, still: impl Fn()
                 beat = std::time::Instant::now();
             }
             let working = serde_json::from_str::<Value>(&state).ok().and_then(|v| v["companions"].as_array().and_then(|c| c.iter().find(|c| c["name"].as_str() == Some(name)).map(|c| c["state"] == "working")));
-            let now = if working == Some(true) { live_of(&crate::link::read(terminal(name).map_or(-1, |(id, _)| id), 60)) } else { String::new() };
+            let screen = if working == Some(true) { crate::link::read(terminal(name).map_or(-1, |(id, _)| id), 60) } else { String::new() };
+            let (now, say) = if screen.is_empty() { (String::new(), String::new()) } else { (live_of(&screen), saying_of(&screen)) };
+            let now = if now.is_empty() && say.is_empty() { now } else { json!([now, say]).to_string() };
             if now != was_live {
-                if !send(out, "live", &json!({ "name": name, "text": now }).to_string()) {
+                let (text, say) = serde_json::from_str::<(String, String)>(&now).unwrap_or_default();
+                if !send(out, "live", &json!({ "name": name, "text": text, "say": say }).to_string()) {
                     return Ok(());
                 }
                 was_live = now;
@@ -202,6 +239,66 @@ fn live_of(screen: &str) -> String {
     let end = lines.iter().rposition(|l| { let t = l.trim_start(); t.starts_with('❯') || t.starts_with('›') }).map_or(lines.len(), |k| k.saturating_sub(1));
     let kept: Vec<String> = lines[..end.min(lines.len())].iter().filter(|l| !frame(l)).map(|l| l.trim_end().chars().take(200).collect()).collect();
     kept[kept.len().saturating_sub(8)..].join("\n")
+}
+
+/// What it is answering now, from its screen (Claude Code's): its last
+/// paragraph begun with «● » that is not a tool's («● Bash(…)»), up to its
+/// status line or its input box, with the terminal's wrapping undone; nothing
+/// once the status line says it is done. The page shows it in its bubble as it
+/// grows.
+fn saying_of(screen: &str) -> String {
+    let status = |l: &str| {
+        let t = l.trim_start();
+        ["✻ ", "✶ ", "✳ ", "✢ ", "✽ ", "· ", "* "].iter().any(|p| t.starts_with(p))
+    };
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut start = None;
+    for (i, l) in lines.iter().enumerate().rev() {
+        if l.starts_with('●') {
+            start = Some(i);
+            break;
+        }
+        if status(l) && l.contains("done") {
+            return String::new();
+        }
+    }
+    let Some(start) = start else { return String::new() };
+    let first = lines[start].trim_start_matches('●').trim_start();
+    let head: String = first.chars().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '.')).collect();
+    if !head.is_empty() && (first[head.len()..].starts_with('(') || first[head.len()..].trim().is_empty()) {
+        return String::new();
+    }
+    unwrap(std::iter::once(first).chain(lines[start + 1..].iter().copied().take_while(|l| {
+        let t = l.trim_start();
+        !(status(l) || t.starts_with('─') || t.starts_with('⎿') || t.starts_with('❯') || t.starts_with('›') || l.starts_with('●'))
+    })))
+    .chars()
+    .take(4000)
+    .collect()
+}
+
+/// Lines a terminal broke at its width, joined again: a blank line or one that
+/// begins a list item starts its own line.
+fn unwrap<'a>(lines: impl Iterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    let mut blank = true;
+    for l in lines {
+        let t = l.trim();
+        if t.is_empty() {
+            if !blank {
+                out.push_str("\n\n");
+            }
+            blank = true;
+            continue;
+        }
+        let item = t.starts_with("- ") || t.starts_with("* ") || t.starts_with("• ") || t.starts_with('#') || t.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.len() <= 3 && n.chars().all(|c| c.is_ascii_digit()));
+        if !blank {
+            out.push_str(if item { "\n" } else { " " });
+        }
+        out.push_str(t);
+        blank = false;
+    }
+    out.trim_end().to_owned()
 }
 
 /// What a shell asks the person itself, beside what its agents ask on their
@@ -647,6 +744,16 @@ mod tests {
         let many: String = (1..=20).map(|n| format!("línea {n}\n")).collect();
         assert_eq!(live_of(&many).lines().count(), 8);
         assert!(live_of(&many).ends_with("línea 20"));
+    }
+
+    #[test]
+    fn what_it_is_answering_is_its_last_paragraph_unwrapped() {
+        let screen = "● Una respuesta de antes\n\n❯ la carta nueva\n\n● Esto lo voy escribiendo y la terminal\n  lo parte a su ancho.\n\n  - un punto\n  - otro\n✶ Escribiendo… (esc to interrupt)\n\n──────────\n❯ \n──────────";
+        assert_eq!(saying_of(screen), "Esto lo voy escribiendo y la terminal lo parte a su ancho.\n\n- un punto\n- otro");
+        // A tool is not an answer, and a status that says done closes it.
+        assert_eq!(saying_of("● Bash(cargo test)\n  ⎿  Running…\n✶ Haciendo… (3 s)"), "");
+        assert_eq!(saying_of("● Ya está.\n\n✻ Brewed for 8s · done 23:36\n──\n❯ "), "");
+        assert_eq!(saying_of("sin nada"), "");
     }
 
     #[test]

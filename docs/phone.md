@@ -26,8 +26,19 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   channel (`/caravan/events`, Server-Sent Events) while the page is in sight,
   nothing while it is not: the server looks every 0.7 s and sends only what
   changed —the state, the conversation open, and **what that agent is writing
-  now** (the last lines of its screen, in its «writing» bubble)—. If the
-  channel cannot be opened, the page asks every few seconds instead.
+  now**—. That is two things. One is the paragraph it is answering (`say`:
+  Claude Code's last «● » paragraph that is not a tool's, with the terminal's
+  wrapping undone), which comes into its bubble letter by letter. The other is
+  the last lines of its screen (`text`), of which the page shows the tool it
+  is using in small. If the channel cannot be opened, the page asks every few
+  seconds instead.
+- **It looks like the shell.** A shell can say how it looks with
+  `link caravan theme JSON`: its `accent`, `on_accent`, `surface` and `ink`
+  as `#rrggbb`, `dark`, how round its corners are (`round`: 0 round, 1 soft,
+  2 square) and whether its grains move (`grains`). It is kept in the session's
+  state and comes in `/caravan/state` as `theme`, so the page changes with it
+  without reloading. The page's own default is sand. Calima says its theme
+  whenever its palette, its corners or its grains change.
 - **On a computer too**: a wide window shows the list and the conversation
   side by side; files are dropped on it or pasted (a screenshot, Ctrl+V);
   Enter sends, Esc leaves it. It installs as an app of its own on the phone

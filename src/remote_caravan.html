@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#0b1114">
+<meta name="theme-color" content="#15100d">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -14,9 +14,15 @@
 <style>
   /* The caravan (remote.rs, /caravan): the session's agents without the
      desktop's picture. Same sea as the remote page; text set for a phone. */
+  /* The colours are the shell's when it says them (`link caravan theme`, in the state as `theme`): its surface
+     darkened as its island's mist, its ink and its one accent; the rest is mixed from those. Without one, sand. */
   :root {
-    --bg: #0b1114; --panel: #12191d; --raise: #172126; --line: #23313a; --ink: #e6f1f0; --faint: #8aa0a6; --dim: #5d7177;
-    --sea: #4fd1c5; --sea-ink: #062421; --amber: #f2b45a; --bad: #ff8a80;
+    --bg: #15100d; --ink: #f4ece6; --acc: #ffb690; --acc-ink: #3a1d0c; --tone: var(--acc);
+    --panel: color-mix(in oklab, var(--ink) 6%, var(--bg)); --raise: color-mix(in oklab, var(--ink) 11%, var(--bg));
+    --line: color-mix(in oklab, var(--ink) 11%, transparent); --faint: color-mix(in oklab, var(--ink) 62%, var(--bg)); --dim: color-mix(in oklab, var(--ink) 42%, var(--bg));
+    --sea: var(--acc); --sea-ink: var(--acc-ink); --amber: #f2b45a; --bad: #ff8a80;
+    --r: 22px; --rt: 14px; --rb: 18px;
+    --spring: cubic-bezier(.2, 1.15, .35, 1); --calm: cubic-bezier(.2, .8, .2, 1);
     --serif: ui-serif, "Newsreader", "Iowan Old Style", Georgia, serif;
     --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
     --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
@@ -198,9 +204,93 @@
   .comp.on { background: var(--raise); box-shadow: inset 3px 0 0 var(--sea); }
   #talk.drop::after { content: attr(data-drop); position: absolute; inset: 12px; border: 2px dashed var(--sea); border-radius: 18px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 80%, transparent); color: var(--sea); font-size: 17px; font-weight: 600; z-index: 9; pointer-events: none; }
   #t-empty { display: none; }
+
+  /* ---- Calima's look (the island's sheets): tiles with body, grains to count, a serif for names, one accent. */
+  body { background: var(--bg); }
+  #grain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  .view { background: transparent; z-index: 1; }
+  #talk { background: var(--bg); transition: transform .42s var(--calm); box-shadow: -18px 0 40px #0007; }
+  body.in-talk #home { transition: transform .42s var(--calm), opacity .42s; }
+  #home { transition: transform .42s var(--calm), opacity .42s; }
+  header h1 { font: 400 34px/1.05 var(--serif); letter-spacing: -.015em; }
+  .count { display: flex; gap: 4px; margin-top: 8px; }
+  .count i, .grains i { width: 6px; height: 6px; border-radius: 2px; background: var(--ink); opacity: .22; transition: opacity .4s, background .4s; }
+  .count i.on { background: var(--acc); opacity: 1; }
+  .count i.ask { background: var(--amber); opacity: 1; animation: beat 1s ease-in-out infinite; }
+  .pill-btn { border-radius: var(--rt); background: var(--panel); border-color: var(--line); }
+  h2 { font: 400 19px/1 var(--serif); letter-spacing: 0; text-transform: none; color: var(--ink); opacity: .8; margin: 22px 2px 12px; }
+  .card { border-radius: var(--r); background: var(--panel); border-color: var(--line); }
+  .card.brote { animation: drop .5s var(--spring) both; }
+  .card.needs { border-color: color-mix(in oklab, var(--amber) 45%, transparent); background: color-mix(in oklab, var(--amber) 7%, var(--panel)); }
+  .what { border-radius: var(--rt); background: color-mix(in oklab, #000 35%, var(--bg)); }
+  .what::before { content: "$ "; color: var(--acc); }
+  .btn { border-radius: var(--rt); background: var(--raise); border-color: var(--line); transition: transform .2s var(--spring), filter .2s; }
+  .btn:active:not(:disabled) { transform: scale(.96); }
+  .btn.go { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
+  .glyph { gap: 2px; width: 24px; height: 24px; }
+  .glyph i { border-radius: 1.5px; }
+  .avatar { width: 44px; height: 44px; border-radius: var(--rt); background: color-mix(in oklab, currentColor 16%, var(--raise)); }
+  .avatar .dot { border-color: var(--bg); }
+
+  .list { background: none; border: 0; border-radius: 0; overflow: visible; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .comp { flex-direction: column; align-items: stretch; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); min-height: 156px; transition: transform .25s var(--spring), background .25s; }
+  .comp:last-child { border-bottom: 1px solid var(--line); }
+  .comp:active { transform: scale(.97); background: var(--raise); }
+  .comp.brote { animation: drop .55s var(--spring) both; animation-delay: calc(var(--k, 0) * 45ms); }
+  .comp .top { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .comp .name { font: 400 20px/1.15 var(--serif); max-width: 100%; }
+  .comp .state { margin-left: 0; display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .comp .head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .comp .line { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12.5px; line-height: 1.35; }
+  .grains { display: flex; gap: 3px; }
+  .grains.ctx i { width: 4px; height: 4px; border-radius: 1px; }
+  .grains i.on { opacity: .9; background: var(--tone, var(--acc)); }
+  .grains.ctx.long i.on { background: var(--bad); }
+  .s-working .state .grains i { background: var(--acc); animation: wave 1.2s ease-in-out infinite; }
+  .s-working .state .grains i:nth-child(2) { animation-delay: .15s; } .s-working .state .grains i:nth-child(3) { animation-delay: .3s; }
+  .s-asking .state .grains i { background: var(--amber); opacity: 1; }
+  .s-free .state .grains i:first-child { background: var(--ink); opacity: .8; }
+  @keyframes wave { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
+  .badge { border-radius: 6px; background: var(--acc); color: var(--acc-ink); border: 0; }
+  .comp.on { box-shadow: inset 0 0 0 1.5px var(--acc); background: var(--raise); }
+
+  #talk header { border-bottom-color: var(--line); }
+  #t-name { font: 400 23px/1.1 var(--serif); }
+  .seg { border-radius: var(--rt); background: var(--panel); border-color: var(--line); }
+  .seg button { border-radius: calc(var(--rt) - 3px); transition: background .25s, color .25s; }
+  .seg button.on { background: var(--raise); box-shadow: inset 0 -2px 0 var(--acc); }
+  .bub { border-radius: var(--rb); line-height: 1.45; }
+  .bub.me { background: color-mix(in oklab, var(--tone) 30%, var(--bg)); border-bottom-right-radius: 6px; }
+  .bub.me.waiting { background: var(--panel); border: 1px dashed var(--line); }
+  .bub.them { background: color-mix(in oklab, var(--ink) 9%, var(--bg)); border: 0; border-bottom-left-radius: 6px; }
+  .bub.them.bad { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 55%, transparent); }
+  .bub .more, .wbtns button { color: var(--acc); }
+  .bub.new { animation: drop .5s var(--spring) both; }
+  .bub.me.new { transform-origin: 100% 100%; } .bub.them.new { transform-origin: 0 100%; }
+  @keyframes drop { from { opacity: 0; transform: translateY(12px) scale(.9); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+  .day { font: italic 400 13px/1 var(--serif); color: var(--faint); }
+  .typing { background: color-mix(in oklab, var(--ink) 9%, var(--bg)); border: 0; border-radius: var(--rb); border-bottom-left-radius: 6px; }
+  .typing i { width: 6px; height: 6px; border-radius: 2px; background: var(--tone); }
+  .bub.writing { animation: none; }
+  .bub.writing .caret { display: inline-block; width: 6px; height: 6px; border-radius: 2px; background: var(--tone); margin-left: 5px; vertical-align: middle; animation: beat 1s ease-in-out infinite; }
+  .doing { align-self: flex-start; display: flex; align-items: center; gap: 8px; font: 12px/1.3 var(--mono); color: var(--dim); margin: 2px 6px 4px; max-width: 86%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .doing .grains i { background: var(--tone); animation: wave 1.2s ease-in-out infinite; }
+  .doing .grains i:nth-child(2) { animation-delay: .15s; } .doing .grains i:nth-child(3) { animation-delay: .3s; }
+  footer { background: color-mix(in oklab, var(--bg) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top-color: var(--line); }
+  textarea { border-radius: var(--rb); background: var(--panel); border-color: var(--line); }
+  textarea:focus { border-color: color-mix(in oklab, var(--acc) 60%, transparent); }
+  .send { border-radius: var(--rt); background: var(--acc); color: var(--acc-ink); transition: transform .2s var(--spring); }
+  .send:active { transform: scale(.92); }
+  .send.mic { border-radius: var(--rt); }
+  .chip { border-radius: calc(var(--rt) - 2px); background: var(--panel); border-color: var(--line); }
+  #sheet { background: color-mix(in oklab, var(--ink) 6%, var(--bg)); border-radius: calc(var(--r) + 4px) calc(var(--r) + 4px) 0 0; transition: transform .42s var(--spring); }
+  #sheet h3 { font-weight: 400; }
+  #toast { border-radius: var(--rt); background: var(--raise); }
+  #screen { background: color-mix(in oklab, #000 45%, var(--bg)); color: var(--ink); border-radius: var(--rt); }
   /* A wide window (a computer): the list and the conversation side by side. */
   @media (min-width: 1000px) {
     #home { right: auto; width: 380px; border-right: 1px solid var(--line); transform: none !important; opacity: 1 !important; }
+    .list { grid-template-columns: 1fr 1fr; }
     #talk { left: 380px; transform: none; box-shadow: none; transition: none; }
     body:not(.in-talk) #talk > :not(#t-empty) { display: none; }
     body:not(.in-talk) #t-empty { display: grid; place-items: center; flex: 1; color: var(--faint); text-align: center; padding: 24px; }
@@ -210,17 +300,18 @@
   }
   @media (min-width: 760px) {
     .scroll, #talk footer > * { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
-    #talk .seg { max-width: 648px; margin-left: auto; margin-right: auto; }
+    #talk .seg { max-width: 648px; width: calc(100% - 32px); margin-left: auto; margin-right: auto; }
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
+<canvas id="grain" aria-hidden="true"></canvas>
 <div id="offline"></div>
 
 <section id="home" class="view">
   <header>
-    <h1><span data-t="Caravan">Caravan</span><span class="host" id="host"></span></h1>
+    <h1><span data-t="Caravan">Caravan</span><span class="host" id="host"></span><span class="count" id="count" aria-hidden="true"></span></h1>
     <button class="pill-btn bell" id="bell" aria-label="Notices" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button>
     <a class="pill-btn" href="/?desk" id="to-desk" data-t="Desktop">Desktop</a>
     <form method="post" action="/logout" style="margin:0"><button class="pill-btn" data-t="Sign out">Sign out</button></form>
@@ -346,6 +437,72 @@
   $('host').textContent = location.hostname;
   if (WATCH) $('watch-note').hidden = false;
 
+  // ---- The shell's look (`theme` in the state): its colours, its corners, and whether its grains move.
+  const hexrgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const mixhex = (a, b, t) => '#' + hexrgb(a).map((v, i) => Math.round(v + (hexrgb(b)[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  let look_ = { grains: false, acc: '#ffb690', ink: '#f4ece6', bg: '#15100d' };
+  function applyTheme(th) {
+    const key = JSON.stringify(th || null);
+    if (key === applyTheme.seen) return;
+    applyTheme.seen = key;
+    const ok = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+    const root = document.documentElement.style;
+    if (!th || !ok(th.accent) || !ok(th.surface) || !ok(th.ink)) return;
+    // (Its mist: the island's, `mix(black, surface, 0.38)`; on a light shell, its surface as it is.)
+    const bg = th.dark === false ? th.surface : mixhex('#000000', th.surface, 0.38);
+    root.setProperty('--bg', bg); root.setProperty('--ink', th.ink); root.setProperty('--acc', th.accent);
+    if (ok(th.on_accent)) root.setProperty('--acc-ink', th.on_accent);
+    const R = [[22, 14, 18], [16, 10, 14], [8, 5, 8]][Math.min(Math.max(th.round | 0, 0), 2)];
+    root.setProperty('--r', R[0] + 'px'); root.setProperty('--rt', R[1] + 'px'); root.setProperty('--rb', R[2] + 'px');
+    document.querySelector('meta[name="theme-color"]').content = bg;
+    look_ = { grains: !!th.grains, acc: th.accent, ink: th.ink, bg };
+    grain.draw(true);
+  }
+  // The grains behind (the shell's sand, as its wallpaper of grains): a field of small squares, thicker towards the
+  // bottom like dunes, in the ink and some in the accent. They drift slowly when the shell's move, a few times a
+  // second, and stop while the page is hidden or motion is reduced.
+  const grain = (() => {
+    const cv = $('grain'), cx = cv.getContext('2d');
+    const still = matchMedia('(prefers-reduced-motion: reduce)');
+    let t0 = performance.now(), timer = 0;
+    const P = 9, S = 3;
+    const h = (x, y) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
+    function draw(force) {
+      const dpr = Math.min(devicePixelRatio || 1, 2), w = innerWidth, ht = innerHeight;
+      if (force || cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(ht * dpr); }
+      cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cx.clearRect(0, 0, w, ht);
+      const t = look_.grains && !still.matches ? (performance.now() - t0) / 1000 : 0;
+      const cols = Math.ceil(w / P), rows = Math.ceil(ht / P);
+      for (let j = 0; j < rows; j++) {
+        const y = j * P, fy = y / ht;
+        for (let i = 0; i < cols; i++) {
+          const x = i * P;
+          // Two dunes: where the sand is, and how much of it.
+          const d1 = 0.72 + 0.07 * Math.sin(x / 210 + t * 0.05) + 0.04 * Math.sin(x / 67 - t * 0.08);
+          const d2 = 0.86 + 0.05 * Math.sin(x / 150 + 2.1 - t * 0.04);
+          const sand = Math.max(0, Math.min(1, (fy - d1) * 5)) * 0.55 + Math.max(0, Math.min(1, (fy - d2) * 6)) * 0.45;
+          const r = h(i, j), tw = 0.5 + 0.5 * Math.sin(t * 0.9 + r * 40);
+          const a = sand * (0.10 + 0.14 * r) * (0.7 + 0.3 * tw) + (r > 0.985 ? 0.05 : 0);
+          if (a < 0.012) continue;
+          cx.globalAlpha = a;
+          cx.fillStyle = r > 0.9 ? look_.acc : look_.ink;
+          cx.fillRect(x + 3, y + 3, S, S);
+        }
+      }
+      cx.globalAlpha = 1;
+    }
+    function loop() {
+      clearTimeout(timer);
+      if (document.hidden || !look_.grains || still.matches) return;
+      draw(); timer = setTimeout(loop, 125);
+    }
+    addEventListener('resize', () => draw(true));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { draw(); loop(); } });
+    return { draw: f => { draw(f); loop(); } };
+  })();
+  grain.draw(true);
+
   // ---- Glyphs: a name's card says it; without one, one from its name (as Calima makes them).
   function nameGlyph(name) {
     let h = 5381;
@@ -410,8 +567,11 @@
   let open = null; // the name whose conversation is open
   const byName = n => state.companions.find(c => c.name === n);
 
+  // A card that comes in grows from a drop; drawn again, it stays.
+  const cardSeen = new Set();
+  const grows = key => { const was = cardSeen.has(key); cardSeen.add(key); return was ? '' : ' brote'; };
   function questionCard(c, compact) {
-    const q = c.question, card = el('div', 'card needs');
+    const q = c.question, card = el('div', 'card needs' + grows('q' + c.name + (q.key || '')));
     const who = el('div', 'who'); who.append(avatar(c));
     const w = el('div'); w.append(el('b', '', look(c).title), el('div', 'meta', t('asks')));
     who.append(w); card.append(who);
@@ -429,7 +589,7 @@
   }
   function gateCard(p) {
     const c = byName(p.name) || { name: p.name || p.agent || '?' };
-    const card = el('div', 'card needs');
+    const card = el('div', 'card needs' + grows('g' + p.id));
     const who = el('div', 'who'); who.append(avatar(c));
     const w = el('div'); w.append(el('b', '', look(c).title), el('div', 'meta', `${t('wants to run')} ${p.tool || ''}${p.routine ? ' · ' + t('a routine') : ''}`));
     who.append(w); card.append(who);
@@ -447,7 +607,7 @@
   const ASK_META = { routine: 'proposes a routine', hands: 'asks to use its hands in', choose: 'asks' };
   function askCard(a) {
     const c = byName(a.name) || { name: a.name || '?' };
-    const card = el('div', 'card needs');
+    const card = el('div', 'card needs' + grows('a' + a.id));
     const who = el('div', 'who'); who.append(avatar(c));
     const w = el('div'); w.append(el('b', '', look(c).title), el('div', 'meta', t(ASK_META[a.kind] || ASK_META.choose)));
     who.append(w); card.append(who);
@@ -463,6 +623,7 @@
     card.append(btns);
     return card;
   }
+  drawHome.seen = new Set();
   function drawHome() {
     const needs = $('needs'); needs.replaceChildren();
     const asking = state.companions.filter(c => c.question);
@@ -473,24 +634,39 @@
       asking.forEach(c => needs.append(questionCard(c)));
       asks.forEach(a => needs.append(askCard(a)));
     }
+    // (In the title, a grain for each: in the accent if it works, in amber if it asks.)
+    const count = $('count'); count.replaceChildren();
+    for (const c of state.companions.slice(0, 16)) count.append(el('i', c.state === 'asking' ? 'ask' : c.state === 'working' ? 'on' : ''));
     const list = $('list'); list.replaceChildren();
     if (!state.companions.length) {
       const e = el('div', 'empty'); e.append(el('b', '', t('No companions yet')), el('span', '', t('A terminal opened with a name (pleamar-wm link open --name) shows up here.')));
       list.append(e);
     }
-    for (const c of state.companions) {
-      const row = el('button', 'comp s-' + c.state + (c.name === open ? ' on' : ''));
-      row.append(avatar(c));
+    // Each in its tile, as in the island's sheet: its glyph in its colour, its name in the serif, how it is (three
+    // grains), what it does or said last, and how long its conversation is (20 grains, red past the long mark). A tile
+    // that comes in grows from a drop.
+    state.companions.forEach((c, k) => {
+      const row = el('button', 'comp s-' + c.state + (c.name === open ? ' on' : '') + (drawHome.seen.has(c.name) ? '' : ' brote'));
+      row.style.setProperty('--tone', look(c).color); row.style.setProperty('--k', k);
+      drawHome.seen.add(c.name);
+      const head = el('div', 'head'); head.append(avatar(c));
+      if (c.waiting) head.append(el('span', 'badge', String(c.waiting)));
       const body = el('div', 'body'), top = el('div', 'top');
       top.append(el('span', 'name', look(c).title));
-      if (c.waiting) top.append(el('span', 'badge', String(c.waiting)));
-      top.append(el('span', 'state', stateText(c)));
+      const st = el('span', 'state'), gr = el('span', 'grains'); gr.append(el('i'), el('i'), el('i'));
+      st.append(gr, document.createTextNode(stateText(c)));
+      top.append(st);
       if (c.failed && !c.question) body.append(top, el('div', 'line bad', t('Could not start: %s', c.failed.text || '')));
       else body.append(top, el('div', 'line', c.question ? c.question.text : c.doing || unlink(c.last || '') || look(c).sub || ''));
-      row.append(body);
+      if (c.context && c.context.tokens && c.context.window) {
+        const ctx = el('span', 'grains ctx' + (c.context.long ? ' long' : '')), on = Math.max(1, Math.round(20 * Math.min(c.context.tokens / c.context.window, 1)));
+        for (let g = 0; g < 20; g++) ctx.append(el('i', g < on ? 'on' : ''));
+        body.append(ctx);
+      }
+      row.append(head, body);
       row.onclick = () => openTalk(c.name);
       list.append(row);
-    }
+    });
   }
 
   // ---- A conversation: its letters and what each got back.
@@ -563,6 +739,10 @@
     m.onclick = () => { full ? expanded.delete(key) : expanded.add(key); loadTalk.seen = ''; drawChat(); };
     bub.append(m);
   }
+  // A bubble drawn for the first time comes in as a drop; one drawn again does not move (nor the first ones of a
+  // conversation just opened, nor an answer that was already being written in its bubble).
+  let shown = new Set(), quiet = true;
+  const fresh = key => { const was = shown.has(key); shown.add(key); return was || quiet ? '' : ' new'; };
   function drawChat() {
     const chat = $('chat'), sc = $('t-scroll');
     const atEnd = atBottom;
@@ -581,7 +761,7 @@
     for (const l of letters) {
       const day = l.at ? new Date(l.at).toDateString() : '';
       if (day && day !== lastDay) { lastDay = day; chat.append(el('div', 'day', day === new Date().toDateString() ? t('Today') : new Date(l.at).toLocaleDateString(ES ? 'es' : undefined, { weekday: 'long', day: 'numeric', month: 'long' }))); }
-      const mine = el('div', 'bub me' + (l.state === 'waiting' ? ' waiting' : ''));
+      const mine = el('div', 'bub me' + (l.state === 'waiting' ? ' waiting' : '') + fresh('q' + l.id));
       if (l.from) mine.append(el('span', 'from', t('from %s', fromText(l.from))));
       const said = tidy(l.text || '');
       if (said.voice) mine.append(el('span', 'voice', '🎤 ' + t('Voice note')));
@@ -602,20 +782,22 @@
         continue;
       }
       chat.append(el('div', 'stamp me', when(l.at)));
-      if (l.state !== 'done') { const ty = el('div', 'typing'); ty.id = 'live'; ty.append(el('i'), el('i'), el('i')); chat.append(ty); drawLive(); continue; }
+      if (l.state !== 'done') { const ty = el('div'); ty.id = 'live'; ty.dataset.id = l.id; chat.append(ty); drawLive(); continue; }
       const bad = l.how && l.how !== 'done';
-      const them = el('div', 'bub them' + (bad ? ' bad' : ''));
+      const them = el('div', 'bub them' + (bad ? ' bad' : '') + fresh('a' + l.id));
       if (bad) them.append(el('span', 'from', t(HOW[l.how] || l.how)));
       const theirFiles = (l.files || []).filter(f => (l.answer || '').includes(f.path));
       longText(them, named(unlink((l.answer || '').trim()), theirFiles) || '—', 'a' + l.id);
       filesOf(them, theirFiles);
       chat.append(them, el('div', 'stamp them', when(l.ended)));
     }
+    quiet = false;
     if (atEnd || drawChat.first) { sc.scrollTop = sc.scrollHeight; atBottom = true; drawChat.first = false; }
   }
   function drawTalkHead() {
     const c = byName(open) || { name: open, state: 'away' };
     avatar(c, $('t-av')); $('t-av').className = 'avatar s-' + c.state;
+    $('talk').style.setProperty('--tone', look(c).color);
     $('t-name').textContent = look(c).title;
     const extra = [look(c).sub, c.waiting ? t('waits %d', c.waiting) : ''].filter(Boolean).join(' · ');
     $('t-state').textContent = stateText(c) + (extra ? ' · ' + extra : '');
@@ -699,7 +881,7 @@
     } catch (_) {}
   }
   function openTalk(name, fromHistory) {
-    open = name; talk = null; expanded.clear(); drawChat.first = true; loadTalk.seen = '';
+    open = name; talk = null; expanded.clear(); drawChat.first = true; loadTalk.seen = ''; shown = new Set(); quiet = true;
     $('chat').replaceChildren(); $('asks').replaceChildren(); $('screen').textContent = ''; $('log').replaceChildren(); loadLog.seen = '';
     setTab('chat');
     document.body.classList.add('in-talk'); $('talk').setAttribute('aria-hidden', 'false');
@@ -899,6 +1081,7 @@
     const seen = JSON.stringify({ ...got, at: 0 });
     document.body.classList.remove('offline');
     state = got;
+    applyTheme(got.theme);
     if (seen !== refresh.seen) { refresh.seen = seen; drawHome(); }
     if (open) { drawTalkHead(); loadTalk.state(); }
   }
@@ -910,20 +1093,49 @@
       if (e.message !== 'signed out') { $('offline').textContent = t('No connection with the desktop'); document.body.classList.add('offline'); }
     }
   }
-  // What it is writing now, in its «writing» bubble (from the live channel).
-  let live = null;
+  // What it is writing now (from the live channel): the paragraph it is answering, in its bubble, the letters
+  // coming in as they are written; under it, three grains and what it is doing (a tool) in small. Not what is still on
+  // its screen from an answer before.
+  let live = null, said = '', want = '', typing = 0;
   function drawLive() {
-    const ty = $('live');
-    if (!ty) return;
-    const text = live && live.name === open ? live.text : '';
-    if (!text) { if (ty.classList.contains('live')) { ty.className = 'typing'; ty.replaceChildren(el('i'), el('i'), el('i')); } return; }
-    if (!ty.classList.contains('live')) {
-      ty.className = 'typing live'; ty.replaceChildren();
-      const head = el('div', 'dots'); head.append(el('i'), el('i'), el('i'), el('span', 'wlabel', t('Writing now')));
-      ty.append(head, el('pre'));
+    const box = $('live');
+    if (!box) { said = want = ''; return; }
+    const id = box.dataset.id;
+    let say = live && live.name === open ? live.say || '' : '';
+    const done = ((talk && talk.letters) || []).filter(l => l.answer).map(l => unlink(l.answer).replace(/\s+/g, ' ').trim());
+    const head = say.replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (head && done.some(a => a.startsWith(head))) say = '';
+    const doing = live && live.name === open ? (live.text || '').split('\n').filter(l => /^\s*●/.test(l)).pop() || '' : '';
+    if (!box.firstChild) {
+      box.className = 'live-wrap'; box.style.display = 'contents';
+      const bub = el('div', 'bub them writing'); bub.hidden = true;
+      const dots = el('div', 'typing'); dots.append(el('i'), el('i'), el('i'));
+      const what = el('div', 'doing'); what.hidden = true;
+      box.append(bub, dots, what);
+      if (box.dataset.id !== drawLive.id) said = '';
+      drawLive.id = box.dataset.id;
     }
-    ty.querySelector('pre').textContent = text;
+    const [bub, dots, what] = box.children;
+    want = say;
+    if (say) {
+      bub.hidden = false; dots.hidden = true; shown.add('a' + id);
+      if (!want.startsWith(said)) said = '';
+      if (!typing) typing = requestAnimationFrame(type);
+    } else { bub.hidden = true; dots.hidden = false; said = ''; }
+    const tool = doing.replace(/^\s*●\s*/, '');
+    what.hidden = !tool || !!say;
+    if (tool) { const g = el('span', 'grains'); g.append(el('i'), el('i'), el('i')); what.replaceChildren(g, document.createTextNode(tool)); }
     keepEnd();
+  }
+  // The letters come in a few at a time, faster the more there are to catch up with.
+  function type() {
+    typing = 0;
+    const box = $('live'); if (!box || !box.firstChild) return;
+    const bub = box.children[0];
+    if (said.length < want.length) said = want.slice(0, said.length + Math.max(2, Math.ceil((want.length - said.length) / 12)));
+    bub.replaceChildren(document.createTextNode(said), el('span', 'caret'));
+    keepEnd();
+    if (said.length < want.length) typing = requestAnimationFrame(type);
   }
   // The live channel (/caravan/events): what changes comes as it changes. While it is open, asking every few
   // seconds is only a safety net; if it cannot be opened, the page asks as before.
