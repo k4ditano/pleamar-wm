@@ -35,6 +35,22 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   Writing posts a letter (`link post`), handed to it when it is free. Stop is
   Ctrl+C; its mailbox can be held and let go. **Screen** shows its terminal as
   text, the last 80 lines.
+- **Files and voice notes, both ways.** The clip attaches files: each goes up
+  as soon as it is picked (`/upload`, into «Remote» in the downloads folder,
+  as from the desktop page), with its progress, and the letter lists their
+  paths here for the agent («Attached (files on this computer)»). The
+  microphone records a voice note (the browser's MediaRecorder: WebM/Opus, or
+  MP4 on an iPhone); it goes up the same way and is **transcribed on this
+  computer** —ffmpeg to 16 kHz WAV, then `voxtype transcribe` or whisper.cpp's
+  `whisper-cli`, whichever is there; never a service elsewhere— and the letter
+  goes once it is, with the text and the audio's path (an agent cannot
+  listen). Without a transcriber the letter says so and still carries the
+  audio. Back: any absolute path a letter or an answer names that is a file
+  here comes with it (`files` in `/caravan/talk`) and the page shows it —an
+  image, an audio or a video to play, anything else to download with its
+  name and size (`/caravan/file?path=…&dl=1`)—. Only files some letter names
+  are given, nothing else of the disk. Each letter's head line tells the
+  agent so: «To hand over a file, give its full path».
 - A page that only watches (`--view-only`) sees all of it and does nothing.
 
 **Notices** (the bell): on that phone, a notice when an agent needs the

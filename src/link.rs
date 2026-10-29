@@ -1373,7 +1373,11 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             Some("all") => Ok(crate::caravan::companions()),
             Some("talk") => Ok(crate::caravan::talk(rest.get(1).map_or("", String::as_str))),
             Some("screen") => Ok(crate::caravan::screen(rest.get(1).map_or("", String::as_str))),
-            Some("do") => crate::caravan::act(rest.get(1).map_or("", String::as_str)),
+            Some("do") => {
+                let said = crate::caravan::act(rest.get(1).map_or("", String::as_str));
+                crate::caravan::heard();
+                said
+            }
             _ => Err("link caravan [--json] | allow|deny ID | all | talk NAME | screen NAME | do JSON".into()),
         },
         "mail" => crate::mail::mail(rest),
@@ -1975,7 +1979,7 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
     let head = if letter["reply_to"].is_u64() {
         format!("[the answer of {from} to what you asked it, through the mailbox] It is in the pasted text: carry on with what you asked it for, and end with your answer.")
     } else {
-        format!("[a task from {from}, through the mailbox] It is in the pasted text: do it, and end with your answer.")
+        format!("[a task from {from}, through the mailbox] It is in the pasted text: do it, and end with your answer. To hand over a file, give its full path: it is offered to whoever reads it, on the phone too.")
     };
     let shown = read(id, 60);
     let mut took = false;

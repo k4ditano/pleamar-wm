@@ -125,7 +125,8 @@ the open windows without closing anything.
   `/caravan`, with no picture: what waits at the gate and what they ask on
   their screens, to answer there; each one, with its shell's card (`link mail
   NAME --card`); a conversation with each (its letters and what it answered,
-  a new one, Stop, hold its mailbox) and its screen as text. Light: small JSON
+  a new one, Stop, hold its mailbox; files and voice notes, transcribed here,
+  and the files they name back to download) and its screen as text. Light: small JSON
   every few seconds, nothing while hidden. The desktop page keeps a
   «Caravan» panel too. A page that is only watching sees it all but does
   nothing; `pleamar-wm link caravan` gives the same from a shell

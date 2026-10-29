@@ -571,11 +571,23 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             }
             let q = form(req.path.split_once('?').map_or("", |(_, q)| q));
             let name = q.get("name").cloned().unwrap_or_default();
+            // A file a letter or an answer names: shown (an image, an audio) or, with
+            // `dl=1`, downloaded with its name. Streamed: it may be big.
             if p == "/caravan/file" {
-                return match crate::caravan::picture(&q.get("path").cloned().unwrap_or_default()) {
-                    Ok((bytes, kind)) => respond(&mut stream, "200 OK", kind, "", &bytes),
-                    Err(e) => respond(&mut stream, "404 Not Found", "text/plain", "", e.as_bytes()),
+                let (path, mime, _, size) = match crate::caravan::attachment(&q.get("path").cloned().unwrap_or_default()) {
+                    Ok(f) => f,
+                    Err(e) => return respond(&mut stream, "404 Not Found", "text/plain", "", e.as_bytes()),
                 };
+                let name: String = path.file_name().map(|n| n.to_string_lossy().chars().map(|c| if c == '"' || c.is_control() { '_' } else { c }).collect()).unwrap_or_default();
+                let how = if q.get("dl").is_some_and(|v| v == "1") { "attachment" } else { "inline" };
+                let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {size}\r\nContent-Disposition: {how}; filename*=UTF-8''{}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
+                    encode(&name)
+                );
+                stream.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
+                std::io::copy(&mut file, &mut stream).map_err(|e| e.to_string())?;
+                return Ok(());
             }
             let body = match p {
                 "/caravan/state" => crate::caravan::companions(),
@@ -707,6 +719,11 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
 /// A signed-in session as the files offered to it know it: its cookie's hash.
 fn session_of(token: &str) -> String {
     hex(&sha2::Sha256::digest(token.as_bytes()))
+}
+
+/// A name as it goes in a header (RFC 5987): letters and digits as they are, the rest as %XX.
+fn encode(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 fn form(body: &str) -> HashMap<String, String> {
