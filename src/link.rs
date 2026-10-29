@@ -257,7 +257,7 @@ fn mail_answer_text(title: &str, l: &serde_json::Value) -> String {
     match l["how"].as_str().unwrap_or("done") {
         "done" if !answer.is_empty() => answer,
         "done" => format!("{title} answered nothing on its screen."),
-        "gone" => format!("{title}'s terminal closed before it answered."),
+        "gone" => format!("{title} left before it answered (its terminal closed, or its agent ended)."),
         "late" => format!("{title} stopped answering. What it said so far:\n{answer}"),
         "refused" => format!("{title} did not take the task: {answer}"),
         other => format!("{title}: {other}. {answer}"),
@@ -700,9 +700,20 @@ fn wait_for(id: i32, timeout: Duration, asks: bool, idle: Option<Duration>) -> W
     // already at what was asked next (queued while it worked) and never seen at rest.
     let handed = HANDED.with(|h| h.get());
     let mut counted = handed;
+    // Its agent seen and then gone, its shell in front again (it ended, or was
+    // killed, and nothing starts it again): no answer will come, whatever its
+    // hooks last said. (A command in a plain shell ends so too: that is done.)
+    let (mut seen, mut left) = (false, 0);
     while start.elapsed() < timeout {
         let i = info(id);
         if i.is_empty() {
+            return Waited::Gone;
+        }
+        let agent = i.get("agent").is_some_and(|a| !a.is_empty());
+        let shell = i.get("shell").filter(|s| !s.is_empty());
+        seen |= agent;
+        left = if seen && !agent && shell.is_some() && i.get("foreground") == shell { left + 1 } else { 0 };
+        if left >= 4 {
             return Waited::Gone;
         }
         if let Some(n) = handed.filter(|_| i.get("hook").is_some_and(|h| !h.is_empty())) {
@@ -1973,7 +1984,8 @@ fn mail_deliver(rest: &[String]) -> Result<String, String> {
     if i.get("name").map(String::as_str) != Some(name.as_str()) {
         return undo("its terminal is not the one named so any more", true);
     }
-    if !at_rest(&i) || asked(id, &i).is_some() || i.get("draft").map(String::as_str) == Some("1") {
+    // (Its agent may have just left: then it is a shell, and would run the letter.)
+    if i.get("agent").is_none_or(String::is_empty) || !at_rest(&i) || asked(id, &i).is_some() || i.get("draft").map(String::as_str) == Some("1") {
         return undo("it was not free after all", false);
     }
     let task = letter["text"].as_str().unwrap_or("").to_owned();

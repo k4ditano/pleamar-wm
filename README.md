@@ -80,7 +80,9 @@ the open windows without closing anything.
   issue 38` leaves a letter for the agent in the terminal named so, and the
   session hands it over when that agent is free —at rest, asking nothing, its
   person not halfway through writing to it—, one at a time and in order, then
-  keeps what it answered. Nobody has to wait for it or own a window: a shell's
+  keeps what it answered (if its agent leaves halfway —it ended, or was
+  killed, and its shell is in front again— the letter ends as `gone` then,
+  and the next ones are not held behind it). Nobody has to wait for it or own a window: a shell's
   finder, a routine or another agent (`--from Planipro`) can post, and a letter
   for a name with no terminal yet waits for one. `link mail [NAME] [--json]`
   says what waits, what each is at and its last answers; `--pause`,
