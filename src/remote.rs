@@ -444,7 +444,12 @@ fn caravan_page(view_only: bool) -> String {
 
 fn page(signed_in: bool, error: &str, relay: &str) -> String {
     let (login, app) = if signed_in { ("none", "block") } else { ("flex", "none") };
-    PAGE.replace("{{LOGIN}}", login).replace("{{APP}}", app).replace("{{ERROR}}", error).replace("{{RELAY}}", relay).replace("{{VERSION}}", &format!("{PAGE_VERSION:016x}"))
+    let page = PAGE.replace("{{LOGIN}}", login).replace("{{APP}}", app).replace("{{ERROR}}", error).replace("{{RELAY}}", relay).replace("{{VERSION}}", &format!("{PAGE_VERSION:016x}"));
+    // The shell's look, when it says one (`link caravan theme`).
+    match crate::caravan::theme_css() {
+        Some((css, bg)) => page.replace("/*{{THEME}}*/", &css).replace("content=\"#15100d\"", &format!("content=\"{bg}\"")),
+        None => page.replace("/*{{THEME}}*/", ""),
+    }
 }
 
 const fn fnv(bytes: &[u8]) -> u64 {

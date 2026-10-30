@@ -143,6 +143,26 @@ fn theme() -> Value {
     std::fs::read_to_string(theme_file()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or(Value::Null)
 }
 
+/// The shell's look for the remote page, put in it when it is served (it is
+/// read before signing in, and the sign-in card is the first thing it shows):
+/// its CSS variables and the colour of its background, the same mapping as the
+/// caravan page's `applyTheme`. None without one: the page keeps its own.
+pub(crate) fn theme_css() -> Option<(String, String)> {
+    let th = theme();
+    let hex = |k: &str| th.get(k).and_then(Value::as_str).filter(|c| c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit())).map(str::to_owned);
+    let (acc, surface, ink) = (hex("accent")?, hex("surface")?, hex("ink")?);
+    // (Its mist: the island's, `mix(black, surface, 0.38)`; on a light shell, its surface as it is.)
+    let bg = if th.get("dark").and_then(Value::as_bool) == Some(false) {
+        surface
+    } else {
+        let v = |i: usize| (u8::from_str_radix(&surface[i..i + 2], 16).unwrap_or(0) as f32 * 0.38).round() as u8;
+        format!("#{:02x}{:02x}{:02x}", v(1), v(3), v(5))
+    };
+    let r = [[22, 14, 18], [16, 10, 14], [8, 5, 8]][th.get("round").and_then(Value::as_u64).unwrap_or(0).min(2) as usize];
+    let on = hex("on_accent").map(|c| format!("--acc-ink: {c}; ")).unwrap_or_default();
+    Some((format!(":root {{ --bg: {bg}; --ink: {ink}; --acc: {acc}; {on}--r: {}px; --rt: {}px; --rb: {}px; }}", r[0], r[1], r[2]), bg))
+}
+
 pub(crate) fn set_theme(arg: &str) -> Result<String, String> {
     if arg.is_empty() {
         return Ok(theme().to_string());
