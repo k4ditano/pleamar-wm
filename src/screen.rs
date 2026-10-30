@@ -1132,6 +1132,9 @@ pub fn wall_ms() -> f64 {
 #[derive(Default)]
 struct Readback {
     texture: Option<wgpu::Texture>,
+    /// The programs' buffers on the card that pictures are written into, as this
+    /// device's textures, by the buffer (device and inode of its memory).
+    cards: Vec<((u64, u64), wgpu::Texture)>,
     /// Each with whether it is still being read (a picture on its way).
     buffers: Vec<(u64, wgpu::Buffer, Arc<std::sync::atomic::AtomicBool>)>,
 }
@@ -1422,6 +1425,11 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
             texture
         }
     };
+    // Into the program's own buffer on the card, with nothing read back.
+    if let Some(card) = layers::take_card_target(id) {
+        copy_to_card(device, queue, encoder, &source, [x0, y0, w, h], card, room, id);
+        return;
+    }
     let row = (w * 4).div_ceil(256) * 256;
     let bytes = (row * h) as u64;
     use std::sync::atomic::Ordering::{Acquire, Release};
@@ -1475,6 +1483,56 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
             eprintln!("capture ·   {} recorded {:.1} · card {:.1} · copied {:.1} ms", if direct { "direct," } else { "drawn again," }, ms(t_made, t_sub), ms(t_sub, t_map), t_map.elapsed().as_secs_f64() * 1000.0);
         }
         layers::tell(ToLayers::Captured { id, pixels });
+    });
+}
+
+/// A picture, copied by the card from what was put together into a program's
+/// buffer on the card (linux-dmabuf screencopy): told once the card has done it.
+/// A glass that bends what is behind it asks like this, many times a second.
+#[allow(clippy::too_many_arguments)]
+fn copy_to_card(device: &wgpu::Device, queue: &wgpu::Queue, mut encoder: wgpu::CommandEncoder, source: &wgpu::Texture, [x0, y0, w, h]: [u32; 4], card: pleamar::scene::DmabufPiece, room: &mut Readback, id: u64) {
+    let refuse = |why: &str| {
+        eprintln!("capture · a picture could not go onto the card: {why}");
+        layers::tell(ToLayers::CapturedOnCard { id, ok: false });
+    };
+    let Some(first) = card.planes.first() else { return refuse("the buffer has no memory") };
+    // SAFETY: a plain stat of a file descriptor we own.
+    let key = unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(std::os::fd::AsRawFd::as_raw_fd(&first.fd), &mut st) != 0 {
+            return refuse("the buffer could not be told apart");
+        }
+        (st.st_dev as u64, st.st_ino as u64)
+    };
+    let known = room.cards.iter().position(|(k, t)| *k == key && t.size().width == w && t.size().height == h);
+    let target = match known {
+        Some(k) => room.cards[k].1.clone(),
+        None => {
+            // (A few kept: a program asks into the same buffer again and again.)
+            room.cards.retain(|(k, _)| *k != key);
+            if room.cards.len() >= 8 {
+                room.cards.remove(0);
+            }
+            match pleamar::dmabuf::import(device, card, (w, h), wgpu::TextureUses::COPY_DST, wgpu::TextureUsages::COPY_DST, wgpu::TextureUses::UNINITIALIZED) {
+                Ok(t) => {
+                    room.cards.push((key, t.clone()));
+                    t
+                }
+                Err(e) => return refuse(&e),
+            }
+        }
+    };
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: wgpu::Origin3d { x: x0, y: y0, z: 0 }, aspect: wgpu::TextureAspect::All },
+        target.as_image_copy(),
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(Some(encoder.finish()));
+    let done = pleamar::Sent::after(queue);
+    let device = device.clone();
+    std::thread::spawn(move || {
+        done.wait(&device, Duration::from_secs(2));
+        layers::tell(ToLayers::CapturedOnCard { id, ok: done.finished() });
     });
 }
 
