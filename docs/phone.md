@@ -82,6 +82,24 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   plays, a tap on them goes there; one plays at a time), and the answer to a
   voice note plays by itself. Only answers of the last two hours are spoken.
   `link caravan speak NAME` does it from a shell and waits for it.
+- **A call.** With a speaker here, the phone in a conversation's head starts
+  a call: the companion big in the middle, its rings following your voice. The
+  microphone stays open (with the browser's echo cancelling); the page hears
+  when you talk —loud enough over the room's own quiet, which it follows while
+  nobody talks— and after 1.3 s of quiet your turn goes as a voice note marked
+  as a call (`{"do": "post", "audio", "call": true}`: its letter begins
+  `[Voice call, transcribed: …]`, which asks the agent for a short, spoken
+  answer). Its answer is said as it is written, from the live channel: each
+  sentence once another follows it, a paragraph's last once something comes
+  after it (a tool, another paragraph) — each piece voiced on the computer as
+  it is asked (`{"do": "say", "name", "text"}`, which answers with the audio's
+  path, kept a day) and played in order. When the letter ends, what of the
+  answer was not said yet is (tables and code: that they are written in the
+  chat), and then it listens again. While it speaks it does not listen (its
+  voice would be taken for yours): **Interrupt** cuts it, **Send now** sends
+  your turn without waiting for the quiet, the microphone button mutes it, and
+  the screen stays on while the call lasts. A call's answer is not voiced
+  again afterwards; in the conversation its letters say «On a call».
 - **Answers in Markdown** are drawn as such: headings, lists (nested, and
   tasks), quotes, code blocks, rules and tables (with their alignment, sliding
   sideways inside the bubble when wide); bold, italics, code, struck text and

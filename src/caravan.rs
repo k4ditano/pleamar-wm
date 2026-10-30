@@ -536,13 +536,17 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
             let Some(audio) = audio else {
                 return crate::mail::post(&[name, attached(text)]);
             };
+            // On a call (the page's): its answer is heard, not read, so it is asked to be said.
+            let call = v["call"].as_bool() == Some(true);
             let started = crate::mail::now_ms();
             LISTENING.lock().unwrap().push((name.clone(), started));
             let hearing = std::thread::spawn(move || {
                 let heard = transcribe(&audio);
-                let note = match &heard {
-                    Ok(t) => format!("[Voice note, transcribed] {t}"),
-                    Err(e) => format!("[Voice note: not transcribed — {e}]"),
+                let note = match (&heard, call) {
+                    (Ok(t), false) => format!("[Voice note, transcribed] {t}"),
+                    (Err(e), false) => format!("[Voice note: not transcribed — {e}]"),
+                    (Ok(t), true) => format!("[Voice call, transcribed: your answer is said aloud to them, so answer briefly, as you would speak, without tables or code] {t}"),
+                    (Err(e), true) => format!("[Voice call: not transcribed — {e}]"),
                 };
                 let body = [note, text].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n");
                 let body = format!("{}\n\n(The audio: {})", attached(body), audio.display());
@@ -557,6 +561,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
         }
         // Its answers said aloud from now on, or no more ([`crate::voice`]).
         "voice" => crate::voice::set(&name, v["on"].as_bool().unwrap_or(false)),
+        // On a call: what it says, said now; where its audio is.
+        "say" => crate::voice::say(&name, &s("text")),
         "gate" => crate::gate::answer(&[s("id"), s("verdict"), "--by".to_owned(), "phone".to_owned()]),
         "answer" => crate::agents::act(&["answer".to_owned(), slot()?, num("n"), "--key".to_owned(), s("key")]),
         "stop" => crate::agents::act(&["stop".to_owned(), slot()?]),

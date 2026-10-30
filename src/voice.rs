@@ -3,7 +3,8 @@
 //! its input: a script around any voice (Kokoro, Piper…), never a service the
 //! page picks— and kept as audio beside its letter, for the page to play. For
 //! the companions the page asked it for (since then), and always for the answer
-//! to a voice note: spoken to, it speaks back.
+//! to a voice note: spoken to, it speaks back. On a call ([`say`]) the page asks
+//! for what it says a few sentences at a time, as they are written.
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -86,7 +87,9 @@ pub(crate) fn tend(name: &str) {
         let ended = l["ended"].as_u64().unwrap_or(0);
         let answer = l["answer"].as_str().unwrap_or("").trim();
         let to_voice = l["text"].as_str().is_some_and(|t| t.starts_with("[Voice note"));
-        if answer.is_empty() || now.saturating_sub(ended) > FRESH_MS || !(to_voice || from.is_some_and(|s| ended >= s)) {
+        // (A call's answer was said as it was written, by the page's asking.)
+        let called = l["text"].as_str().is_some_and(|t| t.starts_with("[Voice call"));
+        if called || answer.is_empty() || now.saturating_sub(ended) > FRESH_MS || !(to_voice || from.is_some_and(|s| ended >= s)) {
             continue;
         }
         let out = audio_of(name, l);
@@ -129,7 +132,24 @@ pub(crate) fn speak_now(name: &str) -> Result<String, String> {
 
 static QUEUE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The audios of more than a week ago, gone.
+/// On a call: a piece of what `name` says, said now —waited for, for the page
+/// plays it as soon as it is there—, kept beside its answers for a day; where.
+pub(crate) fn say(name: &str, text: &str) -> Result<String, String> {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if !speaker() {
+        return Err(format!("no speaker here ({SPEAKER} on the PATH)"));
+    }
+    let text: String = text.chars().take(8000).collect();
+    let said = speech(&text).ok_or("nothing to say")?;
+    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out = dir().join(format!("{stem}-call-{}-{n}.m4a", crate::mail::now_ms()));
+    let _queue = QUEUE.lock().unwrap();
+    speak(&said, &out)?;
+    Ok(out.display().to_string())
+}
+
+/// The audios of more than a week ago, gone (a call's, of more than a day).
 fn prune(now: u64) {
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     if now.saturating_sub(LAST.load(std::sync::atomic::Ordering::Relaxed)) < 3600 * 1000 {
@@ -137,7 +157,8 @@ fn prune(now: u64) {
     }
     LAST.store(now, std::sync::atomic::Ordering::Relaxed);
     for e in std::fs::read_dir(dir()).into_iter().flatten().flatten() {
-        let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_millis() as u64 > KEPT_MS);
+        let kept = if e.file_name().to_string_lossy().contains("-call-") { 24 * 3600 * 1000 } else { KEPT_MS };
+        let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_millis() as u64 > kept);
         if old {
             let _ = std::fs::remove_file(e.path());
         }
@@ -177,6 +198,11 @@ fn speak(text: &str, out: &Path) -> Result<(), String> {
 /// file's name (without its extension); a line ended so the voice stops at it; and what is longer
 /// than [`LONGEST`] left to read too. The voice speaks Spanish.
 pub(crate) fn spoken(answer: &str) -> String {
+    speech(answer).unwrap_or_else(|| "Te he contestado por escrito en el chat.".into())
+}
+
+/// As [`spoken`], and nothing when there is nothing to say.
+fn speech(answer: &str) -> Option<String> {
     let (mut lines, mut left, mut fence) = (Vec::new(), false, false);
     for line in answer.lines() {
         let t = line.trim();
@@ -220,9 +246,9 @@ pub(crate) fn spoken(answer: &str) -> String {
         let end = cut.rfind(['.', '!', '?', '\n']).map_or(cut.len(), |e| e + 1);
         out = format!("{}\nEl resto está escrito en el chat.", cut[..end].trim_end());
     } else if left {
-        out.push_str("\nLos detalles están escritos en el chat.");
+        out = format!("{out}\nLos detalles están escritos en el chat.").trim_start().to_owned();
     }
-    if out.trim().is_empty() { "Te he contestado por escrito en el chat.".into() } else { out }
+    (!out.trim().is_empty()).then_some(out)
 }
 
 /// A line's words: links by their text, a bare one as «un enlace», a path by
@@ -271,6 +297,14 @@ mod tests {
         let said = spoken(&"Una frase que se repite. ".repeat(100));
         assert!(said.chars().count() < LONGEST + 40);
         assert!(said.ends_with(".\nEl resto está escrito en el chat."));
+    }
+
+    #[test]
+    fn what_is_only_to_read_is_said_to_be_written() {
+        assert_eq!(spoken("| a | b |\n|---|---|\n| 1 | 2 |"), "Los detalles están escritos en el chat.");
+        assert_eq!(speech("```\nls\n```"), Some("Los detalles están escritos en el chat.".into()));
+        assert_eq!(speech("  \n---\n"), None);
+        assert_eq!(spoken(""), "Te he contestado por escrito en el chat.");
     }
 
     #[test]

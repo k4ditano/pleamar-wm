@@ -352,6 +352,47 @@
   #sheet h3 { font-weight: 400; }
   #toast { border-radius: var(--rt); background: var(--raise); }
   #screen { background: color-mix(in oklab, #000 45%, var(--bg)); color: var(--ink); border-radius: var(--rt); }
+  /* A call: its companion big in the middle, its rings breathing with your voice while it listens and with its own
+     while it speaks; under it what you said and what it says, in a few lines; and the buttons a phone has. */
+  #t-call { color: var(--ink); }
+  #call { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; padding: calc(18px + var(--safe-t)) 24px calc(28px + var(--safe-b));
+    background: radial-gradient(120% 70% at 50% 32%, color-mix(in oklab, var(--tone) 15%, var(--bg)), var(--bg) 72%); animation: callin .35s var(--calm) both; }
+  @keyframes callin { from { opacity: 0; transform: scale(.98); } }
+  .c-head { display: flex; align-items: center; gap: 8px; font: 13px/1 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
+  .c-head i { width: 7px; height: 7px; border-radius: 50%; background: var(--sea); animation: beat 1.6s ease-in-out infinite; }
+  .c-mid { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  .c-orb { position: relative; width: 176px; height: 176px; display: grid; place-items: center; --lv: 0; }
+  .c-orb > span { position: absolute; inset: 24px; border-radius: 50%; background: var(--tone); opacity: calc(.1 + var(--lv) * .24); transform: scale(calc(1 + var(--lv) * .34)); transition: transform .09s linear, opacity .09s linear; }
+  .c-orb > span + span { inset: 4px; opacity: calc(.05 + var(--lv) * .12); transform: scale(calc(.94 + var(--lv) * .2)); }
+  #c-av { width: 104px; height: 104px; border-radius: 34px; box-shadow: 0 10px 40px color-mix(in oklab, var(--tone) 28%, transparent); }
+  #c-av .glyph { width: 48px; height: 48px; gap: 4px; }
+  #c-av .glyph i { border-radius: 3px; }
+  #c-av .dot { display: none; }
+  #c-name { font: 400 28px/1.1 var(--serif); text-align: center; }
+  #c-state { font-size: 14px; color: var(--dim); min-height: 1.4em; text-align: center; }
+  #call.speak .c-orb > span { animation: talkring 1.25s var(--calm) infinite; }
+  #call.speak .c-orb > span + span { animation-delay: -.6s; }
+  @keyframes talkring { 0%, 100% { transform: scale(1); opacity: .16; } 50% { transform: scale(1.22); opacity: .3; } }
+  #call.wait .c-orb > span, #call.send .c-orb > span { animation: think 2.4s ease-in-out infinite; }
+  #call.wait .c-orb > span + span, #call.send .c-orb > span + span { animation-delay: -1.2s; }
+  @keyframes think { 0%, 100% { transform: scale(.96); opacity: .08; } 50% { transform: scale(1.08); opacity: .2; } }
+  #call.muted .c-orb > span { opacity: .05; transform: none; }
+  .c-lines { width: 100%; max-width: 520px; min-height: 8em; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; margin-bottom: 14px; text-align: center; }
+  .c-lines p { margin: 0; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+  #c-you { color: var(--dim); font-size: 13.5px; -webkit-line-clamp: 2; }
+  #c-them { font: 400 19px/1.35 var(--serif); -webkit-line-clamp: 4; }
+  #c-them.doing { font: 12.5px/1.4 var(--mono); color: var(--dim); -webkit-line-clamp: 2; }
+  #c-now { min-height: 42px; padding: 0 22px; margin-bottom: 18px; border-radius: 999px; background: var(--raise); border: 1px solid var(--line); font-weight: 600; font-size: 14px; transition: transform .2s var(--spring); }
+  #c-now[hidden] { display: block !important; visibility: hidden; }
+  #c-now:active, .c-btns button:active { transform: scale(.93); }
+  .c-btns { display: flex; gap: 40px; align-items: center; }
+  .c-btns button { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: var(--raise); border: 1px solid var(--line); transition: transform .2s var(--spring), background .2s, color .2s; }
+  .c-btns svg { width: 26px; height: 26px; }
+  #c-mute[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  #c-mute .off, #c-mute[aria-pressed="true"] .on { display: none; }
+  #c-mute[aria-pressed="true"] .off { display: block; }
+  #c-end { background: #e5484d; border-color: #e5484d; color: #fff; }
+  #c-end svg { transform: rotate(135deg); }
   /* A wide window (a computer): the list and the conversation side by side. */
   @media (min-width: 1000px) {
     #home { right: auto; width: 380px; border-right: 1px solid var(--line); transform: none !important; opacity: 1 !important; }
@@ -395,6 +436,7 @@
     <button class="back" id="back" aria-label="Back">‹</button>
     <div class="avatar" id="t-av"></div>
     <div id="t-title"><div id="t-name"></div><div id="t-state"></div></div>
+    <button class="iconbtn" id="t-call" aria-label="Call" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg></button>
   </header>
   <div class="seg" role="tablist">
     <button class="on" id="tab-chat" data-t="Conversation">Conversation</button>
@@ -422,6 +464,20 @@
       <button class="send mic" id="mic" aria-label="Record a voice note"><svg class="rec-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><svg class="go-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
     </div>
   </footer>
+  <div id="call" hidden role="dialog" aria-modal="true" aria-labelledby="c-name">
+    <div class="c-head"><i></i><span id="c-time">0:00</span></div>
+    <div class="c-mid">
+      <div class="c-orb" id="c-orb"><span></span><span></span><div class="avatar" id="c-av"></div></div>
+      <div id="c-name"></div>
+      <div id="c-state" role="status" aria-live="polite"></div>
+    </div>
+    <div class="c-lines"><p id="c-you"></p><p id="c-them"></p></div>
+    <button id="c-now" hidden></button>
+    <div class="c-btns">
+      <button id="c-mute" aria-pressed="false" aria-label="Mute"><svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20"/><path d="M18.9 13.2A7 7 0 0 0 19 11"/><path d="M5 11a7 7 0 0 0 12 5"/><path d="M15 9.3V6a3 3 0 0 0-5.7-1.3"/><path d="M9 9v2a3 3 0 0 0 5.1 2.1"/><path d="M12 18v3"/></svg></button>
+      <button id="c-end" aria-label="Hang up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg></button>
+    </div>
+  </div>
 </section>
 <div id="scrim"></div>
 <section id="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-title" aria-hidden="true">
@@ -490,6 +546,11 @@
     'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
     'Recording a voice note…': 'Grabando una nota de voz…', 'Cancel': 'Cancelar', 'Attach a file': 'Adjuntar un fichero', 'Record a voice note': 'Grabar una nota de voz',
     'Voice note': 'Nota de voz',
+    'Call': 'Llamar', 'Call %s': 'Llamar a %s', 'Voice call': 'Llamada', 'On a call': 'En llamada', 'Hang up': 'Colgar', 'Mute': 'Silenciar el micro', 'Unmute': 'Activar el micro',
+    'Listening…': 'Te escucho…', 'I hear you…': 'Te oigo…', 'Muted': 'Micro silenciado', 'Sending…': 'Enviando…', 'Thinking…': 'Pensando…', 'Speaking…': 'Hablando…',
+    'Send now': 'Enviar ya', 'Interrupt': 'Interrumpir', 'You: %s': 'Tú: %s', 'It could not be sent': 'No se pudo enviar', 'It answered nothing': 'No contestó nada',
+    'In line: it answers after what it is doing': 'En cola: contesta cuando acabe lo que está haciendo', 'Not started: it answers when it starts': 'Sin levantar: contesta cuando arranque',
+    'The details are written in the chat': 'Los detalles están escritos en el chat',
     'The microphone is not allowed for this page': 'El micrófono no está permitido para esta página', 'This browser cannot record': 'Este navegador no puede grabar',
     'Could not send %s': 'No se pudo enviar %s', 'Still sending the files…': 'Aún se están enviando los ficheros…', 'Download': 'Descargar',
     'Waiting for you to allow it': 'Te espera para seguir', 'Its answer': 'Su respuesta', 'nothing yet': 'nada aún',
@@ -787,10 +848,10 @@
   // A file shown below a message goes by its name in the text, not its whole path.
   const named = (text, files) => files.reduce((s, f) => s.split(f.path).join(f.name), text);
   // What a letter says without what the page shows otherwise: the list of what was attached (it goes as files), the
-  // path of a voice note's audio, and its mark (it goes as «Voice note» above).
+  // path of a voice note's audio, and its mark (it goes as «Voice note» above, or «On a call»: `voice` says which).
   function tidy(text) {
     let voice = false;
-    let s = text.replace(/^\[Voice note, transcribed\]\s*/, () => { voice = true; return ''; }).replace(/^\[Voice note: not transcribed — [^\]]*\]\s*/, () => { voice = true; return ''; });
+    let s = text.replace(/^\[Voice (note|call), transcribed[^\]]*\]\s*/, (_, k) => { voice = k; return ''; }).replace(/^\[Voice (note|call): not transcribed — [^\]]*\]\s*/, (_, k) => { voice = k; return ''; });
     s = s.replace(/\n*\(The audio: [^)]*\)\s*$/, '');
     s = s.replace(/\n*Attached \(files on this computer\):\n(?:- .*(?:\n|$))*/, '').trim();
     return { text: s, voice };
@@ -930,7 +991,7 @@
       const mine = el('div', 'bub me' + (l.state === 'waiting' ? ' waiting' : '') + fresh('q' + l.id));
       if (l.from) mine.append(el('span', 'from', t('from %s', fromText(l.from))));
       const said = tidy(l.text || '');
-      if (said.voice) mine.append(el('span', 'voice', '🎤 ' + t('Voice note')));
+      if (said.voice) mine.append(el('span', 'voice', said.voice === 'call' ? '📞 ' + t('On a call') : '🎤 ' + t('Voice note')));
       const mineFiles = (l.files || []).filter(f => (l.text || '').includes(f.path));
       if (said.text) longText(mine, named(said.text, mineFiles), 'q' + l.id);
       filesOf(mine, mineFiles);
@@ -1030,6 +1091,7 @@
     $('t-state').textContent = stateText(c) + (extra ? ' · ' + extra : '');
     $('box').placeholder = t('Write to %s…', look(c).title);
     const tools = $('tools'); tools.replaceChildren();
+    $('t-call').hidden = !canCall(); $('t-call').setAttribute('aria-label', t('Call %s', look(c).title));
     if (WATCH) return;
     if (c.state === 'working' || c.state === 'asking') {
       const s = el('button', 'chip no', t('Stop')); s.onclick = () => act({ do: 'stop', name: open }, t('Stopped (Ctrl+C)')); tools.append(s);
@@ -1085,7 +1147,7 @@
     if (c.hearing && voiceOut && voiceOut.name === open && !voiceOut.up) voiceOut = null;
     const seen = JSON.stringify([got, c.question, c.detail, c.hearing || 0, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
     if (seen === loadTalk.seen && !drawChat.first) return;
-    loadTalk.seen = seen; talk = got; drawChat();
+    loadTalk.seen = seen; talk = got; drawChat(); callFollow();
   };
   // The state changed (what it asks, the gate): the same conversation, drawn again if that changes it.
   loadTalk.state = () => { if (talk && talk.name === open) loadTalk.apply(talk); };
@@ -1116,6 +1178,7 @@
     } catch (_) {}
   }
   function openTalk(name, fromHistory) {
+    if (call && call.name !== name) endCall();
     open = name; talk = null; expanded.clear(); drawChat.first = true; loadTalk.seen = ''; shown = new Set(); quiet = true;
     squeezing = false; clearTimeout(squeezeGone); $('chat').classList.remove('squeezing'); $('squeeze')?.remove();
     $('chat').replaceChildren(); $('asks').replaceChildren(); $('screen').textContent = ''; $('log').replaceChildren(); loadLog.seen = '';
@@ -1127,6 +1190,7 @@
     if (matchMedia('(min-width: 1000px) and (pointer: fine)').matches) $('box').focus();
   }
   function closeTalk() {
+    endCall();
     open = null; live = null; document.body.classList.remove('in-talk'); $('talk').setAttribute('aria-hidden', 'true'); $('box').blur(); drawHome(); connect();
   }
   $('back').onclick = () => (history.state && history.state.talk ? history.back() : (history.replaceState(null, '', location.pathname), closeTalk()));
@@ -1249,6 +1313,231 @@
   $('rec-cancel').onclick = () => { cancelled = true; if (recorder && recording) recorder.stop(); };
   fit();
 
+  // ---- A call: talking with it by voice, a turn each. The microphone stays open; when you stop talking (a moment
+  // of quiet after your voice) what you said goes as a voice note marked as a call, and its answer is said aloud a few
+  // sentences at a time as it writes it (from the live channel), the rest when it ends; then it listens again. While
+  // it speaks it does not listen (its own voice would be taken for yours): a tap cuts it short.
+  const CALL = { quiet: 1300, least: 350, longest: 90000, idle: 25000 };
+  const callEl = new Audio();
+  let call = null;
+  const canCall = () => !WATCH && !!state.speaker && !!(navigator.mediaDevices && window.MediaRecorder && (window.AudioContext || window.webkitAudioContext));
+  // A tenth of a second of silence: played in the tap that starts the call, a phone lets the page play later without one.
+  function hush() {
+    const n = 800, b = new DataView(new ArrayBuffer(44 + n * 2));
+    const w = (o, s) => [...s].forEach((ch, k) => b.setUint8(o + k, ch.charCodeAt(0)));
+    w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+    b.setUint32(24, 8000, true); b.setUint32(28, 16000, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+  }
+  async function startCall() {
+    if (call || !open || !canCall()) return;
+    callEl.src = hush(); callEl.play().catch(() => {});
+    voiceEl.pause();
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.resume().catch(() => {});
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch (_) { ctx.close().catch(() => {}); toast(t('The microphone is not allowed for this page')); return; }
+    if (!open) { stream.getTracks().forEach(tr => tr.stop()); ctx.close().catch(() => {}); return; }
+    const an = ctx.createAnalyser(); an.fftSize = 1024; ctx.createMediaStreamSource(stream).connect(an);
+    call = { name: open, ctx, stream, an, buf: new Float32Array(an.fftSize), floor: null, phase: '', muted: false, at: Date.now(), queue: [], playing: null, turn: null, rec: null, you: '', them: '' };
+    $('call').hidden = false; $('c-time').textContent = '0:00';
+    call.tick = setInterval(hearTick, 50);
+    call.clock = setInterval(() => { if (!call) return; const s = Math.floor((Date.now() - call.at) / 1000); $('c-time').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 1000);
+    keepAwake();
+    if (navigator.vibrate) navigator.vibrate(20);
+    listen();
+  }
+  // (The screen stays on while it lasts: the phone would stop listening with it off.)
+  async function keepAwake() { try { if (call && !document.hidden && navigator.wakeLock) call.lock = await navigator.wakeLock.request('screen'); } catch (_) {} }
+  function endCall() {
+    if (!call) return;
+    const c = call; call = null;
+    clearInterval(c.tick); clearInterval(c.clock);
+    if (c.rec && c.rec.state !== 'inactive') { c.rec.onstop = null; c.rec.stop(); }
+    c.stream.getTracks().forEach(tr => tr.stop()); c.ctx.close().catch(() => {});
+    callEl.pause();
+    if (c.lock) c.lock.release().catch(() => {});
+    $('call').hidden = true;
+    if (navigator.vibrate) navigator.vibrate([15, 40, 15]);
+  }
+  function record() {
+    const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(call.stream, type ? { mimeType: type } : undefined);
+    rec.chunks = []; rec.ondataavailable = e => { if (e.data.size) rec.chunks.push(e.data); };
+    rec.start(250); rec.at = Date.now();
+    Object.assign(call, { rec, heard: false, run: 0, speech: 0, still: 0 });
+  }
+  function unrecord() { const r = call.rec; call.rec = null; if (r && r.state !== 'inactive') { r.onstop = null; r.stop(); } }
+  function listen() {
+    if (!call) return;
+    callEl.pause(); call.queue = []; call.playing = null; call.turn = null;
+    call.phase = 'listen';
+    unrecord(); if (!call.muted) record();
+    drawCall();
+  }
+  // Twenty times a second, how loud the microphone is against the room's own quiet (followed slowly while nobody
+  // talks): a voice begins after a fifth of a second above it, and its turn ends after a moment back down.
+  function hearTick() {
+    if (!call) return;
+    call.an.getFloatTimeDomainData(call.buf);
+    let e = 0; for (const x of call.buf) e += x * x;
+    const db = 10 * Math.log10(e / call.buf.length + 1e-10);
+    if (call.floor == null) call.floor = db;
+    const on = call.phase === 'listen' && !call.muted && call.rec;
+    $('c-orb').style.setProperty('--lv', on ? Math.max(0, Math.min(1, (db - call.floor - 6) / 30)).toFixed(3) : '0');
+    if (!on) return;
+    const loud = db > Math.max(call.floor + 14, -52), still = db < Math.max(call.floor + 8, -58);
+    if (!call.heard) {
+      if (loud) { call.run += 50; if (call.run >= 200) { call.heard = true; call.speech = call.run; call.still = 0; drawCall(); } }
+      else { call.run = 0; call.floor = db < call.floor ? db : call.floor + (db - call.floor) * .02; }
+      if (!call.heard && Date.now() - call.rec.at > CALL.idle) { unrecord(); record(); }
+      return;
+    }
+    if (still) call.still += 50; else { call.still = 0; if (loud) call.speech += 50; }
+    if (Date.now() - call.rec.at > CALL.longest) sendTurn();
+    else if (call.still >= CALL.quiet) { if (call.speech >= CALL.least) sendTurn(); else { unrecord(); record(); drawCall(); } }
+  }
+  // Your turn, sent: up as a file, then the letter (transcribed on the computer, marked as a call).
+  async function sendTurn() {
+    const c = call, rec = c.rec; c.rec = null;
+    if (!rec) return;
+    c.phase = 'send'; c.you = c.them = ''; drawCall();
+    const blob = await new Promise(res => { rec.onstop = () => res(new Blob(rec.chunks, { type: rec.mimeType || 'audio/webm' })); rec.stop(); });
+    if (call !== c) return;
+    const e = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    const d = new Date(), two = n => String(n).padStart(2, '0');
+    const file = new File([blob], `${t('Voice call')} ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}.${e}`, { type: blob.type });
+    if (!batch) batch = newBatch();
+    const item = { file, name: file.name }, before = new Set(((talk && talk.letters) || []).map(l => l.id + ':' + l.at));
+    await upload(item);
+    const ok = call === c && item.rel && await act({ do: 'post', name: c.name, text: '', files: [], audio: item.rel, call: true }, '');
+    if (call !== c) return;
+    if (!ok) { listen(); c.them = t('It could not be sent'); drawCall(); return; }
+    c.turn = { before, key: null, letter: null, said: [], block: '', done: false };
+    c.phase = 'wait'; drawCall();
+  }
+  // Its letter of this turn, as the conversation says it: the new one marked as a call, followed to its answer;
+  // what of it was not said yet as it was written is said then.
+  function callFollow() {
+    const c = call, tr = c && c.turn;
+    if (!tr || !talk || talk.name !== c.name) return;
+    const letters = talk.letters || [];
+    if (!tr.key) {
+      const l = letters.find(l => !tr.before.has(l.id + ':' + l.at) && /^\[Voice call/.test(l.text || ''));
+      if (l) { tr.key = l.id + ':' + l.at; c.you = tidy(l.text).text; }
+    }
+    tr.letter = tr.key ? letters.find(l => l.id + ':' + l.at === tr.key) || tr.letter : null;
+    const l = tr.letter;
+    if (l && l.state === 'done' && !tr.done) {
+      tr.done = true;
+      const rest = unsaid(l.answer || '', tr.said);
+      if (rest) say(rest);
+      else if (!tr.said.length) c.them = l.how && l.how !== 'done' ? t(HOW[l.how] || l.how) : t('It answered nothing');
+    }
+    drawCall();
+    if (tr.done && !c.queue.length && !c.playing) listen();
+  }
+  // What it writes, as it writes it: the sentences followed by another are said; a paragraph's last one, once
+  // something else comes after it (a tool, another paragraph). Tables and code are left to the end.
+  function callLive() {
+    const c = call, tr = c && c.turn;
+    if (!tr || tr.done || !tr.letter || tr.letter.state === 'waiting' || !live || live.name !== c.name) { drawCall(); return; }
+    // (Not what is still on its screen from an answer before.)
+    let say = (live.say || '').trim();
+    const head = s => norm(s).slice(0, 24), was = norm(say).slice(0, 40);
+    if (was && ((talk && talk.letters) || []).some(l => l.state === 'done' && norm(l.answer || '').startsWith(was))) say = '';
+    if (tr.block && (!say || head(say) !== head(tr.block))) {
+      const u = units(tr.block);
+      sayUnits(u.filter((x, k) => k < u.length - 1 || /[.!?…:]["')»]?$/.test(x.raw.trim())));
+      tr.block = '';
+    }
+    if (say) { tr.block = say; sayUnits(units(say).slice(0, -1)); }
+    drawCall();
+  }
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[^\p{L}\p{N}]+/gu, '');
+  const saidOnce = (raw, said) => { const n = norm(raw); return said.some(s => s === n || (Math.min(s.length, n.length) > .8 * Math.max(s.length, n.length) && (s.startsWith(n) || n.startsWith(s)))); };
+  // A text in what is said a piece at a time: its sentences (the shortest go with the next), and its table rows and
+  // code (`skip`) as they are.
+  function units(text) {
+    const out = []; let fence = false;
+    for (const line of text.split('\n')) {
+      const l = line.trim();
+      if (/^(```|~~~)/.test(l)) { fence = !fence; out.push({ raw: line, skip: true }); continue; }
+      if (fence || (l.startsWith('|') && l.split('|').length > 2)) { out.push({ raw: line, skip: true }); continue; }
+      if (!norm(l)) continue;
+      let carry = '';
+      for (const piece of l.split(/(?<=[.!?…])\s+(?=\S)/)) { carry = carry ? carry + ' ' + piece : piece; if (carry.length >= 12) { out.push({ raw: carry }); carry = ''; } }
+      if (carry) out.push({ raw: carry });
+    }
+    return out;
+  }
+  function sayUnits(us) {
+    const tr = call.turn, fresh = us.filter(u => !u.skip && !saidOnce(u.raw, tr.said));
+    if (!fresh.length) return;
+    fresh.forEach(u => tr.said.push(norm(u.raw)));
+    say(fresh.map(u => u.raw).join('\n'));
+  }
+  // What of an answer was not said yet: its sentences not said, and what is only to read (the computer says it is written).
+  function unsaid(answer, said) {
+    const rest = units(answer).filter(u => u.skip || !saidOnce(u.raw, said));
+    return rest.map(u => u.raw).join('\n').trim();
+  }
+  // Said by the computer (each piece waited for there, the next asked meanwhile) and played in order.
+  function say(text) {
+    const c = call, job = { text, url: null };
+    job.ready = fetch('/caravan/do', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ do: 'say', name: c.name, text }) })
+      .then(r => r.ok ? r.text() : '').then(p => { job.url = p ? '/caravan/file?path=' + encodeURIComponent(p) : null; }).catch(() => {});
+    c.queue.push(job);
+    if (!c.playing) playNext();
+  }
+  async function playNext() {
+    const c = call; if (!c || c.playing) return;
+    const job = c.queue[0];
+    if (!job) { if (c.turn && c.turn.done) listen(); else if (c.phase === 'speak') { c.phase = 'wait'; drawCall(); } return; }
+    c.playing = job;
+    await job.ready;
+    if (call !== c || c.playing !== job) return;
+    if (!job.url) { played(job); return; }
+    const words = plain(job.text);
+    c.phase = 'speak'; c.them = words || t('The details are written in the chat'); drawCall();
+    callEl.src = job.url;
+    callEl.play().catch(() => played(job));
+  }
+  function played(job) { const c = call; if (!c || c.playing !== job) return; c.queue.shift(); c.playing = null; playNext(); }
+  callEl.onended = callEl.onerror = () => { if (call && call.playing) played(call.playing); };
+  const plain = text => units(text).filter(u => !u.skip).map(u => u.raw.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/^\s*(#+|>|[-*+]|\d+[.)])\s+/, '').replace(/[*_`~]/g, '')).join(' ').trim();
+  function drawCall() {
+    const c = call; if (!c) return;
+    const k = byName(c.name) || { name: c.name, state: 'away' };
+    avatar(k, $('c-av')); $('c-name').textContent = look(k).title;
+    const tr = c.turn, l = tr && tr.letter;
+    $('c-state').textContent =
+      c.phase === 'listen' ? (c.muted ? t('Muted') : c.heard ? t('I hear you…') : t('Listening…')) :
+      c.phase === 'send' ? t('Sending…') : c.phase === 'speak' ? t('Speaking…') :
+      !l ? t('Transcribing…') :
+      l.state === 'waiting' ? (k.state === 'away' ? t('Not started: it answers when it starts') : t('In line: it answers after what it is doing')) : t('Thinking…');
+    $('call').className = c.phase + (c.muted ? ' muted' : '');
+    $('c-you').textContent = c.you ? t('You: %s', c.you) : '';
+    const doing = c.phase === 'wait' && live && live.name === c.name && !live.say ? ((live.text || '').split('\n').filter(x => /^\s*●/.test(x)).pop() || '').replace(/^\s*●\s*/, '') : '';
+    $('c-them').classList.toggle('doing', !!doing); $('c-them').textContent = doing || c.them;
+    const now = $('c-now');
+    now.hidden = !((c.phase === 'listen' && c.heard && !c.muted) || c.phase === 'speak');
+    now.textContent = c.phase === 'speak' ? t('Interrupt') : t('Send now');
+    $('c-mute').setAttribute('aria-pressed', String(c.muted)); $('c-mute').setAttribute('aria-label', c.muted ? t('Unmute') : t('Mute'));
+  }
+  $('t-call').onclick = startCall;
+  $('c-end').onclick = endCall;
+  $('c-end').setAttribute('aria-label', t('Hang up'));
+  $('c-now').onclick = () => { if (!call) return; if (call.phase === 'speak') listen(); else if (call.phase === 'listen' && call.heard) sendTurn(); };
+  $('c-mute').onclick = () => {
+    if (!call) return;
+    call.muted = !call.muted;
+    call.stream.getTracks().forEach(tr => { tr.enabled = !call.muted; });
+    if (call.phase === 'listen') { unrecord(); if (!call.muted) record(); }
+    drawCall();
+  };
+
   // ---- Notices to this phone (Web Push): its service worker shows them; the server sends them encrypted for it.
   const PUSH = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const IOS = /iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
@@ -1324,6 +1613,7 @@
     applyTheme(got.theme);
     if (seen !== refresh.seen) { refresh.seen = seen; drawHome(); }
     if (open) { drawTalkHead(); loadTalk.state(); }
+    drawCall();
   }
   async function refresh() {
     try {
@@ -1425,7 +1715,7 @@
     me.onerror = () => { if (es === me && esUp) { esUp = false; restartTimers(); } };
     me.addEventListener('state', e => { try { applyState(JSON.parse(e.data)); } catch (_) {} });
     me.addEventListener('talk', e => { try { const got = JSON.parse(e.data); if (got.name === open) loadTalk.apply(got); } catch (_) {} });
-    me.addEventListener('live', e => { try { live = JSON.parse(e.data); drawLive(); if (live.name === open && !!live.compact !== squeezing) squeeze(!!live.compact); } catch (_) {} });
+    me.addEventListener('live', e => { try { live = JSON.parse(e.data); drawLive(); callLive(); if (live.name === open && !!live.compact !== squeezing) squeeze(!!live.compact); } catch (_) {} });
     me.addEventListener('bye', () => { me.close(); if (es === me) { es = null; esUp = false; } location.href = '/'; });
   }
   let timers = [];
@@ -1436,7 +1726,7 @@
     if (open && tab === 'screen') timers.push(setInterval(loadScreen, 2000));
     if (open && tab === 'log') timers.push(setInterval(loadLog, 5000));
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); connect(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); keepAwake(); } connect(); });
   addEventListener('online', refresh);
 
   refresh().then(() => {
