@@ -112,6 +112,7 @@ pub(crate) fn companions() -> String {
                 "failed": crate::sessions::failed(&name).unwrap_or(Value::Null),
                 "context": crate::sessions::context(&name).map_or(Value::Null, |(n, most)| json!({ "tokens": n, "window": most, "long": n >= crate::sessions::LONG_CONTEXT })),
                 "waiting": b["waiting"].as_array().map_or(0, Vec::len),
+                "hearing": listening(name),
                 "doing": b["out"]["text"].as_str().map(first_line),
                 "last": last.and_then(|l| l["answer"].as_str()).map(first_line),
                 "last_at": last.map_or(Value::Null, |l| l["ended"].clone()),
@@ -531,6 +532,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
             let Some(audio) = audio else {
                 return crate::mail::post(&[name, attached(text)]);
             };
+            let started = crate::mail::now_ms();
+            LISTENING.lock().unwrap().push((name.clone(), started));
             let hearing = std::thread::spawn(move || {
                 let heard = transcribe(&audio);
                 let note = match &heard {
@@ -539,7 +542,9 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
                 };
                 let body = [note, text].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n");
                 let body = format!("{}\n\n(The audio: {})", attached(body), audio.display());
-                if let Err(e) = crate::mail::post(&[name, body]) {
+                let posted = crate::mail::post(&[name.clone(), body]);
+                LISTENING.lock().unwrap().retain(|(n, at)| !(*n == name && *at == started));
+                if let Err(e) = posted {
                     eprintln!("remote · a voice note was not posted: {e}");
                 }
             });
@@ -689,6 +694,14 @@ pub(crate) fn attachment(path: &str) -> Result<(std::path::PathBuf, &'static str
 /// The voice notes still being transcribed: the page's server lives on, but a
 /// command (`link caravan do`) waits for them before it ends ([`heard`]).
 static HEARING: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> = std::sync::Mutex::new(Vec::new());
+
+/// Who a voice note is being transcribed for, and since when: the page shows it
+/// being heard until its letter is there.
+static LISTENING: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+
+fn listening(name: &str) -> usize {
+    LISTENING.lock().unwrap().iter().filter(|(n, _)| n == name).count()
+}
 
 pub(crate) fn heard() {
     let all: Vec<_> = HEARING.lock().unwrap().drain(..).collect();

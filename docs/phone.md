@@ -67,6 +67,12 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   its screen) the bubbles press together under a card of grains, and when it
   ends the card says how long it is now: Claude Code's `compact_boundary`
   counts as its length until it answers again.
+- **Answers in Markdown** are drawn as such: headings, lists (nested, and
+  tasks), quotes, code blocks, rules and tables (with their alignment, sliding
+  sideways inside the bubble when wide); bold, italics, code, struck text and
+  links within. It is built as elements, never as HTML, so nothing an answer
+  says runs; the answer being written comes in drawn the same way. A long one
+  is cut at a whole line («Show all»). Your own letters stay plain text.
 - **One that could not start** says so in the list and in its head, with the
   last lines of its screen («No conversation found to continue»), and the
   phone gets a notice (`fail:NAME:AT`).
@@ -79,7 +85,10 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   computer** —ffmpeg to 16 kHz WAV, then `voxtype transcribe` or whisper.cpp's
   `whisper-cli`, whichever is there; never a service elsewhere— and the letter
   goes once it is, with the text and the audio's path (an agent cannot
-  listen). Without a transcriber the letter says so and still carries the
+  listen). Until it is there, the note shows as a bubble of yours whose bars
+  breathe: «Sending the voice note…» while it goes up, then «Transcribing…»
+  (`hearing` in the state, the notes being transcribed for that companion).
+  Without a transcriber the letter says so and still carries the
   audio. Back: any absolute path a letter or an answer names that is a file
   here comes with it (`files` in `/caravan/talk`) and the page shows it —an
   image, an audio or a video to play, anything else to download with its

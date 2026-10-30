@@ -291,6 +291,42 @@
   .squeeze.done .sand i { animation: settle .7s var(--spring) both; }
   .squeeze.done .sand i.r0, .squeeze.done .sand i.r2 { opacity: 0; }
   @keyframes settle { from { transform: translateY(var(--y, 0)) scale(.6); } to { transform: none; } }
+  /* Markdown in an answer: headings in the serif, tables that scroll sideways inside the bubble, code in mono. */
+  .bub .md { white-space: normal; }
+  .bub.wide { max-width: 96%; }
+  .md > * + *, .md li > * + * { margin-top: 8px; }
+  .md p { margin: 0; white-space: pre-wrap; }
+  .md .h { margin: 0; font: 600 16px/1.3 var(--serif); color: var(--ink); }
+  .md .h1 { font-size: 19.5px; } .md .h2 { font-size: 17.5px; }
+  .md > .h:not(:first-child) { margin-top: 13px; }
+  .md ul, .md ol { margin: 0; padding-left: 21px; }
+  .md li + li { margin-top: 3px; }
+  .md li::marker { color: var(--tone, var(--acc)); font-weight: 600; }
+  .md li.task { list-style: none; margin-left: -19px; }
+  .md li.task::before { content: '○'; display: inline-block; width: 19px; color: var(--faint); }
+  .md li.task.done::before { content: '●'; color: var(--tone, var(--acc)); }
+  .md li.task.done { color: var(--dim); }
+  .md strong { font-weight: 650; color: var(--ink); }
+  .md a { color: var(--acc); text-decoration: underline 1px; text-underline-offset: 2px; word-break: break-all; }
+  .md code { font: 12.5px/1.4 var(--mono); padding: 1px 5px; border-radius: 5px; background: color-mix(in oklab, var(--ink) 10%, transparent); }
+  .md pre { margin: 0; padding: 9px 11px; border-radius: calc(var(--rb) * .6); overflow-x: auto; white-space: pre; background: color-mix(in oklab, var(--bg) 72%, transparent); box-shadow: inset 0 0 0 1px var(--line); }
+  .md pre code { padding: 0; background: none; font-size: 12px; }
+  .md blockquote { margin: 0; padding: 1px 0 1px 11px; border-left: 3px solid color-mix(in oklab, var(--tone, var(--acc)) 60%, transparent); color: var(--dim); }
+  .md hr { border: 0; height: 0; border-top: 1px solid var(--line); margin-block: 12px; }
+  .md .tbl { overflow-x: auto; margin-inline: -6px; padding-inline: 6px; -webkit-overflow-scrolling: touch; }
+  .md table { border-collapse: collapse; font-size: 13.5px; line-height: 1.35; min-width: 60%; word-break: normal; overflow-wrap: normal; }
+  .md th, .md td { padding: 6px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); min-width: 4.5em; max-width: 15em; }
+  .md td code { white-space: nowrap; }
+  .md th:first-child, .md td:first-child { padding-left: 2px; }
+  .md th { font-weight: 650; color: var(--ink); white-space: nowrap; border-bottom: 1.5px solid color-mix(in oklab, var(--tone, var(--acc)) 55%, transparent); }
+  .md tr:last-child td { border-bottom: 0; }
+  .md tbody tr:nth-child(even) td { background: color-mix(in oklab, var(--ink) 3.5%, transparent); }
+  /* A voice note on its way: the bars of its sound breathe while it goes up and while the computer listens to it. */
+  .bub.me.hearing { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 13.5px; }
+  .hearing .wave { display: flex; align-items: center; gap: 2.5px; height: 22px; }
+  .hearing .wave i { width: 3px; height: 100%; border-radius: 2px; background: var(--tone, var(--acc)); transform: scaleY(.18); animation: hear 1.1s var(--calm) infinite; animation-delay: calc(var(--n) * -.13s); }
+  .hearing.up .wave i { animation-duration: 1.8s; opacity: .55; }
+  @keyframes hear { 0%, 100% { transform: scaleY(.18); } 25% { transform: scaleY(var(--h, .8)); } 55% { transform: scaleY(.35); } 75% { transform: scaleY(calc(var(--h, .8) * .7)); } }
   .squeeze.gone { opacity: 0; transform: scale(.96); transition: opacity .6s var(--calm), transform .6s var(--calm); }
   footer { background: color-mix(in oklab, var(--bg) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top-color: var(--line); }
   textarea { border-radius: var(--rb); background: var(--panel); border-color: var(--line); }
@@ -405,7 +441,7 @@
     'Free': 'Libre', 'Working…': 'Trabajando…', 'Asks you': 'Te pregunta', 'Not started': 'Sin levantar', 'Shell': 'Terminal', 'Paused': 'Retenido',
     'wants to run': 'quiere usar', 'asks': 'pregunta', 'a routine': 'una rutina',
     'Write to %s…': 'Escribe a %s…', 'Stop': 'Parar', 'Hold the mailbox': 'Retener', 'Let it go on': 'Dejar seguir',
-    'Waiting': 'Esperando', 'First': 'Primero', 'Remove': 'Quitar', 'Show all': 'Ver entero', 'Show less': 'Ver menos',
+    'Waiting': 'Esperando', 'First': 'Primero', 'Remove': 'Quitar', 'Show all': 'Ver entero', 'Show less': 'Ver menos', 'Transcribing…': 'Transcribiendo…', 'Sending the voice note…': 'Enviando la nota de voz…',
     'Sent: it gets it as soon as it is free': 'Enviado: le llega en cuanto esté libre', 'Sent': 'Enviado',
     'No companions yet': 'Aún no hay compañeros', 'A terminal opened with a name (pleamar-wm link open --name) shows up here.': 'Aquí sale cada terminal abierta con nombre (pleamar-wm link open --name).',
     'Nothing yet. Write the first task below.': 'Nada todavía. Escribe abajo la primera tarea.',
@@ -440,7 +476,7 @@
     'Restart %s? It keeps its conversation; what it is doing now is cut.': '¿Reiniciar a %s? Sigue en la misma conversación; lo que esté haciendo ahora se corta.', 'Restarting: it comes back in a few seconds': 'Reiniciando: vuelve en unos segundos',
     'proposes a routine': 'te propone una rutina', 'asks to use its hands in': 'pide usar sus manos en',
     'Recording a voice note…': 'Grabando una nota de voz…', 'Cancel': 'Cancelar', 'Attach a file': 'Adjuntar un fichero', 'Record a voice note': 'Grabar una nota de voz',
-    'Voice note': 'Nota de voz', 'Voice note sent: it is transcribed on your computer and goes to it': 'Nota de voz enviada: se transcribe en tu ordenador y se la paso',
+    'Voice note': 'Nota de voz',
     'The microphone is not allowed for this page': 'El micrófono no está permitido para esta página', 'This browser cannot record': 'Este navegador no puede grabar',
     'Could not send %s': 'No se pudo enviar %s', 'Still sending the files…': 'Aún se están enviando los ficheros…', 'Download': 'Descargar',
     'Waiting for you to allow it': 'Te espera para seguir', 'Its answer': 'Su respuesta', 'nothing yet': 'nada aún',
@@ -571,7 +607,7 @@
       const r = await fetch('/caravan/do', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(what) });
       const said = await r.text();
       if (r.status === 401) { location.href = '/'; return false; }
-      toast(r.ok ? (okText || said) : said);
+      if (!r.ok || okText !== '') toast(r.ok ? (okText || said) : said);
       if (navigator.vibrate) navigator.vibrate(r.ok ? 12 : [20, 40, 20]);
       refresh();
       return r.ok;
@@ -746,18 +782,119 @@
     s = s.replace(/\n*Attached \(files on this computer\):\n(?:- .*(?:\n|$))*/, '').trim();
     return { text: s, voice };
   }
-  function longText(bub, text, key) {
+  // Markdown, as the agents write it: headings, lists (and tasks), quotes, code, tables and rules; bold, italics,
+  // code, struck and links inside. Built as elements, never as HTML: nothing a letter says is run.
+  const INLINE = /(?<tick>`+)(?<code>[^`]|[^`][\s\S]*?[^`])\k<tick>(?!`)|\*\*(?<b1>\S(?:[\s\S]*?\S)?)\*\*|__(?<b2>\S(?:[\s\S]*?\S)?)__|~~(?<s>\S(?:[\s\S]*?\S)?)~~|(?<![\w*])\*(?<i1>[^\s*](?:[^*\n]*?[^\s*])?)\*(?![\w*])|(?<![\w_])_(?<i2>[^\s_](?:[^_\n]*?[^\s_])?)_(?![\w_])|\[(?<lt>[^\]]+)\]\((?<lu>https?:\/\/[^)\s]+)\)|(?<url>https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_])/g;
+  function inline(text, into) {
+    let at = 0;
+    for (const m of text.matchAll(INLINE)) {
+      if (m.index > at) into.append(text.slice(at, m.index));
+      at = m.index + m[0].length;
+      const g = m.groups;
+      if (g.code != null) into.append(el('code', '', g.code.length > 2 && g.code[0] === ' ' && g.code.endsWith(' ') ? g.code.slice(1, -1) : g.code));
+      else if ((g.b1 ?? g.b2) != null) inline(g.b1 ?? g.b2, into.appendChild(el('strong')));
+      else if (g.s != null) inline(g.s, into.appendChild(el('s')));
+      else if ((g.i1 ?? g.i2) != null) inline(g.i1 ?? g.i2, into.appendChild(el('em')));
+      else { const a = el('a'); a.href = g.lu ?? g.url; a.target = '_blank'; a.rel = 'noopener'; if (g.lt != null) inline(g.lt, a); else a.textContent = g.url; into.append(a); }
+    }
+    if (at < text.length) into.append(text.slice(at));
+    return into;
+  }
+  const FENCE = /^\s{0,3}(`{3,}|~{3,})/, HEAD = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/, RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+  const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/, QUOTE = /^\s{0,3}>/;
+  const SEP = l => l.includes('|') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l);
+  const cells = l => l.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
+  const opens = (l, next) => FENCE.test(l) || HEAD.test(l) || RULE.test(l) || ITEM.test(l) || QUOTE.test(l) || (l.includes('|') && next != null && SEP(next));
+  function md(src) {
+    const out = el('div', 'md'), lines = src.replace(/\r/g, '').split('\n');
+    for (let i = 0; i < lines.length;) {
+      const l = lines[i];
+      if (!l.trim()) { i++; continue; }
+      let m;
+      if ((m = l.match(FENCE))) {
+        const code = [];
+        for (i++; i < lines.length && !(lines[i].trim().startsWith(m[1]) && !lines[i].trim().slice(m[1].length).trim()); i++) code.push(lines[i]);
+        i++;
+        const pre = el('pre'); pre.append(el('code', '', code.join('\n'))); out.append(pre);
+      } else if ((m = l.match(HEAD))) {
+        out.append(inline(m[2], el('p', 'h h' + m[1].length))); i++;
+      } else if (RULE.test(l)) {
+        out.append(el('hr')); i++;
+      } else if (l.includes('|') && i + 1 < lines.length && SEP(lines[i + 1])) {
+        const align = cells(lines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : '');
+        const row = (cs, tag) => { const tr = el('tr'); align.forEach((a, k) => { const c = el(tag); if (a) c.style.textAlign = a; inline(cs[k] || '', c); tr.append(c); }); return tr; };
+        const table = el('table'), head = el('thead'), body = el('tbody');
+        head.append(row(cells(l), 'th'));
+        for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) body.append(row(cells(lines[i]), 'td'));
+        table.append(head, body);
+        const wrap = el('div', 'tbl'); wrap.append(table); out.append(wrap);
+      } else if (QUOTE.test(l)) {
+        const q = [];
+        for (; i < lines.length && QUOTE.test(lines[i]); i++) q.push(lines[i].replace(/^\s{0,3}>\s?/, ''));
+        const bq = el('blockquote'); bq.append(...md(q.join('\n')).childNodes); out.append(bq);
+      } else if ((m = l.match(ITEM))) {
+        const base = m[1].length, ordered = /\d/.test(m[2]);
+        const list = el(ordered ? 'ol' : 'ul');
+        if (ordered && parseInt(m[2]) !== 1) list.start = parseInt(m[2]);
+        while (i < lines.length) {
+          const it = lines[i].match(ITEM);
+          if (!it || it[1].length !== base || /\d/.test(it[2]) !== ordered) break;
+          const body = [it[3]];
+          for (i++; i < lines.length; i++) {
+            const n = lines[i], deeper = n.length - n.trimStart().length > base;
+            if (!n.trim()) { const after = lines[i + 1]; if (after != null && after.trim() && after.length - after.trimStart().length > base) { body.push(''); continue; } break; }
+            if (deeper) body.push(n.slice(Math.min(base + 2, n.length - n.trimStart().length)));
+            else if (!opens(n, lines[i + 1])) body.push(n.trim());
+            else break;
+          }
+          const li = el('li'), task = body[0].match(/^\[([ xX])\]\s+(.*)$/);
+          if (task) { li.className = 'task' + (task[1] === ' ' ? '' : ' done'); body[0] = task[2]; }
+          if (body.length === 1) inline(body[0], li); else li.append(...md(body.join('\n')).childNodes);
+          list.append(li);
+          while (i < lines.length && !lines[i].trim() && lines[i + 1] && (lines[i + 1].match(ITEM) || [])[1]?.length === base) i++;
+        }
+        out.append(list);
+      } else {
+        const para = [l];
+        for (i++; i < lines.length && lines[i].trim() && !opens(lines[i], lines[i + 1]); i++) para.push(lines[i]);
+        out.append(inline(para.join('\n'), el('p')));
+      }
+    }
+    return out;
+  }
+  // The start of a long Markdown answer: whole lines up to the limit, a code block left open closed.
+  function mdStart(text, limit) {
+    let n = 0, fence = null; const kept = [];
+    for (const l of text.split('\n')) {
+      if (n > limit && !fence) break;
+      if (n > limit * 1.6) break;
+      kept.push(l); n += l.length + 1;
+      const f = l.match(FENCE); if (f) fence = fence ? (l.trim().startsWith(fence) ? null : fence) : f[1];
+    }
+    if (fence) kept.push(fence);
+    return kept.join('\n').replace(/\s+$/, '');
+  }
+  // A bubble's words: Markdown in an answer (and wider with a table in it), as written in a letter of yours.
+  function words(bub, text, rich) {
+    if (!rich) { bub.append(document.createTextNode(text)); return; }
+    const box = md(text);
+    if (box.querySelector('table, pre')) bub.classList.add('wide');
+    bub.append(box);
+  }
+  function longText(bub, text, key, rich) {
     const LIMIT = 900;
-    if (text.length <= LIMIT) { bub.append(document.createTextNode(text)); return; }
+    if (text.length <= LIMIT) { words(bub, text, rich); return; }
     const full = expanded.has(key);
-    bub.append(document.createTextNode(full ? text : text.slice(0, LIMIT).replace(/\s+\S*$/, '') + '…'));
+    if (full) words(bub, text, rich);
+    else if (rich) { words(bub, mdStart(text, LIMIT), true); bub.lastChild.lastChild?.append?.('…'); }
+    else bub.append(document.createTextNode(text.slice(0, LIMIT).replace(/\s+\S*$/, '') + '…'));
     const m = el('button', 'more', full ? t('Show less') : t('Show all'));
     m.onclick = () => { full ? expanded.delete(key) : expanded.add(key); loadTalk.seen = ''; drawChat(); };
     bub.append(m);
   }
   // A bubble drawn for the first time comes in as a drop; one drawn again does not move (nor the first ones of a
   // conversation just opened, nor an answer that was already being written in its bubble).
-  let shown = new Set(), quiet = true;
+  let shown = new Set(), quiet = true, voiceOut = null;
   const fresh = key => { const was = shown.has(key); shown.add(key); return was || quiet ? '' : ' new'; };
   function drawChat() {
     const chat = $('chat'), sc = $('t-scroll');
@@ -803,14 +940,26 @@
       const them = el('div', 'bub them' + (bad ? ' bad' : '') + fresh('a' + l.id));
       if (bad) them.append(el('span', 'from', t(HOW[l.how] || l.how)));
       const theirFiles = (l.files || []).filter(f => (l.answer || '').includes(f.path));
-      longText(them, named(unlink((l.answer || '').trim()), theirFiles) || '—', 'a' + l.id);
+      longText(them, named(unlink((l.answer || '').trim()), theirFiles) || '—', 'a' + l.id, true);
       filesOf(them, theirFiles);
       chat.append(them, el('div', 'stamp them', when(l.ended)));
     }
+    const hear = (c.hearing || 0) + (voiceOut && voiceOut.name === open && !c.hearing && (voiceOut.up || Date.now() - voiceOut.at < 3000) ? 1 : 0);
+    for (let k = 0; k < hear; k++) chat.append(hearingBub(voiceOut && voiceOut.up && voiceOut.name === open && !c.hearing));
     quiet = false;
     if (squeezing && squeezedFor === open) squeeze(true);
     if (atEnd || drawChat.first) { sc.scrollTop = sc.scrollHeight; atBottom = true; drawChat.first = false; }
   }
+  // A voice note on its way (`up`: still going to the computer; then the computer listening to it): a bubble of yours
+  // whose bars breathe, until its letter is there. Shown at once from here, then as the server says (`hearing`).
+  const HEIGHTS = [.45, .8, .6, 1, .7, .9, .5, .75, .95, .55, .85, .4];
+  function hearingBub(up) {
+    const b = el('div', 'bub me hearing' + (up ? ' up' : '')), w = el('span', 'wave');
+    HEIGHTS.forEach((h, n) => { const i = el('i'); i.style.setProperty('--n', n); i.style.setProperty('--h', h); w.append(i); });
+    b.append(w, el('span', '', up ? t('Sending the voice note…') : t('Transcribing…')));
+    return b;
+  }
+  function voiceIs(v) { voiceOut = v; loadTalk.seen = ''; if (talk) drawChat(); if (v && !v.up) setTimeout(() => { if (voiceOut === v) { loadTalk.seen = ''; if (talk) drawChat(); } }, 3100); }
   function drawTalkHead() {
     const c = byName(open) || { name: open, state: 'away' };
     avatar(c, $('t-av')); $('t-av').className = 'avatar s-' + c.state;
@@ -865,7 +1014,8 @@
   // (Drawn again only when something changed: a tap on it is not lost under a fresh copy.)
   loadTalk.apply = got => {
     const c = byName(open) || {};
-    const seen = JSON.stringify([got, c.question, c.detail, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
+    if (c.hearing && voiceOut && voiceOut.name === open && !voiceOut.up) voiceOut = null;
+    const seen = JSON.stringify([got, c.question, c.detail, c.hearing || 0, state.pending.filter(p => p.name === open).map(p => p.id), (state.asks || []).filter(a => a.name === open).map(a => a.id), [...expanded]]);
     if (seen === loadTalk.seen && !drawChat.first) return;
     loadTalk.seen = seen; talk = got; drawChat();
   };
@@ -990,8 +1140,9 @@
     const c = byName(open);
     const what = { do: 'post', name: open, text, files };
     if (audio) what.audio = audio;
-    const ok = await act(what, audio ? t('Voice note sent: it is transcribed on your computer and goes to it') : c && c.state === 'free' ? t('Sent') : t('Sent: it gets it as soon as it is free'));
+    const ok = await act(what, audio ? '' : c && c.state === 'free' ? t('Sent') : t('Sent: it gets it as soon as it is free'));
     if (ok) { box.value = ''; pending.length = 0; $('pending').replaceChildren(); batch = ''; fit(); drawChat.first = true; loadTalk(); } else send.disabled = false;
+    return ok;
   }
   send.onclick = () => go();
 
@@ -1013,9 +1164,12 @@
       const d = new Date(), two = n => String(n).padStart(2, '0');
       const file = new File(chunks, `${t('Voice note')} ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}.${e}`, { type: mime });
       if (!batch) batch = newBatch();
-      const item = { file, name: file.name };
+      const item = { file, name: file.name }, to = open;
+      voiceIs({ name: to, up: true });
       await upload(item);
-      if (item.rel) go(item.rel);
+      if (!item.rel) { voiceIs(null); return; }
+      const ok = await go(item.rel);
+      voiceIs(ok ? { name: to, at: Date.now() } : null);
     };
     recorder.start(250);
     recording = true; recStart = Date.now();
@@ -1186,7 +1340,9 @@
     const box = $('live'); if (!box || !box.firstChild) return;
     const bub = box.children[0];
     if (said.length < want.length) said = want.slice(0, said.length + Math.max(2, Math.ceil((want.length - said.length) / 12)));
-    bub.replaceChildren(document.createTextNode(said), el('span', 'caret'));
+    const words = md(said);
+    (words.lastElementChild || words).append(el('span', 'caret'));
+    bub.replaceChildren(words);
     keepEnd();
     if (said.length < want.length) typing = requestAnimationFrame(type);
   }
