@@ -63,7 +63,10 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   152k», red past 120k: every turn reads it all again). Past that, **Compact**
   types `/compact` (`/compress` for Gemini) when it is free, and **New
   conversation** restarts it in a new one (`link restart --fresh`; the old one
-  stays on disk).
+  stays on disk). While it compacts (from here or typed at the desktop, seen on
+  its screen) the bubbles press together under a card of grains, and when it
+  ends the card says how long it is now: Claude Code's `compact_boundary`
+  counts as its length until it answers again.
 - **One that could not start** says so in the list and in its head, with the
   last lines of its screen («No conversation found to continue»), and the
   phone gets a notice (`fail:NAME:AT`).

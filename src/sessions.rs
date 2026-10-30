@@ -169,6 +169,7 @@ fn tokens_in(path: &std::path::Path, agent: &str) -> Option<(u64, u64)> {
     let mut tail = Vec::new();
     f.read_to_end(&mut tail).ok()?;
     let text = String::from_utf8_lossy(&tail);
+    let mut compacted = None;
     for line in text.lines().rev() {
         if agent == "codex" {
             if !line.contains("\"token_count\"") {
@@ -180,6 +181,14 @@ fn tokens_in(path: &std::path::Path, agent: &str) -> Option<(u64, u64)> {
                 return Some((n, info["model_context_window"].as_u64().unwrap_or(0)));
             }
         } else {
+            // Compacted after its last answer: what it holds now is the summary, until it answers again.
+            if line.contains("\"compact_boundary\"") && compacted.is_none() {
+                let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+                if let Some(n) = v["compactMetadata"]["postTokens"].as_u64().filter(|_| v["subtype"] == "compact_boundary") {
+                    compacted = Some(n);
+                }
+                continue;
+            }
             if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
                 continue;
             }
@@ -188,11 +197,11 @@ fn tokens_in(path: &std::path::Path, agent: &str) -> Option<(u64, u64)> {
             if u.is_object() && !v["isSidechain"].as_bool().unwrap_or(false) {
                 let n = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].iter().map(|k| u[*k].as_u64().unwrap_or(0)).sum::<u64>();
                 let model = v["message"]["model"].as_str().unwrap_or("");
-                return Some((n, if model.contains("[1m]") { 1_000_000 } else { 200_000 }));
+                return Some((compacted.unwrap_or(n), if model.contains("[1m]") { 1_000_000 } else { 200_000 }));
             }
         }
     }
-    None
+    compacted.map(|n| (n, 200_000))
 }
 
 /// After the agent ended (its script): how long it ran, and what then. Within
@@ -423,6 +432,14 @@ mod tests {
             r#"{"type":"user","message":{"content":"next"}}"#, "\n",
         )).unwrap();
         assert_eq!(tokens_in(&claude, "claude"), Some((59821, 1_000_000)));
+        // Compacted after that: the summary's size, until it answers again.
+        let mut long = std::fs::read_to_string(&claude).unwrap();
+        long.push_str(concat!(r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"trigger":"manual","preTokens":59821,"postTokens":14214}}"#, "\n"));
+        std::fs::write(&claude, &long).unwrap();
+        assert_eq!(tokens_in(&claude, "claude"), Some((14214, 1_000_000)));
+        long.push_str(concat!(r#"{"type":"assistant","message":{"model":"claude-opus-5-5[1m]","usage":{"input_tokens":3,"cache_creation_input_tokens":500,"cache_read_input_tokens":15000}}}"#, "\n"));
+        std::fs::write(&claude, &long).unwrap();
+        assert_eq!(tokens_in(&claude, "claude"), Some((15503, 1_000_000)));
         let codex = dir.join("x.jsonl");
         std::fs::write(&codex, concat!(
             r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25493},"model_context_window":258400}}}"#, "\n",

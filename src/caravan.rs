@@ -197,12 +197,19 @@ pub(crate) fn events(out: &mut impl std::io::Write, name: &str, still: impl Fn()
                 beat = std::time::Instant::now();
             }
             let working = serde_json::from_str::<Value>(&state).ok().and_then(|v| v["companions"].as_array().and_then(|c| c.iter().find(|c| c["name"].as_str() == Some(name)).map(|c| c["state"] == "working")));
-            let screen = if working == Some(true) { crate::link::read(terminal(name).map_or(-1, |(id, _)| id), 60) } else { String::new() };
+            let asked = compact_asked(name);
+            let screen = if working == Some(true) || asked { crate::link::read(terminal(name).map_or(-1, |(id, _)| id), 60) } else { String::new() };
             let (now, say) = if screen.is_empty() { (String::new(), String::new()) } else { (live_of(&screen), saying_of(&screen)) };
-            let now = if now.is_empty() && say.is_empty() { now } else { json!([now, say]).to_string() };
+            let squeezing = !screen.is_empty() && compacting_of(&screen);
+            if asked && squeezing {
+                COMPACTING.lock().unwrap().iter_mut().filter(|(n, _, _)| n == name).for_each(|c| c.2 = true);
+            } else if asked && !screen.is_empty() && compact_seen(name) {
+                compact_done(name);
+            }
+            let now = if now.is_empty() && say.is_empty() && !squeezing { String::new() } else { json!([now, say, squeezing]).to_string() };
             if now != was_live {
-                let (text, say) = serde_json::from_str::<(String, String)>(&now).unwrap_or_default();
-                if !send(out, "live", &json!({ "name": name, "text": text, "say": say }).to_string()) {
+                let (text, say, squeezing) = serde_json::from_str::<(String, String, bool)>(&now).unwrap_or_default();
+                if !send(out, "live", &json!({ "name": name, "text": text, "say": say, "compact": squeezing }).to_string()) {
                     return Ok(());
                 }
                 was_live = now;
@@ -225,6 +232,44 @@ pub(crate) fn events(out: &mut impl std::io::Write, name: &str, still: impl Fn()
         }
         std::thread::sleep(std::time::Duration::from_millis(700));
     }
+}
+
+// The companions asked from the page to sum their conversation up, and when: their screen is looked at,
+// working or not, until it says it finished (ten minutes at most), and whether it was seen at it.
+static COMPACTING: std::sync::Mutex<Vec<(String, std::time::Instant, bool)>> = std::sync::Mutex::new(Vec::new());
+
+fn compact_asked(name: &str) -> bool {
+    let mut c = COMPACTING.lock().unwrap();
+    c.retain(|(_, at, _)| at.elapsed() < std::time::Duration::from_secs(600));
+    c.iter().any(|(n, _, _)| n == name)
+}
+
+// Whether it was seen summing up already (or long enough went by for it to start): only then is a
+// screen without it the end of it, and not a screen from before it began.
+fn compact_seen(name: &str) -> bool {
+    COMPACTING.lock().unwrap().iter().any(|(n, at, seen)| n == name && (*seen || at.elapsed() > std::time::Duration::from_secs(8)))
+}
+
+fn compact_done(name: &str) {
+    COMPACTING.lock().unwrap().retain(|(n, _, _)| n != name);
+}
+
+/// Whether the agent is summing its conversation up now (`/compact`; Gemini's
+/// `/compress`): the command sent, or its status line saying so, with nothing
+/// after it that says it ended. The command still in its input box is not it.
+fn compacting_of(screen: &str) -> bool {
+    let lines: Vec<&str> = screen.lines().collect();
+    let sent = |k: usize| {
+        let t = lines[k].trim_start();
+        let typed = (t.starts_with('❯') || t.starts_with('>')) && (t.contains("/compact") || t.contains("/compress"));
+        let in_box = k > 0 && lines[k - 1].trim_start().starts_with('─');
+        (typed && !in_box) || t.contains("Compacting conversation") || t.contains("Compressing")
+    };
+    let Some(k) = (0..lines.len()).rev().find(|&k| sent(k)) else { return false };
+    !lines[k + 1..].iter().any(|l| {
+        let t = l.trim_start();
+        t.starts_with('●') || t.contains("Compacted") || t.contains("compressed") || t.contains("Error") || t.contains("Interrupted")
+    })
 }
 
 /// What an agent is writing, from its screen: its last lines, without its
@@ -549,6 +594,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
             std::thread::sleep(std::time::Duration::from_millis(200));
             crate::link::keys(id, "enter")?;
             crate::journal::note(&name, "compact", "its conversation summed up, from the phone");
+            compact_done(&name);
+            COMPACTING.lock().unwrap().push((name.clone(), std::time::Instant::now(), false));
             Ok("compacting".into())
         }
         "pause" | "resume" => crate::mail::mail(&[name, format!("--{}", s("do"))]),
@@ -740,6 +787,9 @@ mod tests {
     #[test]
     fn what_it_writes_now_is_its_last_lines_without_its_box() {
         let screen = "● Mirando el buzón\n  ⎿  Read src/mail.rs (120 lines)\n\n● Ahora el arreglo:\n  la marca se busca en 160 letras\n✻ Pensando… (12 s · esc para parar)\n\n────────────────────\n❯ \n────────────────────\n  ? for shortcuts";
+        assert!(compacting_of("● Hecho.\n\n❯ /compact\n\n✻ Compacting conversation… (12s)\n\n────\n❯ \n────"));
+        assert!(!compacting_of("● Hecho.\n\n❯ /compact\n  ⎿  Compacted (ctrl+o to see full summary)\n\n────\n❯ \n────"));
+        assert!(!compacting_of("● Hecho.\n\n────\n❯ /compact\n────"));
         assert_eq!(live_of(screen), "● Mirando el buzón\n  ⎿  Read src/mail.rs (120 lines)\n● Ahora el arreglo:\n  la marca se busca en 160 letras\n✻ Pensando… (12 s · esc para parar)");
         let many: String = (1..=20).map(|n| format!("línea {n}\n")).collect();
         assert_eq!(live_of(&many).lines().count(), 8);
