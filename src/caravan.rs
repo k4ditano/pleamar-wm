@@ -113,6 +113,7 @@ pub(crate) fn companions() -> String {
                 "context": crate::sessions::context(&name).map_or(Value::Null, |(n, most)| json!({ "tokens": n, "window": most, "long": n >= crate::sessions::LONG_CONTEXT })),
                 "waiting": b["waiting"].as_array().map_or(0, Vec::len),
                 "hearing": listening(name),
+                "voice": crate::voice::on(name),
                 "doing": b["out"]["text"].as_str().map(first_line),
                 "last": last.and_then(|l| l["answer"].as_str()).map(first_line),
                 "last_at": last.map_or(Value::Null, |l| l["ended"].clone()),
@@ -126,7 +127,7 @@ pub(crate) fn companions() -> String {
         .iter()
         .map(|p| json!({ "id": p["id"], "name": p["name"], "agent": p["agent"], "tool": p["tool"], "what": p["what"].as_str().map(|w| w.chars().take(600).collect::<String>()), "routine": p["routine"] }))
         .collect();
-    json!({ "companions": out, "pending": pending, "asks": asks(), "theme": theme(), "at": crate::mail::now_ms() }).to_string()
+    json!({ "companions": out, "pending": pending, "asks": asks(), "theme": theme(), "speaker": crate::voice::speaker(), "at": crate::mail::now_ms() }).to_string()
 }
 
 /// How the shell looks, for the page to look the same (`link caravan theme
@@ -189,6 +190,7 @@ pub(crate) fn events(out: &mut impl std::io::Write, name: &str, still: impl Fn()
             beat = std::time::Instant::now();
         }
         if !name.is_empty() {
+            crate::voice::tend(name);
             let talk = talk(name);
             if talk != was_talk {
                 if !send(out, "talk", &talk) {
@@ -470,6 +472,8 @@ pub(crate) fn talk(name: &str) -> String {
             "id": l["id"], "from": l["from"], "text": cut(&l["text"], 8000), "at": l["at"], "ended": l["ended"],
             "answer": cut(&l["answer"], 24000), "how": l["how"], "state": state,
             "files": files_in(&format!("{}\n{}", l["text"].as_str().unwrap_or(""), l["answer"].as_str().unwrap_or(""))),
+            "voice": Some(crate::voice::audio_of(name, l)).filter(|p| state == "done" && p.exists()).map(|p| p.display().to_string()),
+            "speaking": state == "done" && crate::voice::speaking(&crate::voice::audio_of(name, l)),
         })
     };
     let mut letters: Vec<Value> = b["done"].as_array().into_iter().flatten().rev().map(|l| letter(l, "done")).collect();
@@ -551,6 +555,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
             HEARING.lock().unwrap().push(hearing);
             Ok("transcribing".into())
         }
+        // Its answers said aloud from now on, or no more ([`crate::voice`]).
+        "voice" => crate::voice::set(&name, v["on"].as_bool().unwrap_or(false)),
         "gate" => crate::gate::answer(&[s("id"), s("verdict"), "--by".to_owned(), "phone".to_owned()]),
         "answer" => crate::agents::act(&["answer".to_owned(), slot()?, num("n"), "--key".to_owned(), s("key")]),
         "stop" => crate::agents::act(&["stop".to_owned(), slot()?]),
@@ -676,7 +682,8 @@ pub(crate) fn attachment(path: &str) -> Result<(std::path::PathBuf, &'static str
     if !path.starts_with('/') || path.contains("/../") {
         return Err("not a path".into());
     }
-    let said = crate::mail::all().iter().any(|b| {
+    // (Or an answer said aloud: kept by [`crate::voice`], named by no letter.)
+    let said = crate::voice::is_audio(path) || crate::mail::all().iter().any(|b| {
         let has = |l: &Value| l["answer"].as_str().is_some_and(|a| a.contains(path)) || l["text"].as_str().is_some_and(|t| t.contains(path));
         b["done"].as_array().into_iter().flatten().any(has) || b["waiting"].as_array().into_iter().flatten().any(has) || has(&b["out"])
     });

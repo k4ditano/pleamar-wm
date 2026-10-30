@@ -67,6 +67,21 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   its screen) the bubbles press together under a card of grains, and when it
   ends the card says how long it is now: Claude Code's `compact_boundary`
   counts as its length until it answers again.
+- **Answers said aloud.** With a speaker here —a program called
+  `pleamar-speak` on the PATH, run as `pleamar-speak OUT.wav` with the text on
+  its input: a script around any voice (Kokoro on the GPU, Piper…), so the
+  voice is the computer's, never a service the page picks— an answer can come
+  with its audio. Always the answer to a voice note (spoken to, it speaks
+  back), and every answer of a companion whose **Spoken answers** is on (from
+  then on: `voice.json` in the state folder, `{"do": "voice", "on": true}`).
+  When it ends, its text is said without Markdown's marks —code and tables are
+  left to read, said so once; a link is «un enlace», a path its file's name;
+  past 1500 characters the rest is left to read— and kept as AAC (what every
+  phone plays) in `voice/` in the state folder, a week. Meanwhile the bubble
+  says «Putting a voice to it…»; then it carries a player (its bars fill as it
+  plays, a tap on them goes there; one plays at a time), and the answer to a
+  voice note plays by itself. Only answers of the last two hours are spoken.
+  `link caravan speak NAME` does it from a shell and waits for it.
 - **Answers in Markdown** are drawn as such: headings, lists (nested, and
   tasks), quotes, code blocks, rules and tables (with their alignment, sliding
   sideways inside the bubble when wide); bold, italics, code, struck text and

@@ -40,6 +40,7 @@ mod journal;
 mod gate;
 mod hands;
 mod caravan;
+mod voice;
 mod push;
 mod output;
 

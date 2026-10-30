@@ -1392,13 +1392,14 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             Some("all") => Ok(crate::caravan::companions()),
             Some("talk") => Ok(crate::caravan::talk(rest.get(1).map_or("", String::as_str))),
             Some("screen") => Ok(crate::caravan::screen(rest.get(1).map_or("", String::as_str))),
+            Some("speak") => crate::voice::speak_now(rest.get(1).map_or("", String::as_str)),
             Some("theme") => crate::caravan::set_theme(rest.get(1).map_or("", String::as_str)),
             Some("do") => {
                 let said = crate::caravan::act(rest.get(1).map_or("", String::as_str));
                 crate::caravan::heard();
                 said
             }
-            _ => Err("link caravan [--json] | allow|deny ID | all | talk NAME | screen NAME | do JSON | theme [JSON]".into()),
+            _ => Err("link caravan [--json] | allow|deny ID | all | talk NAME | screen NAME | do JSON | speak NAME | theme [JSON]".into()),
         },
         "asks" => crate::caravan::asks_cmd(rest),
         "session" => crate::sessions::session(rest),

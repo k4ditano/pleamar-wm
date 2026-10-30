@@ -325,6 +325,19 @@
   .bub.me.hearing { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 13.5px; }
   .hearing .wave { display: flex; align-items: center; gap: 2.5px; height: 22px; }
   .hearing .wave i { width: 3px; height: 100%; border-radius: 2px; background: var(--tone, var(--acc)); transform: scaleY(.18); animation: hear 1.1s var(--calm) infinite; animation-delay: calc(var(--n) * -.13s); }
+  .speaking .wave { display: flex; align-items: center; gap: 2.5px; height: 18px; }
+  .speaking .wave i { width: 3px; height: 100%; border-radius: 2px; background: var(--tone, var(--acc)); transform: scaleY(.18); animation: hear 1.1s var(--calm) infinite; animation-delay: calc(var(--n) * -.13s); }
+  .say.speaking { color: var(--dim); font-size: 12.5px; }
+  /* An answer said aloud: a round play in its companion's colour, its bars filling as it plays (a tap on them goes there). */
+  .say { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; max-width: 100%; }
+  .say .play { width: 34px; height: 34px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--tone, var(--acc)); color: var(--bg); transition: transform .2s var(--spring); }
+  .say .play:active { transform: scale(.9); }
+  .say .play svg { width: 14px; height: 14px; fill: currentColor; }
+  .say .bars { flex: 1 0 150px; min-width: 0; height: 26px; display: flex; align-items: center; gap: 2px; cursor: pointer; }
+  .say .bars i { flex: 1; max-width: 3px; min-height: 3px; height: calc(var(--h) * 100%); border-radius: 2px; background: color-mix(in oklab, var(--ink) 26%, transparent); transition: background .15s; }
+  .say .bars i.on { background: var(--tone, var(--acc)); }
+  .say .len { font: 12px/1 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; flex: none; }
+  .chip.on { box-shadow: inset 0 0 0 1.5px var(--acc); color: var(--ink); }
   .hearing.up .wave i { animation-duration: 1.8s; opacity: .55; }
   @keyframes hear { 0%, 100% { transform: scaleY(.18); } 25% { transform: scaleY(var(--h, .8)); } 55% { transform: scaleY(.35); } 75% { transform: scaleY(calc(var(--h, .8) * .7)); } }
   .squeeze.gone { opacity: 0; transform: scale(.96); transition: opacity .6s var(--calm), transform .6s var(--calm); }
@@ -441,7 +454,7 @@
     'Free': 'Libre', 'Working…': 'Trabajando…', 'Asks you': 'Te pregunta', 'Not started': 'Sin levantar', 'Shell': 'Terminal', 'Paused': 'Retenido',
     'wants to run': 'quiere usar', 'asks': 'pregunta', 'a routine': 'una rutina',
     'Write to %s…': 'Escribe a %s…', 'Stop': 'Parar', 'Hold the mailbox': 'Retener', 'Let it go on': 'Dejar seguir',
-    'Waiting': 'Esperando', 'First': 'Primero', 'Remove': 'Quitar', 'Show all': 'Ver entero', 'Show less': 'Ver menos', 'Transcribing…': 'Transcribiendo…', 'Sending the voice note…': 'Enviando la nota de voz…',
+    'Waiting': 'Esperando', 'First': 'Primero', 'Remove': 'Quitar', 'Show all': 'Ver entero', 'Show less': 'Ver menos', 'Transcribing…': 'Transcribiendo…', 'Spoken answers': 'Respuestas con voz', 'Putting a voice to it…': 'Poniendo voz…', 'Play the answer': 'Escuchar la respuesta', 'Pause': 'Pausa', 'Its answers come with voice': 'Sus respuestas llegarán con voz', 'Its answers in writing only': 'Sus respuestas, solo por escrito', 'Its answers are also said aloud on this page, with the voice of this computer': 'Sus respuestas también se dicen en voz alta en esta página, con la voz de este ordenador', 'Sending the voice note…': 'Enviando la nota de voz…',
     'Sent: it gets it as soon as it is free': 'Enviado: le llega en cuanto esté libre', 'Sent': 'Enviado',
     'No companions yet': 'Aún no hay compañeros', 'A terminal opened with a name (pleamar-wm link open --name) shows up here.': 'Aquí sale cada terminal abierta con nombre (pleamar-wm link open --name).',
     'Nothing yet. Write the first task below.': 'Nada todavía. Escribe abajo la primera tarea.',
@@ -939,6 +952,14 @@
       const bad = l.how && l.how !== 'done';
       const them = el('div', 'bub them' + (bad ? ' bad' : '') + fresh('a' + l.id));
       if (bad) them.append(el('span', 'from', t(HOW[l.how] || l.how)));
+      const vkey = 'v' + l.id + ':' + l.at;
+      if (l.voice) {
+        them.append(voicePlayer(l));
+        if (voiceless.has(vkey) && !voicePlayed.has(vkey) && /^\[Voice note/.test(l.text || '') && !document.hidden) { voicePlayed.add(vkey); setTimeout(() => playVoice('/caravan/file?path=' + encodeURIComponent(l.voice)), 50); }
+      } else {
+        voiceless.add(vkey);
+        if (l.speaking) { const sp = el('div', 'say speaking'), w = el('span', 'wave'); HEIGHTS.slice(0, 7).forEach((hh, n) => { const i = el('i'); i.style.setProperty('--n', n); i.style.setProperty('--h', hh); w.append(i); }); sp.append(w, el('span', '', t('Putting a voice to it…'))); them.append(sp); }
+      }
       const theirFiles = (l.files || []).filter(f => (l.answer || '').includes(f.path));
       longText(them, named(unlink((l.answer || '').trim()), theirFiles) || '—', 'a' + l.id, true);
       filesOf(them, theirFiles);
@@ -960,6 +981,46 @@
     return b;
   }
   function voiceIs(v) { voiceOut = v; loadTalk.seen = ''; if (talk) drawChat(); if (v && !v.up) setTimeout(() => { if (voiceOut === v) { loadTalk.seen = ''; if (talk) drawChat(); } }, 3100); }
+  // An answer said aloud (kept beside its letter on the computer): one audio for the page, so one plays at a time,
+  // and the players drawn again find where it is. The answer to a voice note plays by itself when its voice comes.
+  const voiceEl = new Audio(); voiceEl.preload = 'none';
+  let voiceAt = '';
+  const ICON = { play: '<svg viewBox="0 0 14 14"><path d="M3 1.6v10.8a.6.6 0 0 0 .9.5l8.6-5.4a.6.6 0 0 0 0-1L3.9 1.1a.6.6 0 0 0-.9.5z"/></svg>', pause: '<svg viewBox="0 0 14 14"><rect x="2.5" y="1.5" width="3.2" height="11" rx="1"/><rect x="8.3" y="1.5" width="3.2" height="11" rx="1"/></svg>' };
+  const mmss = n => isFinite(n) ? Math.floor(n / 60) + ':' + String(Math.floor(n % 60)).padStart(2, '0') : '';
+  const voiceless = new Set(), voicePlayed = new Set(), durations = new Map();
+  function voicePlayer(l) {
+    const url = '/caravan/file?path=' + encodeURIComponent(l.voice);
+    const box = el('div', 'say'); box.dataset.src = url;
+    const b = el('button', 'play'); b.setAttribute('aria-label', t('Play the answer'));
+    const bars = el('span', 'bars');
+    let h = 0; for (const ch of l.voice) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    for (let k = 0; k < 32; k++) { h = (h * 1103515245 + 12345) >>> 0; const i = el('i'); i.style.setProperty('--h', (.25 + (h % 1000) / 1000 * .75).toFixed(2)); bars.append(i); }
+    box.append(b, bars, el('span', 'len', ''));
+    if (!durations.has(url)) { durations.set(url, ''); const a = new Audio(); a.preload = 'metadata'; a.onloadedmetadata = () => { durations.set(url, mmss(a.duration)); document.querySelectorAll('.say[data-src]').forEach(drawVoice); }; a.src = url; }
+    b.onclick = () => playVoice(url);
+    bars.onclick = e => { const r = bars.getBoundingClientRect(); playVoice(url, (e.clientX - r.left) / r.width); };
+    drawVoice(box);
+    return box;
+  }
+  function playVoice(url, at) {
+    if (voiceAt !== url) { voiceAt = url; voiceEl.src = url; }
+    if (at != null && isFinite(voiceEl.duration)) voiceEl.currentTime = at * voiceEl.duration;
+    else if (at != null) voiceEl.addEventListener('loadedmetadata', () => { voiceEl.currentTime = at * voiceEl.duration; }, { once: true });
+    if (voiceEl.paused || at != null) voiceEl.play().catch(() => {}); else voiceEl.pause();
+  }
+  function drawVoice(box) {
+    const mine = box.dataset.src === voiceAt, d = voiceEl.duration;
+    const on = mine && !voiceEl.paused;
+    box.querySelector('.play').innerHTML = on ? ICON.pause : ICON.play;
+    box.querySelector('.play').setAttribute('aria-label', on ? t('Pause') : t('Play the answer'));
+    const frac = mine && d ? voiceEl.currentTime / d : 0, bars = box.querySelectorAll('.bars i');
+    bars.forEach((i, k) => i.classList.toggle('on', k < Math.round(frac * bars.length)));
+    box.querySelector('.len').textContent = mine && d ? mmss(on || voiceEl.currentTime ? voiceEl.currentTime : d) : (durations.get(box.dataset.src) || '');
+  }
+  for (const ev of ['play', 'pause', 'timeupdate', 'ended', 'loadedmetadata']) voiceEl.addEventListener(ev, () => {
+    if (ev === 'ended') voiceEl.currentTime = 0;
+    document.querySelectorAll('.say[data-src]').forEach(drawVoice);
+  });
   function drawTalkHead() {
     const c = byName(open) || { name: open, state: 'away' };
     avatar(c, $('t-av')); $('t-av').className = 'avatar s-' + c.state;
@@ -1000,6 +1061,13 @@
       r.title = t('Start it again in the same conversation (loads new MCP servers and settings)');
       r.onclick = () => { if (confirm(t('Restart %s? It keeps its conversation; what it is doing now is cut.', look(c).title))) act({ do: 'restart', name: open }, t('Restarting: it comes back in a few seconds')); };
       tools.append(r);
+    }
+    if (state.speaker) {
+      const v = el('button', 'chip' + (c.voice ? ' on' : ''), (c.voice ? '● ' : '') + t('Spoken answers'));
+      v.title = t('Its answers are also said aloud on this page, with the voice of this computer');
+      v.setAttribute('aria-pressed', c.voice ? 'true' : 'false');
+      v.onclick = () => act({ do: 'voice', name: open, on: !c.voice }, c.voice ? t('Its answers in writing only') : t('Its answers come with voice'));
+      tools.append(v);
     }
     const p = el('button', 'chip', c.paused ? t('Let it go on') : t('Hold the mailbox'));
     p.onclick = () => act({ do: c.paused ? 'resume' : 'pause', name: open }, c.paused ? t('It goes on') : t('Held: nothing more is handed to it')); tools.append(p);
