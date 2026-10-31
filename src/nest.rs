@@ -2906,6 +2906,9 @@ impl State {
         };
         // One the agent opened (`agent open`): on its monitor, and yours
         // stays where it was.
+        // Whose it is: a companion's (it opened it, or it was started from its
+        // shell), for the scene to keep it out of sight (`by.N`).
+        let by = self.opened_by(pid, &app);
         let opened = self.agent_opened(pid, &app).filter(|s| *s < self.outputs.len());
         let screen = opened.or_else(|| self.agent_screen_for(pid)).filter(|s| *s < self.outputs.len()).unwrap_or(self.on_screen);
         // Its size, the one the scene already has for that slot; tiled on all
@@ -2933,6 +2936,7 @@ impl State {
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
         self.tell(NestEvent::Opened { slot, title, app, screen });
+        let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern(&format!("by.{slot}")), by));
         // Whether it lets the scene draw its frame: X11 programs do (the scene
         // is their window manager); a Wayland one, if it took xdg-decoration.
         let framed = self.slots[slot].as_ref().is_some_and(|w| matches!(w.toplevel, Toplevel::X11(_)) || self.decorated.contains(&w.surface));
@@ -2996,6 +3000,7 @@ impl State {
             self.tell(NestEvent::Urgent(slot, false));
         }
         self.tell(NestEvent::Closed(slot));
+        let _ = self.to_render.send(ToRender::Text(pleamar::scene::intern(&format!("by.{slot}")), String::new()));
         self.tell(NestEvent::Order(self.order.clone()));
         if self.focus == Some(slot) {
             // Nothing seen there: the one that leads (a window closed with no

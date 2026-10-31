@@ -87,6 +87,9 @@ struct Opening {
     name: String,
     screen: usize,
     until: Instant,
+    /// The terminal of whoever asked for it (its `PLEAMAR_NAME`: a companion
+    /// of a caravan), empty for none: its windows say so (`by.N`).
+    who: String,
 }
 /// Cursors the agent may drive at once.
 const CURSORS: usize = 2;
@@ -121,6 +124,8 @@ pub struct Agent {
     /// Programs the agent opened (`agent open`): their windows go to the
     /// monitor it works on, and none takes your keyboard.
     opening: Vec<Opening>,
+    /// The name of the terminal whose agent sent the command being done.
+    asking: String,
     /// Per cursor: how many things it has done, for the scene to know it moved.
     seen: [u32; CURSORS],
     /// And all of them, keys too: the scene knows the agent is at work.
@@ -458,7 +463,7 @@ pub fn start(state: &mut State) {
         return;
     }
     println!("agent · computer use: cua-inject v1 at {path}");
-    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace, hand: None, taken: None });
+    state.agent = Some(Agent { seats, on_monitor: [None; CURSORS], raw_entered: [None, None], raw_real: [None, None], kb_entered: None, kb_slot: None, kb_real: None, opening: Vec::new(), asking: String::new(), seen: [0; CURSORS], busy: 0, at: [(0.0, 0.0).into(); CURSORS], path, peer: 0, last: None, active: false, stopped: None, global: [None; CURSORS], working: None, remote: None, pending: None, quiet: false, pace: crate::config::get().pace, hand: None, taken: None });
     // Whether it is at work, looked at every second: between one action and
     // the next an agent thinks, and that is still working.
     let timer = Timer::from_duration(Duration::from_secs(1));
@@ -612,6 +617,9 @@ impl State {
             if let Err(refused) = self.hand_check(t, who) {
                 return refused;
             }
+        }
+        if let Some(a) = self.agent.as_mut() {
+            a.asking = who.to_owned();
         }
         let reply = self.agent_command_now(line);
         if let Some(t) = touch {
@@ -1367,6 +1375,24 @@ impl State {
         Some(screen)
     }
 
+    /// Whose a window just made is: the terminal of the agent that opened its
+    /// program (`agent open`), or the one its process runs under (a program
+    /// started from a companion's shell). Empty for none: one of yours.
+    pub(super) fn opened_by(&self, pid: u32, app: &str) -> String {
+        if let Some(agent) = self.agent.as_ref() {
+            let mut names = words(app);
+            if pid != 0 {
+                names.extend(std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| words(&c)).unwrap_or_default());
+                names.extend(std::fs::read_link(format!("/proc/{pid}/exe")).ok().and_then(|e| e.file_name().map(|f| words(&f.to_string_lossy()))).unwrap_or_default());
+            }
+            let now = Instant::now();
+            if let Some(o) = agent.opening.iter().filter(|o| o.until > now && !o.who.is_empty()).find(|o| (pid != 0 && in_family(pid, o.pid)) || words(&o.name).iter().any(|w| names.contains(w))) {
+                return o.who.clone();
+            }
+        }
+        if pid == 0 { String::new() } else { crate::hands::who_of(pid) }
+    }
+
     /// `agent open`: the monitor is lit first, so you see where it will
     /// work, then the program starts there, without your keyboard. The
     /// monitor: the one asked for; else the one it is working on; else one
@@ -1403,7 +1429,8 @@ impl State {
         if let Some(agent) = self.agent.as_mut() {
             agent.working = Some((pid, screen));
             agent.opening.retain(|o| o.until > Instant::now());
-            agent.opening.push(Opening { pid, name, screen, until: Instant::now() + OPENING });
+            let who = agent.asking.clone();
+            agent.opening.push(Opening { pid, name, screen, until: Instant::now() + OPENING, who });
         }
         println!("agent · opened «{command}» on monitor {screen}");
         Ok(format!("opened {pid} {screen}"))

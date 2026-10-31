@@ -150,7 +150,7 @@ fn tools() -> Vec<Tool<Words>> {
         },
         Tool {
             name: "open",
-            about: "Start a program for the agent on the monitor it works on, without the user's keyboard. Never start programs from your own shell.",
+            about: "Start a program for the agent on the monitor it works on, without the user's keyboard. Never start programs from your own shell. A companion's programs may open out of sight (Calima's camp): `focus` one when your person wants to see it.",
             args: json!({ "command": st("The command line: firefox, gtk3-widget-factory."), "monitor": num("A monitor's number (the agent's own if not said).") }),
             needed: &["command"],
             eager: false,
