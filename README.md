@@ -498,7 +498,10 @@ terminals off                               # the terminals' shells as they are 
 
 In the login screen (SDDM, GDM): `pleamar-update --session` puts «pleamar-wm»
 in the list of sessions. There, dbus and systemd are told where the desktop is,
-and the portals (`pleamar-portals.conf`) do the rest through GTK's.
+and the portals (`pleamar-portals.conf`) do the rest through GTK's. Which
+desktop it is (`XDG_CURRENT_DESKTOP=pleamar`) is told before anything else
+runs: a portal woken earlier without it would never read that file, and a
+program's «Open» would get GTK's dialog instead of the one it names (Sonda's).
 
 **Sharing the screen is pleamar-wm's own**: it is its own portal
 (`pleamar.portal`, `org.freedesktop.impl.portal.ScreenCast`). When Discord, a

@@ -266,6 +266,8 @@ fn main() {
             nest::stop_clients();
         }));
         pleamar::provide_platform(Box::new(session::Session));
+        // Before the scene (and its first look at the portal).
+        nest::export_desktop_early();
         let mut options = vec!["--scene".to_owned(), scene, "--no-hud".to_owned()];
         options.extend(args);
         pleamar::run_with(options);

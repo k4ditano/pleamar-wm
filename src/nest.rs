@@ -488,6 +488,11 @@ impl ClientData for ClientState {
 #[path = "agent.rs"]
 mod agent;
 
+/// Which desktop this is, told to dbus and systemd before the scene runs (see `State::export_desktop_early`).
+pub fn export_desktop_early() {
+    State::export_desktop_early();
+}
+
 struct State {
     dh: DisplayHandle,
     compositor: CompositorState,
@@ -1430,6 +1435,27 @@ impl State {
             ToNest::Released(numbers) => self.release(numbers),
             ToNest::Picked(what) => crate::portal::picked(what),
             ToNest::Quit => self.quit = true,
+        }
+    }
+
+    /// Which desktop this is, told to dbus and systemd before anything else
+    /// runs: the scene asks the portal how the system looks (light or dark)
+    /// as it starts, and a portal woken then, without `XDG_CURRENT_DESKTOP`,
+    /// never reads pleamar's portals file: files were opened with GTK's
+    /// dialog, not the one it names (Sonda). The rest (the display, the
+    /// agent's socket) is told once the monitors are there.
+    fn export_desktop_early() {
+        if std::env::var_os("PLEAMAR_WM_EXPORT").is_none() {
+            return;
+        }
+        if std::process::Command::new("pgrep").args(["-x", "Hyprland"]).stdout(std::process::Stdio::null()).status().is_ok_and(|s| s.success()) {
+            return;
+        }
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "pleamar".into());
+        let vars = [format!("XDG_CURRENT_DESKTOP={desktop}"), format!("XDG_SESSION_DESKTOP={desktop}"), "XDG_SESSION_TYPE=wayland".to_owned()];
+        match std::process::Command::new("dbus-update-activation-environment").arg("--systemd").args(&vars).status() {
+            Ok(s) if s.success() => println!("windows · dbus and systemd know this is {desktop}, before anything asks a portal"),
+            _ => eprintln!("windows · dbus-update-activation-environment failed: a portal woken now would not know the desktop"),
         }
     }
 
