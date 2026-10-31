@@ -803,7 +803,11 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
 
     let primary = PrimarySelectionState::new::<State>(&dh);
     let mut state = State {
-        compositor: CompositorState::new::<State>(&dh),
+        // Version 6: the scale and the turn a surface should paint at are told
+        // to it (`send_surface_state`, on every commit, below) instead of being
+        // guessed from the monitors it is on. Hyprland 0.56 asks for nothing less,
+        // and closed at once when it was nested here.
+        compositor: CompositorState::new_v6::<State>(&dh),
         xdg: XdgShellState::new::<State>(&dh),
         _decorations: XdgDecorationState::new::<State>(&dh),
         kde_decorations: KdeDecorationState::new::<State>(&dh, smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode::Server),
