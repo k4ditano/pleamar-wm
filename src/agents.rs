@@ -69,7 +69,9 @@ fn agents() -> Result<Vec<Agent>, String> {
             layer: id,
             agent: info.get("agent").cloned().unwrap_or_default(),
             cwd: info.get("cwd").cloned().unwrap_or_default(),
-            title: w.title.clone(),
+            // Its own shell's title (Claude Code's says its task), if it set one: a terminal with
+            // tabs is titled after itself, or after another tab.
+            title: info.get("title").filter(|t| !t.trim().is_empty()).cloned().unwrap_or_else(|| w.title.clone()),
             state,
             question,
             detail,
