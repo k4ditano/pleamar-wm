@@ -68,6 +68,15 @@ the open windows without closing anything.
   Claude Code's hooks, which tell its terminal exactly how it is and its last
   answer. `link spawn codex "TASK"` opens a terminal with that agent beside
   yours, wired, and hands it the task. `link setup --undo` takes it away.
+- **Two panes of one terminal, wired**: a wire joins windows; two shells of
+  the same window (a terminal's panes) are joined with `pleamar-wm term pair
+  A B --label NAME` (their numbers from `term list`). For the agent in either,
+  the other is one more window wired to its own —«the pane beside yours», by
+  its own window's number or as `pane`—, read, typed in and handed tasks as
+  any other. A pair goes with either shell, or with `term unpair ID`; the
+  terminal draws it (Bitácora does), and `term list --json` gives every
+  layer as it says itself and the pairs, with which way something goes along
+  each one now.
 - **Terminals with a name, for your shell**: `pleamar-wm link open --name
   Prohard --folder ~/Proyectos --quiet claude --model claude-opus-5-5` opens a
   terminal of its own —beside nobody's, wired to nobody— in that folder,

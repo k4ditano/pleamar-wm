@@ -1060,6 +1060,94 @@ pub fn info(socket: &str) -> Result<std::collections::BTreeMap<String, String>, 
     Ok(ask(socket, "info")?.lines().filter_map(|l| l.split_once(' ').map(|(k, v)| (k.to_owned(), v.to_owned())).or_else(|| Some((l.to_owned(), String::new())))).collect())
 }
 
+// ── Two shells of one window wired to each other ──
+//
+// A wire joins two windows (`wire.K` in the scene). Two shells side by side in
+// one window (a terminal's panes) are joined by a pair instead: the terminal
+// says it (`term pair A B`), a file in the layers' folder keeps it, and `link`
+// treats the other as a window wired to each, as «the pane beside yours».
+
+/// A pair of shells: its two layers, what it is called, and which way
+/// something goes along it now (1 from `a` to `b`, -1 back, 0 nothing).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pair {
+    pub a: i32,
+    pub b: i32,
+    pub label: String,
+    pub flow: i32,
+}
+
+fn pairs_dir() -> String {
+    format!("{}/pairs", socket_dir())
+}
+
+/// The pairs whose two shells are still there. A pair one of them has left
+/// is taken away.
+pub fn pairs() -> Vec<Pair> {
+    pairs_in(&pairs_dir(), &|id| unsafe { libc::kill(id, 0) } == 0)
+}
+
+fn pairs_in(dir: &str, alive: &dyn Fn(i32) -> bool) -> Vec<Pair> {
+    let mut out = Vec::new();
+    let Ok(read) = std::fs::read_dir(dir) else { return out };
+    for e in read.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some((a, b)) = name.split_once('-').and_then(|(a, b)| Some((a.parse::<i32>().ok()?, b.parse::<i32>().ok()?))) else { continue };
+        if !alive(a) || !alive(b) {
+            let _ = std::fs::remove_file(e.path());
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+        let mut lines = text.lines();
+        let label = lines.next().unwrap_or("").to_owned();
+        let flow = lines.next().and_then(|f| f.trim().parse().ok()).unwrap_or(0);
+        out.push(Pair { a, b, label, flow });
+    }
+    out.sort_by_key(|p| (p.a, p.b));
+    out
+}
+
+/// The pair that shell is in, if one.
+pub fn pair_of(id: i32) -> Option<Pair> {
+    pairs().into_iter().find(|p| p.a == id || p.b == id)
+}
+
+/// Joins two shells (each in one pair at most: an older one of either goes).
+pub fn pair(a: i32, b: i32, label: &str) -> Result<(), String> {
+    pair_in(&pairs_dir(), a, b, label)
+}
+
+fn pair_in(dir: &str, a: i32, b: i32, label: &str) -> Result<(), String> {
+    if a == b {
+        return Err("a shell is not wired to itself".into());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    unpair_in(dir, a);
+    unpair_in(dir, b);
+    let label = label.replace(['\n', '\r', '\t'], " ");
+    std::fs::write(format!("{dir}/{a}-{b}"), format!("{label}\n0\n")).map_err(|e| e.to_string())
+}
+
+/// Lets go of the pair that shell is in.
+pub fn unpair(id: i32) {
+    unpair_in(&pairs_dir(), id);
+}
+
+fn unpair_in(dir: &str, id: i32) {
+    let Ok(read) = std::fs::read_dir(dir) else { return };
+    for e in read.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.split('-').any(|n| n.parse::<i32>().ok() == Some(id)) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// Which way something goes along that pair now, for whoever draws it.
+pub fn pair_flow(p: &Pair, flow: i32) {
+    let _ = std::fs::write(format!("{}/{}-{}", pairs_dir(), p.a, p.b), format!("{}\n{flow}\n", p.label));
+}
+
 /// The layer whose terminal is that process, if one. A terminal with
 /// several shells (tabs) speaks for the one that moved last.
 pub fn layer_of(pid: u32, layers: &[(i32, std::collections::BTreeMap<String, String>)]) -> Option<(i32, std::collections::BTreeMap<String, String>)> {
@@ -1340,7 +1428,7 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
 pub fn cli(args: &[String]) -> i32 {
     let socket = |id: &str| format!("{}/{id}.sock", socket_dir());
     match args.first().map(String::as_str) {
-        Some("list") | None => {
+        Some("list") | None if args.get(1).map(String::as_str) != Some("--json") => {
             for (id, info) in layers() {
                 let g = |k: &str| info.get(k).cloned().unwrap_or_default();
                 let agent = g("agent");
@@ -1358,12 +1446,62 @@ pub fn cli(args: &[String]) -> i32 {
             }
             0
         }
+        // Every layer as it says itself, and the pairs: for a terminal that
+        // draws its shells' agents (Bitácora), in one go.
+        Some("list") if args.get(1).map(String::as_str) == Some("--json") => {
+            let layers: Vec<serde_json::Value> = layers()
+                .into_iter()
+                .map(|(id, info)| {
+                    let mut o = serde_json::Map::new();
+                    o.insert("id".into(), id.into());
+                    for (k, v) in info {
+                        o.insert(k, v.into());
+                    }
+                    serde_json::Value::Object(o)
+                })
+                .collect();
+            let pairs: Vec<serde_json::Value> = pairs().into_iter().map(|p| serde_json::json!({ "a": p.a, "b": p.b, "label": p.label, "flow": p.flow })).collect();
+            println!("{}", serde_json::json!({ "layers": layers, "pairs": pairs }));
+            0
+        }
+        Some("pair") if args.len() >= 3 => {
+            let (Ok(a), Ok(b)) = (args[1].parse::<i32>(), args[2].parse::<i32>()) else {
+                eprintln!("pleamar-wm term pair A B [--label NAME]: two shells' numbers, as `term list` gives them");
+                return 2;
+            };
+            let known: Vec<i32> = layers().iter().map(|(id, _)| *id).collect();
+            if let Some(gone) = [a, b].into_iter().find(|id| !known.contains(id)) {
+                eprintln!("shell {gone} is not one of the session's (`pleamar-wm term list`)");
+                return 1;
+            }
+            let label = args.iter().position(|x| x == "--label").and_then(|k| args.get(k + 1)).cloned().unwrap_or_default();
+            match pair(a, b, &label) {
+                Ok(()) => {
+                    println!("shells {a} and {b} are wired to each other");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        Some("unpair") if args.len() == 2 => match args[1].parse::<i32>() {
+            Ok(id) => {
+                unpair(id);
+                0
+            }
+            Err(_) => {
+                eprintln!("pleamar-wm term unpair ID");
+                2
+            }
+        },
         Some("info") if args.len() == 2 => print_reply(ask(&socket(&args[1]), "info")),
         Some("read") if args.len() >= 2 => print_reply(ask(&socket(&args[1]), &format!("read {}", args.get(2).map_or("200", String::as_str)))),
         Some("paste") if args.len() >= 3 => print_reply(ask(&socket(&args[1]), &format!("paste {}", to_hex(args[2..].join(" ").as_bytes())))),
         Some("keys") if args.len() >= 3 => print_reply(ask(&socket(&args[1]), &format!("keys {}", args[2..].join(" ")))),
         _ => {
-            eprintln!("pleamar-wm term list | info ID | read ID [LINES] | paste ID TEXT | keys ID enter|tab|escape|up|ctrl+c…");
+            eprintln!("pleamar-wm term list [--json] | info ID | read ID [LINES] | paste ID TEXT | keys ID enter|tab|escape|up|ctrl+c… | pair A B [--label NAME] | unpair ID");
             2
         }
     }
@@ -1389,6 +1527,25 @@ fn print_reply(r: Result<String, String>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pair_is_kept_until_one_of_its_shells_goes() {
+        let dir = std::env::temp_dir().join(format!("pleamar-wm-pairs-{}", std::process::id())).display().to_string();
+        let all = |_: i32| true;
+        pair_in(&dir, 10, 11, "beside").unwrap();
+        assert_eq!(pairs_in(&dir, &all), vec![Pair { a: 10, b: 11, label: "beside".into(), flow: 0 }]);
+        // Each shell in one pair at most: a new one for either replaces it.
+        pair_in(&dir, 11, 12, "").unwrap();
+        assert_eq!(pairs_in(&dir, &all).iter().map(|p| (p.a, p.b)).collect::<Vec<_>>(), vec![(11, 12)]);
+        assert!(pair_in(&dir, 5, 5, "").is_err());
+        // One of its shells gone: the pair goes too.
+        assert!(pairs_in(&dir, &|id| id != 12).is_empty());
+        assert!(pairs_in(&dir, &all).is_empty());
+        pair_in(&dir, 20, 21, "").unwrap();
+        unpair_in(&dir, 21);
+        assert!(pairs_in(&dir, &all).is_empty());
+        let _ = std::fs::remove_dir(&dir);
+    }
 
     #[test]
     fn writing_is_letters_until_enter_and_never_escapes() {

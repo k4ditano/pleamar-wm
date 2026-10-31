@@ -76,6 +76,22 @@ struct Here {
     wins: Vec<Win>,
     layers: Vec<(i32, Info)>,
     wires: Vec<(usize, i64, i64, String)>,
+    /// The shell wired to the caller's in its own window (two panes of one
+    /// terminal: `term pair`), if one.
+    pair: Option<crate::term::Pair>,
+}
+
+/// A pair's place among the wires: past the scene's eight, with its two
+/// shells in it (a pid fits in 22 bits), so that one place says which pair.
+const PANE: usize = 1 << 50;
+const PID_BITS: usize = 22;
+
+fn pane_k(p: &crate::term::Pair) -> usize {
+    PANE | ((p.a as usize) << PID_BITS) | p.b as usize
+}
+
+fn pane_of(k: usize) -> Option<(i32, i32)> {
+    (k >= PANE).then(|| ((((k ^ PANE) >> PID_BITS) & ((1 << PID_BITS) - 1)) as i32, (k & ((1 << PID_BITS) - 1)) as i32))
 }
 
 /// Who calls: its terminal's layer, and the window that terminal is.
@@ -86,24 +102,61 @@ fn here() -> Result<Here, String> {
     let terminal: u32 = info.get("terminal").and_then(|t| t.parse().ok()).unwrap_or(0);
     let wins = windows()?;
     let slot = wins.iter().find(|w| w.pid == terminal).map(|w| w.slot).ok_or("this terminal's window is not one of the session's")?;
-    Ok(Here { layer, info, slot, wins, layers, wires: wires() })
+    // Its pair, while the other shell is in the same terminal.
+    let pair = crate::term::pair_of(layer).filter(|p| {
+        let other = if p.a == layer { p.b } else { p.a };
+        layers.iter().any(|(id, i)| *id == other && i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(terminal))
+    });
+    Ok(Here { layer, info, slot, wins, layers, wires: wires(), pair })
 }
 
 impl Here {
     /// The windows wired to the caller's, with the wire's place and which end the caller is.
+    /// The shell paired with the caller's is there too, in the caller's own
+    /// window: «the pane beside yours».
     fn wired(&self) -> Vec<(usize, &Win, bool)> {
-        self.wires
+        let mut out: Vec<(usize, &Win, bool)> = self
+            .wires
             .iter()
             .filter_map(|(k, a, b, _)| {
                 let (mine_is_a, other) = if *a as usize == self.slot { (true, *b) } else if *b as usize == self.slot { (false, *a) } else { return None };
                 self.wins.iter().find(|w| w.slot == other as usize).map(|w| (*k, w, mine_is_a))
             })
-            .collect()
+            .collect();
+        if let (Some(p), Some(me)) = (&self.pair, self.wins.iter().find(|w| w.slot == self.slot)) {
+            out.push((pane_k(p), me, p.a == self.layer));
+        }
+        out
     }
 
     /// What the person called that wire, if anything.
     fn label(&self, k: usize) -> &str {
+        if k >= PANE {
+            return self.pair.as_ref().map_or("", |p| p.label.as_str());
+        }
         self.wires.iter().find(|w| w.0 == k).map_or("", |w| w.3.as_str())
+    }
+
+    /// The shell at the other end of a wire: the paired one for a pane, or
+    /// that window's terminal's.
+    fn far_layer(&self, k: usize, w: &Win) -> Option<(i32, Info)> {
+        match pane_of(k) {
+            Some((a, b)) => {
+                let other = if a == self.layer { b } else { a };
+                self.layers.iter().find(|(id, _)| *id == other).cloned()
+            }
+            None => layer_of(w.pid, &self.layers),
+        }
+    }
+
+    /// One line for a wired window, as `list` and `whoami` give it.
+    fn line(&self, k: usize, w: &Win) -> String {
+        let line = line_of(w.slot, w, self.far_layer(k, w).as_ref(), self.label(k));
+        if k >= PANE {
+            format!("{line}  (the pane beside yours, in your own window)")
+        } else {
+            line
+        }
     }
 
     /// The shell of that window's terminal. Of several, the one that moved
@@ -145,12 +198,14 @@ impl Here {
         let wired = self.wired();
         let found: Vec<&(usize, &Win, bool)> = match name.trim_start_matches('#').parse::<usize>() {
             Ok(n) => wired.iter().filter(|(_, w, _)| w.slot == n).collect(),
+            // «pane»: the shell beside the caller's, in its own window.
+            Err(_) if name.eq_ignore_ascii_case("pane") => wired.iter().filter(|(k, _, _)| *k >= PANE).collect(),
             // By the wire's name first («tests»), then by what runs there.
             Err(_) if wired.iter().any(|(k, _, _)| self.label(*k).eq_ignore_ascii_case(name)) => wired.iter().filter(|(k, _, _)| self.label(*k).eq_ignore_ascii_case(name)).collect(),
             Err(_) => wired
                 .iter()
-                .filter(|(_, w, _)| {
-                    let l = layer_of(w.pid, &self.layers);
+                .filter(|(k, w, _)| {
+                    let l = self.far_layer(*k, w);
                     l.as_ref().and_then(|(_, i)| i.get("agent")).is_some_and(|a| a == name) || w.title.to_lowercase().contains(&name.to_lowercase())
                 })
                 .collect(),
@@ -934,7 +989,17 @@ fn answer(lines: &[&str]) -> String {
 }
 
 fn flow(k: usize, v: i32) {
-    say(&[format!("fact wire.{k}.flow {v}")]);
+    match pane_of(k) {
+        // A pair's is drawn by its terminal, which reads it from the pairs' folder.
+        Some((a, b)) => {
+            if let Some(p) = crate::term::pairs().into_iter().find(|p| p.a == a && p.b == b) {
+                crate::term::pair_flow(&p, v);
+            }
+        }
+        None => {
+            say(&[format!("fact wire.{k}.flow {v}")]);
+        }
+    }
 }
 
 fn number(args: &[String], flag: &str, default: u64) -> u64 {
@@ -1040,7 +1105,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             } else {
                 out.push_str("Wired to it:\n");
                 for (k, w, _) in wired {
-                    out.push_str(&format!("  {}\n", line_of(w.slot, w, layer_of(w.pid, &h.layers).as_ref(), h.label(k))));
+                    out.push_str(&format!("  {}\n", h.line(k, w)));
                 }
             }
             if let Some(c) = crew_lines(&h) {
@@ -1058,7 +1123,7 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                     None => "No window is wired to yours. The person wires them: on a free monitor (Super+W), dragging the drop at the start of a window's title bar onto another window.".into(),
                 });
             }
-            let lines = wired.iter().map(|(k, w, _)| line_of(w.slot, w, layer_of(w.pid, &h.layers).as_ref(), h.label(*k))).collect::<Vec<_>>().join("\n");
+            let lines = wired.iter().map(|(k, w, _)| h.line(*k, w)).collect::<Vec<_>>().join("\n");
             Ok(match crew {
                 Some(c) => format!("{lines}\n{c}"),
                 None => lines,
@@ -1070,7 +1135,12 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
             let h = here()?;
             let (k, w, _) = h.target(name)?;
             let text = words(&rest[1..]).replace(['\n', '\t'], " ");
-            say(&[format!("text wire.{k}.label {text}")]);
+            match pane_of(k) {
+                Some((a, b)) => crate::term::pair(a, b, &text)?,
+                None => {
+                    say(&[format!("text wire.{k}.label {text}")]);
+                }
+            }
             Ok(if text.is_empty() { format!("the wire to window {} has no name now", w.slot) } else { format!("the wire to window {} is «{text}»", w.slot) })
         }
         "read" | "send" | "keys" | "wait" | "ask" | "answer" | "delegate" => {
@@ -1094,6 +1164,11 @@ pub(crate) fn go(args: &[String]) -> Result<String, String> {
                 }
             }
             let (k, w, mine_is_a) = h.target(name)?;
+            // The pane beside: its own shell, not the window's that moved last (the caller's).
+            let shell = match pane_of(k) {
+                Some((a, b)) => Some(if a == h.layer { b } else { a }),
+                None => shell,
+            };
             let (id, tinfo) = h.shell_of(w, shell)?.ok_or_else(|| format!("window {} «{}» has no terminal of its own (through pleamar-wm's layer) to read or type in", w.slot, w.title))?;
             match verb {
                 "read" => Ok(read(id, rest.get(1).and_then(|n| n.parse().ok()).unwrap_or(200))),
@@ -2212,6 +2287,17 @@ fn back(k: usize, mine_is_a: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pane_wire_says_its_two_shells_and_is_none_of_the_scenes() {
+        let p = crate::term::Pair { a: 4_194_303, b: 1_234, label: String::new(), flow: 0 };
+        let k = pane_k(&p);
+        assert!(k >= PANE);
+        assert_eq!(pane_of(k), Some((4_194_303, 1_234)));
+        for k in 0..8 {
+            assert_eq!(pane_of(k), None);
+        }
+    }
 
     #[test]
     fn a_claude_code_answer_comes_without_its_input_box() {
