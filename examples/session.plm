@@ -4514,6 +4514,9 @@ scene Session {
         }
     }
 
+    // pleamar-wm says 1 when `who.N` may hold several names (several named shells in one terminal's tabs).
+    fact who.tabs = 0
+
     // ── this desktop used from elsewhere (`pleamar-wm remote`) ──
     // While someone is in from another computer, whoever sits here sees it:
     // the edges glow amber —the monitor they look at, brighter— and a pill

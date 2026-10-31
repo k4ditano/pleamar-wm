@@ -1362,12 +1362,19 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
                 // a whole caravan, each companion in its own: `who.N` says them all, apart
                 // by spaces, and each one's agent is up, gets its letters and keeps its
                 // journal by itself.
+                // (In a steady order: as their shells came.)
                 let mut here: Vec<String> = Vec::new();
-                for (id, info) in &mine {
-                    let Some(n) = info.get("name").filter(|n| !n.is_empty()) else { continue };
-                    if !here.contains(n) {
+                for (_, info) in &mine {
+                    if let Some(n) = info.get("name").filter(|n| !n.is_empty() && !here.contains(n)) {
                         here.push(n.clone());
                     }
+                }
+                // The busiest first: of several shells with the same name (a terminal's tabs, which
+                // inherit its name), the letters go to the one at work, as they always did.
+                let mut by_use = mine.clone();
+                by_use.sort_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX));
+                for (id, info) in &by_use {
+                    let Some(n) = info.get("name").filter(|n| !n.is_empty()) else { continue };
                     let Some(agent) = info.get("agent").filter(|a| !a.is_empty()) else { continue };
                     if running.contains_key(n) {
                         continue;
