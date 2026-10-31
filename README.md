@@ -77,6 +77,12 @@ the open windows without closing anything.
   terminal draws it (Bitácora does), and `term list --json` gives every
   layer as it says itself and the pairs, with which way something goes along
   each one now.
+- **A caravan in one terminal's tabs**: named shells count by themselves, not
+  by window. A terminal with tabs (Bitácora) may hold several companions, each
+  in its own: `who.N` names them all, apart by spaces; each one's agent gets
+  its letters and keeps its journal; `agents` lists every agent, one per shell
+  (its `layer`), and `agents answer|stop N --shell ID` acts on that one. The
+  scene is told `who.tabs` 1 when this is so.
 - **Terminals with a name, for your shell**: `pleamar-wm link open --name
   Prohard --folder ~/Proyectos --quiet claude --model claude-opus-5-5` opens a
   terminal of its own —beside nobody's, wired to nobody— in that folder,

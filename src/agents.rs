@@ -38,13 +38,18 @@ fn key(q: &Question) -> String {
 
 /// The terminal of that window with an agent in it, of its layers: the
 /// busiest of those with one, as the scene's `ag.N` takes it (term.rs).
-fn layer_with_agent(pid: u32, layers: &[(i32, BTreeMap<String, String>)]) -> Option<(i32, BTreeMap<String, String>)> {
-    layers
+/// Every shell of that window's terminal with an agent in it: a terminal with
+/// tabs (Bitácora) may have several, a caravan's companions each in its own.
+/// The busiest first.
+fn layers_with_agent(pid: u32, layers: &[(i32, BTreeMap<String, String>)]) -> Vec<(i32, BTreeMap<String, String>)> {
+    let mut of: Vec<(i32, BTreeMap<String, String>)> = layers
         .iter()
         .filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(pid))
         .filter(|(_, i)| i.get("agent").is_some_and(|a| !a.is_empty()))
-        .min_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX))
         .cloned()
+        .collect();
+    of.sort_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX));
+    of
 }
 
 fn agents() -> Result<Vec<Agent>, String> {
@@ -52,30 +57,31 @@ fn agents() -> Result<Vec<Agent>, String> {
     let layers = crate::term::layers();
     let mut out = Vec::new();
     for w in &wins {
-        let Some((id, info)) = layer_with_agent(w.pid, &layers) else { continue };
-        let hook = info.get("hook").map(String::as_str).unwrap_or("");
-        let working = if hook.is_empty() { info.get("state").map(String::as_str) == Some("working") } else { hook == "working" };
-        let question = if working { None } else { crate::link::asked(id, &info) };
-        let detail = if question.is_some() { detail_of(&crate::term::ask(&format!("{}/{id}.sock", crate::term::socket_dir()), "read 40").unwrap_or_default()) } else { Vec::new() };
-        let state = if question.is_some() || hook == "asking" {
-            "asking"
-        } else if working {
-            "working"
-        } else {
-            "ready"
-        };
-        out.push(Agent {
-            slot: w.slot,
-            layer: id,
-            agent: info.get("agent").cloned().unwrap_or_default(),
-            cwd: info.get("cwd").cloned().unwrap_or_default(),
-            // Its own shell's title (Claude Code's says its task), if it set one: a terminal with
-            // tabs is titled after itself, or after another tab.
-            title: info.get("title").filter(|t| !t.trim().is_empty()).cloned().unwrap_or_else(|| w.title.clone()),
-            state,
-            question,
-            detail,
-        });
+        for (id, info) in layers_with_agent(w.pid, &layers) {
+            let hook = info.get("hook").map(String::as_str).unwrap_or("");
+            let working = if hook.is_empty() { info.get("state").map(String::as_str) == Some("working") } else { hook == "working" };
+            let question = if working { None } else { crate::link::asked(id, &info) };
+            let detail = if question.is_some() { detail_of(&crate::term::ask(&format!("{}/{id}.sock", crate::term::socket_dir()), "read 40").unwrap_or_default()) } else { Vec::new() };
+            let state = if question.is_some() || hook == "asking" {
+                "asking"
+            } else if working {
+                "working"
+            } else {
+                "ready"
+            };
+            out.push(Agent {
+                slot: w.slot,
+                layer: id,
+                agent: info.get("agent").cloned().unwrap_or_default(),
+                cwd: info.get("cwd").cloned().unwrap_or_default(),
+                // Its own shell's title (Claude Code's says its task), if it set one: a terminal with
+                // tabs is titled after itself, or after another tab.
+                title: info.get("title").filter(|t| !t.trim().is_empty()).cloned().unwrap_or_else(|| w.title.clone()),
+                state,
+                question,
+                detail,
+            });
+        }
     }
     Ok(out)
 }
@@ -160,9 +166,18 @@ fn human(a: &Agent) -> String {
     out
 }
 
-fn find(slot: &str) -> Result<Agent, String> {
+/// Window N's agent: the one in that shell (`--shell ID`, of a terminal with
+/// several), or else the one asking, or else the busiest.
+fn find(slot: &str, shell: Option<&str>) -> Result<Agent, String> {
     let slot: usize = slot.parse().map_err(|_| format!("«{slot}» is not a window's number"))?;
-    agents()?.into_iter().find(|a| a.slot == slot).ok_or_else(|| format!("window {slot} runs no agent"))
+    let all: Vec<Agent> = agents()?.into_iter().filter(|a| a.slot == slot).collect();
+    if let Some(id) = shell {
+        let id: i32 = id.parse().map_err(|_| format!("«{id}» is not a shell's number (`pleamar-wm term list`)"))?;
+        return all.into_iter().find(|a| a.layer == id).ok_or_else(|| format!("window {slot} has no agent in shell {id}"));
+    }
+    let asking = all.iter().position(|a| a.state == "asking");
+    let k = asking.unwrap_or(0);
+    all.into_iter().nth(k).ok_or_else(|| format!("window {slot} runs no agent"))
 }
 
 /// Anything that looks like a secret, hidden: tokens with a known shape
@@ -233,12 +248,14 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 }
 
 const USAGE: &str = "pleamar-wm agents — the session's agents and what they ask, for the person
-  agents [--json]                     every window with an agent: number, agent, folder, state
-                                      (working, ready, asking) and, asking, the question with its
-                                      key and its options by number. --json: one object a line
+  agents [--json]                     every agent, one a line: its window's number, its shell
+                                      (layer), agent, folder, state (working, ready, asking) and,
+                                      asking, the question with its key and its options by number.
+                                      A terminal with tabs may have several. --json: one object a line
   agents answer N OPTION --key KEY    answers window N's question with that option's number, only
                                       if the question on its screen still has that key
   agents stop N                       Ctrl+C to window N's agent
+  With either, --shell ID: the agent in that shell of window N (else the one asking, or the busiest)
   With answer and stop: --log FILE --by WHO --class A|B|C writes a line (JSON, secrets hidden)
   of what was done, refused or failed to FILE";
 
@@ -269,7 +286,7 @@ fn go(args: &[String]) -> Result<String, (i32, String)> {
             let (slot, option) = (args.get(1).ok_or((2, USAGE.to_owned()))?, args.get(2).ok_or((2, USAGE.to_owned()))?);
             let wanted = flag(args, "--key").ok_or((2, "answer N OPTION --key KEY: the key of the question shown, from `agents --json`".to_owned()))?;
             let n: u32 = option.parse().map_err(|_| (2, format!("«{option}»: an option's number")))?;
-            let a = find(slot).map_err(fail)?;
+            let a = find(slot, flag(args, "--shell")).map_err(fail)?;
             let refuse = |code: i32, why: String| {
                 record(args, &a, serde_json::json!({ "answer": n, "result": "refused", "why": why }));
                 Err((code, why))
@@ -291,7 +308,7 @@ fn go(args: &[String]) -> Result<String, (i32, String)> {
             }
         }
         Some("stop") => {
-            let a = find(args.get(1).ok_or((2, USAGE.to_owned()))?).map_err(fail)?;
+            let a = find(args.get(1).ok_or((2, USAGE.to_owned()))?, flag(args, "--shell")).map_err(fail)?;
             let sent = crate::link::keys(a.layer, "ctrl+c");
             record(args, &a, serde_json::json!({ "stop": true, "result": if sent.is_ok() { "sent" } else { "failed" } }));
             sent.map_err(fail)?;

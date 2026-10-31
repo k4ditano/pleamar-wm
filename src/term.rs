@@ -1312,8 +1312,9 @@ fn unnumbered(tail: &[&str]) -> Option<Question> {
 /// For the scene, every second: in which windows (`windows`, `slot pid`, as
 /// pleamar-wm writes it) an agent runs in a terminal through a layer, and
 /// how it is —`ag.N` 1 working, 2 ready, 3 waiting for the person; `agt.N`
-/// «claude · ~/Proyectos/pleamar»—, and the name its terminal was opened with
-/// (`who.N`, any terminal, agent or not). Said only when it changes. In a thread of
+/// «claude · ~/Proyectos/pleamar»—, and the names its shells were opened with
+/// (`who.N`, any terminal, agent or not; several, apart by spaces, for a
+/// terminal whose tabs are several named ones). Said only when it changes. In a thread of
 /// its own: a terminal slow to answer never holds the compositor.
 pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar::scene::ToRender>) {
     use pleamar::scene::{intern, ToRender};
@@ -1321,6 +1322,8 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
     let folder = std::path::Path::new(&windows).parent().map(|p| format!("{}/term", p.display())).unwrap_or_else(socket_dir);
     let sockets = std::path::Path::new(&windows).parent().map(|p| p.display().to_string()).unwrap_or_default();
     std::thread::spawn(move || {
+        // A shell knows from this that `who.N` may hold several names (a caravan in one terminal's tabs).
+        let _ = to_render.send(ToRender::ExternalFact(intern("who.tabs"), "1".into()));
         let home = std::env::var("HOME").unwrap_or_default();
         let mut said: std::collections::HashMap<usize, (u8, String)> = std::collections::HashMap::new();
         let mut named: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
@@ -1339,35 +1342,50 @@ pub fn watch_agents(windows: String, to_render: std::sync::mpsc::Sender<pleamar:
             let mut names: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
             let mut mailable: Vec<(String, usize, i32, bool)> = Vec::new();
             let mut running: std::collections::HashMap<String, (String, i32)> = std::collections::HashMap::new();
-            for (slot, pid) in &slots {
-                let mine: Vec<&(i32, std::collections::BTreeMap<String, String>)> = all.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(*pid)).collect();
-                if let Some(n) = mine.iter().find_map(|(_, i)| i.get("name").filter(|n| !n.is_empty())) {
-                    names.insert(*slot, n.clone());
-                }
-                // A terminal with several shells: the one with an agent, the busiest.
-                let Some((id, info)) = mine.iter().filter(|(_, i)| i.get("agent").is_some_and(|a| !a.is_empty())).min_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX)) else { continue };
-                let agent = info.get("agent").cloned().unwrap_or_default();
-                if let Some(n) = names.get(slot) {
-                    running.insert(n.clone(), (agent.clone(), *id));
-                }
-                let cwd = info.get("cwd").cloned().unwrap_or_default();
-                let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
+            // How an agent's shell is: 1 working, 2 ready, 3 waiting for the person.
+            let state_of = |id: i32, info: &std::collections::BTreeMap<String, String>| {
                 let hook = info.get("hook").map(String::as_str).unwrap_or("");
                 let working = if hook.is_empty() { info.get("state").map(String::as_str) == Some("working") } else { hook == "working" };
-                let state = if hook == "asking" {
-                    3
+                if hook == "asking" {
+                    3u8
                 } else if working {
                     1
                 } else if ask(&format!("{folder}/{id}.sock"), "read 40").is_ok_and(|s| question(&s).is_some()) {
                     3
                 } else {
                     2
-                };
-                now.insert(*slot, (state, format!("{agent} · {cwd}")));
-                if let Some(n) = names.get(slot) {
-                    // (Free as the messenger will see it: at rest too —an agent just started, still drawing, is not—.)
-                    mailable.push((n.clone(), *slot, *id, state == 2 && info.get("draft").map(String::as_str) != Some("1") && crate::link::at_rest(info)));
                 }
+            };
+            for (slot, pid) in &slots {
+                let mine: Vec<&(i32, std::collections::BTreeMap<String, String>)> = all.iter().filter(|(_, i)| i.get("terminal").and_then(|t| t.parse::<u32>().ok()) == Some(*pid)).collect();
+                // Its names: one per named shell. A terminal with tabs (Bitácora) may hold
+                // a whole caravan, each companion in its own: `who.N` says them all, apart
+                // by spaces, and each one's agent is up, gets its letters and keeps its
+                // journal by itself.
+                let mut here: Vec<String> = Vec::new();
+                for (id, info) in &mine {
+                    let Some(n) = info.get("name").filter(|n| !n.is_empty()) else { continue };
+                    if !here.contains(n) {
+                        here.push(n.clone());
+                    }
+                    let Some(agent) = info.get("agent").filter(|a| !a.is_empty()) else { continue };
+                    if running.contains_key(n) {
+                        continue;
+                    }
+                    running.insert(n.clone(), (agent.clone(), *id));
+                    // (Free as the messenger will see it: at rest too —an agent just started, still drawing, is not—.)
+                    let free = state_of(*id, info) == 2 && info.get("draft").map(String::as_str) != Some("1") && crate::link::at_rest(info);
+                    mailable.push((n.clone(), *slot, *id, free));
+                }
+                if !here.is_empty() {
+                    names.insert(*slot, here.join(" "));
+                }
+                // The window's own: of several shells, the one with an agent, the busiest.
+                let Some((id, info)) = mine.iter().filter(|(_, i)| i.get("agent").is_some_and(|a| !a.is_empty())).min_by_key(|(_, i)| i.get("quiet").and_then(|q| q.parse::<u64>().ok()).unwrap_or(u64::MAX)) else { continue };
+                let agent = info.get("agent").cloned().unwrap_or_default();
+                let cwd = info.get("cwd").cloned().unwrap_or_default();
+                let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
+                now.insert(*slot, (state_of(*id, info), format!("{agent} · {cwd}")));
             }
             // Their journal (journal.rs): an agent up, an agent gone; and Codex's conversation.
             if !slots.is_empty() {
