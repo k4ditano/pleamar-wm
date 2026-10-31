@@ -91,6 +91,11 @@ the open windows without closing anything.
   layer tells it (`name` in `term info`) and the scene has it as `who.N`, so a
   shell knows that window is that companion of yours wherever it goes. A named
   terminal is its namer's to bring back: the kept canvas leaves it out.
+- **Whose a window is**: a window that opens is told to the scene as `by.N`,
+  the name of the terminal it belongs to —one whose agent opened its program
+  with its hands (`agent open`), or one its process was started from (its
+  `PLEAMAR_NAME`)—, empty for yours. A shell can keep a companion's programs
+  out of sight with it (pleamar's `send win(k) aside`), as Calima does.
 - **A mailbox for each named terminal**: `pleamar-wm link post Prohard look at
   issue 38` leaves a letter for the agent in the terminal named so, and the
   session hands it over when that agent is free —at rest, asking nothing, its
