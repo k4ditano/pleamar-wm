@@ -104,7 +104,12 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   chat), and then it listens again. While it speaks it does not listen (its
   voice would be taken for yours): **Interrupt** cuts it, **Send now** sends
   your turn without waiting for the quiet, the microphone button mutes it, and
-  the screen stays on while the call lasts. A call's answer is not voiced
+  the screen stays on while the call lasts. **Speaker** (on unless turned off,
+  remembered on the phone): while a page holds the microphone, a phone takes it
+  for a phone call and plays it through the earpiece, quietly (Chrome on
+  Android); on speaker the microphone is let go from your turn sent to when it
+  listens again, so its answer plays through the loudspeaker as any media does.
+  Off, the microphone stays open, as on a call held to the ear. A call's answer is not voiced
   again afterwards; in the conversation its letters say «On a call».
 - **Answers in Markdown** are drawn as such: headings, lists (nested, and
   tasks), quotes, code blocks, rules and tables (with their alignment, sliding
