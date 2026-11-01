@@ -70,7 +70,9 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
 - **Answers said aloud.** With a speaker here —a program called
   `pleamar-speak` on the PATH, run as `pleamar-speak OUT.wav` with the text on
   its input: a script around any voice (Kokoro on the GPU, Piper…), so the
-  voice is the computer's, never a service the page picks— an answer can come
+  voice is the computer's, never a service the page picks; one that keeps a
+  server of its own (Kokoro's, `$XDG_RUNTIME_DIR/kokoro-voz.sock`, one JSON line
+  each way) is spoken to directly, with no program started per piece— an answer can come
   with its audio. Always the answer to a voice note (spoken to, it speaks
   back), and every answer of a companion whose **Spoken answers** is on (from
   then on: `voice.json` in the state folder, `{"do": "voice", "on": true}`).
@@ -83,7 +85,10 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   voice note plays by itself. Only answers of the last two hours are spoken.
   `link caravan speak NAME` does it from a shell and waits for it.
 - **A call.** With a speaker here, the phone in a conversation's head starts
-  a call: the companion big in the middle, its rings following your voice. The
+  a call: the companion big in the middle, its rings following your voice. As it
+  starts it wakes the computer's voice and ear (`{"do": "warm"}`: `pleamar-speak
+  --warm` and `pleamar-hear --warm` load their models), so neither your first
+  turn nor its first answer waits for one to load. The
   microphone stays open (with the browser's echo cancelling); the page hears
   when you talk —loud enough over the room's own quiet, which it follows while
   nobody talks— and after 1.3 s of quiet your turn goes as a voice note marked
@@ -93,7 +98,8 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   sentence once another follows it, a paragraph's last once something comes
   after it (a tool, another paragraph) — each piece voiced on the computer as
   it is asked (`{"do": "say", "name", "text"}`, which answers with the audio's
-  path, kept a day) and played in order. When the letter ends, what of the
+  path, kept a day) and played in order; the first sentence of a turn goes
+  alone, so it sounds as soon as it is made. When the letter ends, what of the
   answer was not said yet is (tables and code: that they are written in the
   chat), and then it listens again. While it speaks it does not listen (its
   voice would be taken for yours): **Interrupt** cuts it, **Send now** sends
@@ -115,8 +121,11 @@ remembered on that phone— and the first is a page of its own, `/caravan`:
   paths here for the agent («Attached (files on this computer)»). The
   microphone records a voice note (the browser's MediaRecorder: WebM/Opus, or
   MP4 on an iPhone); it goes up the same way and is **transcribed on this
-  computer** —ffmpeg to 16 kHz WAV, then `voxtype transcribe` or whisper.cpp's
-  `whisper-cli`, whichever is there; never a service elsewhere— and the letter
+  computer** —by `pleamar-hear AUDIO` if there is one (Parakeet kept loaded on
+  the GPU, its server at `$XDG_RUNTIME_DIR/parakeet-oido.sock`: 13.7 s of
+  speech in about 0.3 s), else ffmpeg to 16 kHz WAV, then `voxtype transcribe`
+  or whisper.cpp's `whisper-cli` (4 to 5 s, a model loaded each time),
+  whichever is there; never a service elsewhere— and the letter
   goes once it is, with the text and the audio's path (an agent cannot
   listen). Until it is there, the note shows as a bubble of yours whose bars
   breathe: «Sending the voice note…» while it goes up, then «Transcribing…»

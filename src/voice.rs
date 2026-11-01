@@ -5,6 +5,14 @@
 //! the companions the page asked it for (since then), and always for the answer
 //! to a voice note: spoken to, it speaks back. On a call ([`say`]) the page asks
 //! for what it says a few sentences at a time, as they are written.
+//!
+//! A speaker that keeps a server of its own is spoken to directly, without
+//! starting it once per piece: Kokoro's (`$XDG_RUNTIME_DIR/kokoro-voz.sock`,
+//! one JSON line each way: `{"text", "out", "voice"}`, or `{"warm": true}`).
+//! With no server there yet, the speaker is run, and it starts one. The same
+//! for what hears (`pleamar-hear`, Parakeet's `parakeet-oido.sock`: see
+//! caravan.rs). A call wakes both when it starts ([`warm`]), so its first
+//! answer does not wait for a model to load.
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -23,6 +31,40 @@ fn dir() -> PathBuf {
 
 fn prefs() -> PathBuf {
     PathBuf::from(format!("{}/voice.json", crate::keep::dir()))
+}
+
+/// The socket of a voice's server (a speaker's or a hearer's) in this user's runtime folder.
+pub(crate) fn server_socket(name: &str) -> PathBuf {
+    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into())).join(name)
+}
+
+/// One request to a voice's server: a JSON line there, a JSON line back. An
+/// `Err` that is not about its answer means there is no server (yet).
+pub(crate) fn ask_server(socket: &Path, req: &Value, wait: std::time::Duration) -> std::io::Result<Value> {
+    use std::io::{BufRead, Write};
+    let mut s = std::os::unix::net::UnixStream::connect(socket)?;
+    s.set_read_timeout(Some(wait))?;
+    s.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
+    s.write_all(format!("{req}\n").as_bytes())?;
+    let mut line = String::new();
+    std::io::BufReader::new(s).read_line(&mut line)?;
+    serde_json::from_str(&line).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+/// A call starts: the voice and the ear are woken (loaded, and kept a while) so
+/// that neither the first turn heard nor the first answer said waits for a model.
+pub(crate) fn warm() -> String {
+    for program in [SPEAKER, crate::caravan::HEARER] {
+        if std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(program).is_file())) {
+            // (Started, not waited for: `link caravan do` ends at once, and what it would wait for in a thread
+            // ended with it.)
+            // Waited for in a thread, so the page's server, which lives on, leaves no zombie behind.
+            if let Ok(mut child) = std::process::Command::new(program).arg("--warm").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+                std::thread::spawn(move || child.wait());
+            }
+        }
+    }
+    "warming".into()
 }
 
 /// Whether there is a speaker here (looked up on the PATH, without running anything).
@@ -170,6 +212,13 @@ fn speak(text: &str, out: &Path) -> Result<(), String> {
     use std::io::Write;
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     let wav = std::env::temp_dir().join(format!("pleamar-speak-{}-{}.wav", std::process::id(), crate::mail::now_ms()));
+    // Its server, if it is up: no program started for this piece.
+    let voice = std::env::var("KOKORO_VOICE").unwrap_or_else(|_| "ef_dora".into());
+    match ask_server(&server_socket("kokoro-voz.sock"), &json!({ "text": text, "out": wav, "voice": voice }), std::time::Duration::from_secs(120)) {
+        Ok(v) if v["ok"] == true && wav.exists() => return to_aac(&wav, out),
+        Ok(v) if v["error"].is_string() => return Err(v["error"].as_str().unwrap_or_default().to_owned()),
+        _ => {}
+    }
     let mut child = std::process::Command::new(SPEAKER)
         .arg(&wav)
         .stdin(std::process::Stdio::piped())
@@ -183,9 +232,14 @@ fn speak(text: &str, out: &Path) -> Result<(), String> {
         let _ = std::fs::remove_file(&wav);
         return Err(String::from_utf8_lossy(&said.stderr).trim().to_owned());
     }
+    to_aac(&wav, out)
+}
+
+/// The WAV a voice left, as AAC where it goes (the WAV, gone).
+fn to_aac(wav: &Path, out: &Path) -> Result<(), String> {
     let new = out.with_extension("new.m4a");
-    let made = std::process::Command::new("ffmpeg").args(["-loglevel", "error", "-y", "-i"]).arg(&wav).args(["-c:a", "aac", "-b:a", "48k"]).arg(&new).status();
-    let _ = std::fs::remove_file(&wav);
+    let made = std::process::Command::new("ffmpeg").args(["-loglevel", "error", "-y", "-i"]).arg(wav).args(["-c:a", "aac", "-b:a", "48k"]).arg(&new).status();
+    let _ = std::fs::remove_file(wav);
     if !made.is_ok_and(|s| s.success()) {
         let _ = std::fs::remove_file(&new);
         return Err("ffmpeg could not make it AAC".into());

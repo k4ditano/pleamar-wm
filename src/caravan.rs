@@ -583,6 +583,8 @@ pub(crate) fn act(body: &str) -> Result<String, String> {
         "voice" => crate::voice::set(&name, v["on"].as_bool().unwrap_or(false)),
         // On a call: what it says, said now; where its audio is.
         "say" => crate::voice::say(&name, &s("text")),
+        // A call starts: the voice and the ear, loaded now.
+        "warm" => Ok(crate::voice::warm()),
         "gate" => crate::gate::answer(&[s("id"), s("verdict"), "--by".to_owned(), "phone".to_owned()]),
         "answer" => crate::agents::act(&["answer".to_owned(), slot()?, num("n"), "--key".to_owned(), s("key")]),
         "stop" => crate::agents::act(&["stop".to_owned(), slot()?]),
@@ -743,11 +745,33 @@ pub(crate) fn heard() {
     }
 }
 
-/// A voice note as text: converted to what a transcriber takes (16 kHz mono
-/// WAV, with ffmpeg) and given to the first there is —voxtype, whisper.cpp's
-/// whisper-cli—, here, never to a service elsewhere. What it said, or why not.
+/// What hears here first: Parakeet kept loaded (`pleamar-hear`, its server
+/// `parakeet-oido.sock`), 13.7 s of speech in about 0.3 s against voxtype's 4 to 5.
+pub(crate) const HEARER: &str = "pleamar-hear";
+
+/// A voice note as text, here, never by a service elsewhere: by the hearer's
+/// server if it is up, or the hearer (which starts it); without one, converted
+/// to what a transcriber takes (16 kHz mono WAV, with ffmpeg) and given to the
+/// first there is —voxtype, whisper.cpp's whisper-cli—. What it said, or why not.
 fn transcribe(audio: &std::path::Path) -> Result<String, String> {
     let have = |cmd: &str| std::process::Command::new("sh").args(["-c", &format!("command -v {cmd}")]).output().is_ok_and(|o| o.status.success());
+    match crate::voice::ask_server(&crate::voice::server_socket("parakeet-oido.sock"), &json!({ "audio": audio }), std::time::Duration::from_secs(120)) {
+        Ok(v) if v["text"].as_str().is_some_and(|t| !t.trim().is_empty()) => return Ok(v["text"].as_str().unwrap_or_default().trim().to_owned()),
+        Ok(v) if v["error"].is_string() => return Err(v["error"].as_str().unwrap_or_default().to_owned()),
+        _ => {}
+    }
+    if have(HEARER) {
+        let out = std::process::Command::new(HEARER).arg(audio).stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if out.status.success() && !text.is_empty() {
+            return Ok(text);
+        }
+        // (Its error said, unless another transcriber can still hear it.)
+        if !have("voxtype") && !have("whisper-cli") {
+            let why = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+            return Err(if why.is_empty() { "it heard nothing".into() } else { why });
+        }
+    }
     let wav = std::env::temp_dir().join(format!("pleamar-voice-{}-{}.wav", std::process::id(), crate::mail::now_ms()));
     let made = std::process::Command::new("ffmpeg").args(["-loglevel", "error", "-y", "-i"]).arg(audio).args(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le"]).arg(&wav).status();
     if !made.is_ok_and(|s| s.success()) {

@@ -1339,6 +1339,8 @@
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
     catch (_) { ctx.close().catch(() => {}); toast(t('The microphone is not allowed for this page')); return; }
     if (!open) { stream.getTracks().forEach(tr => tr.stop()); ctx.close().catch(() => {}); return; }
+    // The computer's voice and ear, loaded now: neither your first turn nor its first answer waits for a model.
+    fetch('/caravan/do', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ do: 'warm' }) }).catch(() => {});
     const an = ctx.createAnalyser(); an.fftSize = 1024; ctx.createMediaStreamSource(stream).connect(an);
     call = { name: open, ctx, stream, an, buf: new Float32Array(an.fftSize), floor: null, phase: '', muted: false, at: Date.now(), queue: [], playing: null, turn: null, rec: null, you: '', them: '' };
     $('call').hidden = false; $('c-time').textContent = '0:00';
@@ -1476,6 +1478,9 @@
     const tr = call.turn, fresh = us.filter(u => !u.skip && !saidOnce(u.raw, tr.said));
     if (!fresh.length) return;
     fresh.forEach(u => tr.said.push(norm(u.raw)));
+    // The first sentence of a turn, alone: it sounds as soon as it is made, without waiting for the rest.
+    if (fresh.length > 1 && !tr.spoke) say(fresh.shift().raw);
+    tr.spoke = true;
     say(fresh.map(u => u.raw).join('\n'));
   }
   // What of an answer was not said yet: its sentences not said, and what is only to read (the computer says it is written).
