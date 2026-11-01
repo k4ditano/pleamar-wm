@@ -181,6 +181,8 @@ pub struct Layer {
     pub latest: Option<wgpu::Texture>,
     /// Where it takes the pointer, from its corner (its zones).
     pub region: Vec<[i32; 4]>,
+    /// Of those, the zones that yield (`yields:`): a widget on the desktop under them gets the press first.
+    pub yielding: Vec<[i32; 4]>,
     /// `captures: hidden`: on the monitor, not in the pictures taken of it.
     pub unshared: bool,
 }
@@ -279,7 +281,7 @@ pub fn level_rank(l: Level) -> u8 {
 pub fn layer(sheet: u32, k: usize, s: &Surface, monitor: (u32, u32), scale: f32) -> Layer {
     let main = s.name.is_empty();
     let (units, rect) = placed((s.width, s.height), s.anchor, s.margin, monitor, scale);
-    Layer { sheet, surface: k, origin: s.origin, rect, units, scale, level: s.level, main, anchor: s.anchor, margin: s.margin, latest: None, region: Vec::new(), unshared: s.hidden_from_captures }
+    Layer { sheet, surface: k, origin: s.origin, rect, units, scale, level: s.level, main, anchor: s.anchor, margin: s.margin, latest: None, region: Vec::new(), yielding: Vec::new(), unshared: s.hidden_from_captures }
 }
 
 /// Where a surface goes, laid out in units on a monitor of that many pixels:
@@ -351,7 +353,9 @@ pub fn pointer_at(st: &ScreenState, (x, y): (f64, f64)) -> Hit {
                     // could not be pressed even with nothing over it. Not the
                     // wallpaper's level: the desktop's own clicks stay the scene's.
                     let (lx, ly) = ((x - l.rect[0] as f64) / l.scale as f64, (y - l.rect[1] as f64) / l.scale as f64);
-                    let its_own = layers::window_at(&st.name, x, y) || l.region.iter().any(|b| lx >= b[0] as f64 && ly >= b[1] as f64 && lx < b[2] as f64 && ly < b[3] as f64);
+                    // (A zone that yields —`yields:`— is not: what is under it takes the press first.)
+                    let over = |b: &[i32; 4]| lx >= b[0] as f64 && ly >= b[1] as f64 && lx < b[2] as f64 && ly < b[3] as f64;
+                    let its_own = layers::window_at(&st.name, x, y) || l.region.iter().any(|b| over(b) && !l.yielding.contains(b));
                     if !its_own {
                         let under = stack[..i].iter().rev().find_map(|it| match it {
                             Item::Client(c) if st.clients[*c].level == 1 && st.clients[*c].takes(x, y) => Some(&st.clients[*c]),
@@ -484,6 +488,12 @@ impl PlatformWindow for LayerWindow {
         let mut st = self.screen.0.lock().unwrap();
         if let Some(l) = st.layers.iter_mut().find(|l| l.sheet == self.sheet) {
             l.region = boxes.to_vec();
+        }
+    }
+    fn update_yielding_region(&self, boxes: &[[i32; 4]]) {
+        let mut st = self.screen.0.lock().unwrap();
+        if let Some(l) = st.layers.iter_mut().find(|l| l.sheet == self.sheet) {
+            l.yielding = boxes.to_vec();
         }
     }
     fn cursor(&self, c: Cursor) {
