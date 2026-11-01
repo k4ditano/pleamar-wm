@@ -87,6 +87,12 @@ struct Monitor {
     /// whether a program's are on it now rather than its own.
     gamma: u32,
     tinted: bool,
+    /// Its controller's colour table as a property (`GAMMA_LUT`), where it has
+    /// one: set as a table on the card rather than through the old gamma call,
+    /// which NVIDIA's driver does not offer (pleamar-wm #37). And the table
+    /// set now, to be let go of when another replaces it (0: none).
+    lut: Option<smithay::reexports::drm::control::property::Handle>,
+    lut_blob: u32,
 }
 
 /// A monitor's buffers on the card: three, what each frame is put together
@@ -560,6 +566,25 @@ fn refresh_mhz(m: &Mode) -> i32 {
     (m.clock() as i64 * 1_000_000 / (h * v)) as i32
 }
 
+/// A blob on the card with these bytes (a colour table): its number. (The drm
+/// crate makes them only from a type of a size known beforehand.)
+fn card_blob(drm: &DrmDeviceFd, bytes: &[u8]) -> std::io::Result<u32> {
+    use std::os::fd::{AsFd, AsRawFd};
+    #[repr(C)]
+    struct CreateBlob {
+        data: u64,
+        length: u32,
+        blob_id: u32,
+    }
+    // _IOWR('d', 0xBD, struct drm_mode_create_blob)
+    const DRM_IOCTL_MODE_CREATEPROPBLOB: u64 = 0xC010_64BD;
+    let mut b = CreateBlob { data: bytes.as_ptr() as u64, length: bytes.len() as u32, blob_id: 0 };
+    if unsafe { libc::ioctl(drm.as_fd().as_raw_fd(), DRM_IOCTL_MODE_CREATEPROPBLOB as _, &mut b) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(b.blob_id)
+}
+
 /// A property of a connector or a controller by its name: its handle and value.
 fn property(drm: &DrmDeviceFd, object: impl smithay::reexports::drm::control::ResourceHandle, name: &str) -> Option<(smithay::reexports::drm::control::property::Handle, u64)> {
     let props = drm.get_properties(object).ok()?;
@@ -786,8 +811,16 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     if scale != 1.0 {
         println!("session · {name}: scale {scale}");
     }
-    let gamma = drm.get_crtc(crtc).map_or(0, |c| c.gamma_length());
-    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode), gamma, tinted: false }
+    // Its colour table: the controller's `GAMMA_LUT`, as the newer drivers have
+    // it (NVIDIA's only has that); if not, the old gamma ramps.
+    let (gamma, lut) = match (property(drm, crtc, "GAMMA_LUT"), property(drm, crtc, "GAMMA_LUT_SIZE")) {
+        (Some((h, _)), Some((_, n))) if n > 0 => (n as u32, Some(h)),
+        _ => (drm.get_crtc(crtc).map_or(0, |c| c.gamma_length()), None),
+    };
+    if gamma > 0 {
+        println!("session · {name}: colour ramps of {gamma} steps{}", if lut.is_some() { " (GAMMA_LUT)" } else { "" });
+    }
+    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode), gamma, tinted: false, lut, lut_blob: 0 }
 }
 
 /// Ramps of `n` steps that leave every colour as it is: red, green and blue.
@@ -1082,7 +1115,7 @@ impl State {
             let screen = crate::phone::make(w.size, &self.to_render);
             let scale = w.scale.clamp(0.5, 4.0);
             println!("session · a monitor for the phone: {}×{} at scale {scale}", w.size.0, w.size.1);
-            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ, gamma: 0, tinted: false });
+            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ, gamma: 0, tinted: false, lut: None, lut_blob: 0 });
         }
         self.monitors_changed();
     }
@@ -1721,10 +1754,39 @@ impl State {
             return;
         }
         let tinted = ramps.as_ref().is_some_and(|r| r.len() == 3 * n);
-        let ramps = ramps.filter(|r| r.len() == 3 * n).unwrap_or_else(|| straight_ramps(n));
-        if let Err(e) = self.drm.set_gamma(crtc, &ramps[..n], &ramps[n..2 * n], &ramps[2 * n..]) {
-            eprintln!("session · {}: its colour ramps could not be set: {e}", m.name);
-            return;
+        if let Some(prop) = m.lut {
+            // A table of red, green, blue and a spare, sixteen bits each; with none
+            // (0), the card's straight one.
+            let blob = match ramps.filter(|r| r.len() == 3 * n) {
+                Some(r) => {
+                    let table: Vec<u8> = (0..n).flat_map(|i| [r[i], r[n + i], r[2 * n + i], 0]).flat_map(u16::to_ne_bytes).collect();
+                    match card_blob(&self.drm, &table) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("session · {}: its colour table could not be made: {e}", m.name);
+                            return;
+                        }
+                    }
+                }
+                None => 0,
+            };
+            if let Err(e) = self.drm.set_property(crtc, prop, blob as u64) {
+                eprintln!("session · {}: its colour ramps could not be set: {e}", m.name);
+                if blob != 0 {
+                    let _ = self.drm.destroy_property_blob(blob as u64);
+                }
+                return;
+            }
+            if m.lut_blob != 0 {
+                let _ = self.drm.destroy_property_blob(m.lut_blob as u64);
+            }
+            m.lut_blob = blob;
+        } else {
+            let ramps = ramps.filter(|r| r.len() == 3 * n).unwrap_or_else(|| straight_ramps(n));
+            if let Err(e) = self.drm.set_gamma(crtc, &ramps[..n], &ramps[n..2 * n], &ramps[2 * n..]) {
+                eprintln!("session · {}: its colour ramps could not be set: {e}", m.name);
+                return;
+            }
         }
         if tinted != m.tinted {
             m.tinted = tinted;
@@ -2158,7 +2220,7 @@ mod tests {
     fn monitor(name: &str, crtc: u32, on: bool, x: i32) -> Monitor {
         let crtc = smithay::reexports::drm::control::crtc::Handle::from(std::num::NonZeroU32::new(crtc).unwrap());
         let screen = crate::screen::screen(name.into(), (1920, 1080), Box::new(Nowhere));
-        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000, gamma: 0, tinted: false }
+        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000, gamma: 0, tinted: false, lut: None, lut_blob: 0 }
     }
 
     /// The right one dark, then moved left of the other: once re-sorted, the
