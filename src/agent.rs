@@ -63,11 +63,11 @@ use pleamar::scene::{NestEvent, ToNest, ToRender};
 use smithay::backend::input::{Axis, AxisSource, ButtonState, KeyState};
 use smithay::input::keyboard::{xkb, FilterResult, KeyboardHandle, XkbConfig};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerHandle};
-use smithay::input::Seat;
+use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, LoopHandle, Mode, PostAction};
 use smithay::reexports::wayland_server::protocol::{wl_keyboard, wl_pointer, wl_surface::WlSurface};
-use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::{DisplayHandle, Resource};
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
@@ -415,9 +415,31 @@ pub fn socket_path(display: &str) -> String {
     crate::agent_socket_path(display)
 }
 
-/// The agent's seats and its socket, if session.conf says `agent on`.
-pub fn start(state: &mut State) {
+/// The agent's hands, one seat per cursor, if session.conf says `agent on`.
+/// Made before the user's seat: GTK 3 takes the last seat announced for its
+/// pointer, and a drag (a Firefox tab) only starts from where that one is.
+pub type Hands = Vec<(Seat<State>, PointerHandle<State>, KeyboardHandle<State>)>;
+
+pub fn seats(all: &mut SeatState<State>, dh: &DisplayHandle) -> Hands {
     if !crate::config::get().agent {
+        return Vec::new();
+    }
+    let mut seats = Vec::new();
+    for k in 0..CURSORS {
+        let name = if k == 0 { "cua-agent".to_owned() } else { format!("cua-agent-{}", k + 1) };
+        let mut seat = all.new_wl_seat(dh, name);
+        // A plain US keyboard: what it types is what was asked, whatever yours is.
+        let us = XkbConfig { layout: "us", ..Default::default() };
+        let Ok(keyboard) = seat.add_keyboard(us, 600, 25) else { continue };
+        let pointer = seat.add_pointer();
+        seats.push((seat, pointer, keyboard));
+    }
+    seats
+}
+
+/// The agent's socket, for the seats `seats` made.
+pub fn start(state: &mut State, seats: Hands) {
+    if seats.is_empty() {
         return;
     }
     let path = socket_path(&state.socket);
@@ -435,16 +457,6 @@ pub fn start(state: &mut State) {
     // Yours only.
     let _ = std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600));
     let _ = listener.set_nonblocking(true);
-    let mut seats = Vec::new();
-    for k in 0..CURSORS {
-        let name = if k == 0 { "cua-agent".to_owned() } else { format!("cua-agent-{}", k + 1) };
-        let mut seat = state.seats.new_wl_seat(&state.dh, name);
-        // A plain US keyboard: what it types is what was asked, whatever yours is.
-        let us = XkbConfig { layout: "us", ..Default::default() };
-        let Ok(keyboard) = seat.add_keyboard(us, 600, 25) else { continue };
-        let pointer = seat.add_pointer();
-        seats.push((seat, pointer, keyboard));
-    }
     let source = Generic::new(listener, Interest::READ, Mode::Level);
     let inserted = state.handle.insert_source(source, |_, listener, state: &mut State| {
         while let Ok((stream, _)) = listener.accept() {
