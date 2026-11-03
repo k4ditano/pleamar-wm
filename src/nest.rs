@@ -744,7 +744,6 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
     // What is behind a program's surface, blurred where it asks (Marea's glass).
     dh.create_global::<State, ExtBackgroundEffectManagerV1, _>(1, ());
     let mut seats = SeatState::new();
-    let hands = agent::seats(&mut seats, &dh);
     let mut seat = seats.new_wl_seat(&dh, "pleamar");
     // The keyboard as the user has it: the layout pleamar's own window was
     // given. If there is none yet, the system's default until it arrives.
@@ -929,7 +928,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         let _ = std::fs::create_dir_all(dir);
         crate::output::serve(&dir.display().to_string());
     }
-    agent::start(&mut state, hands);
+    agent::start(&mut state);
     crate::a11y::start(&state.socket);
     state.start_xwayland();
     state.export_environment();
