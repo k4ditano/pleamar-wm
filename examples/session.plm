@@ -99,6 +99,9 @@ scene Session {
     // Super held (the compositor says): then a window is carried from
     // anywhere on it, tiled or free, even to the other monitor.
     fact keys.super = 0
+    // Caps Lock and Num Lock (the compositor says), for a shell to show.
+    fact keys.caps = 0
+    fact keys.num = 0
     fact pointer.panel = 0                // the pointer is on a program's surface (Marea's box, a bar), not on what is under it
     fact grab.x = 0                      // where it was taken from, from its corner
     fact grab.y = 0
