@@ -381,13 +381,70 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
             headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_owned());
         }
     }
-    if method == "POST" && path.starts_with("/upload?") {
+    if (method == "POST" && path.starts_with("/upload?")) || path.starts_with("/caravana/") {
         return Ok(Request { method, path, headers, body: Vec::new(), rest: Some(reader) });
     }
     let length: usize = headers.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0).min(16 * 1024);
     let mut body = vec![0; length];
     reader.read_exact(&mut body).map_err(|e| e.to_string())?;
     Ok(Request { method, path, headers, body, rest: None })
+}
+
+/// Where Caravana's phone page listens on this computer: 8766, or the `port`
+/// of its settings (`$XDG_CONFIG_HOME/caravana/phone.json`).
+fn caravana_port() -> u16 {
+    let base = std::env::var("XDG_CONFIG_HOME").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+    std::fs::read_to_string(format!("{base}/caravana/phone.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["port"].as_u64())
+        .and_then(|p| u16::try_from(p).ok())
+        .unwrap_or(8766)
+}
+
+fn caravana_answers(port: u16) -> bool {
+    TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300)).is_ok()
+}
+
+/// A request under `/caravana/` to Caravana's page, without that part of the
+/// path, and its answer back as it comes (its live events stay open while the
+/// page is). This desktop's own sign-in is not passed on.
+fn pass_to_caravana(port: u16, mut req: Request, mut stream: TcpStream) -> Result<(), String> {
+    let plain = "text/plain; charset=utf-8";
+    if req.headers.contains_key("transfer-encoding") {
+        return respond(&mut stream, "411 Length Required", plain, "", b"a length, please");
+    }
+    let mut up = match TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_secs(2)) {
+        Ok(up) => up,
+        Err(_) => return respond(&mut stream, "502 Bad Gateway", plain, "", "Caravana is not running on this computer (caravana phone).".as_bytes()),
+    };
+    let path = &req.path["/caravana".len()..];
+    let mut head = format!("{} {path} HTTP/1.1\r\n", req.method);
+    for (k, v) in &req.headers {
+        if matches!(k.as_str(), "connection" | "keep-alive" | "proxy-connection" | "upgrade" | "te") {
+            continue;
+        }
+        if k == "cookie" {
+            let theirs: Vec<&str> = v.split(';').map(str::trim).filter(|c| !c.is_empty() && !c.starts_with("pleamar_remote=")).collect();
+            if !theirs.is_empty() {
+                head.push_str(&format!("cookie: {}\r\n", theirs.join("; ")));
+            }
+            continue;
+        }
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("connection: close\r\n\r\n");
+    up.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
+    let length: u64 = req.headers.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    if length > 0 {
+        let Some(rest) = req.rest.take() else { return Err("no body".into()) };
+        let sent = std::io::copy(&mut rest.take(length), &mut up).map_err(|e| e.to_string())?;
+        if sent < length {
+            return Err("the body came short".into());
+        }
+    }
+    std::io::copy(&mut up, &mut stream).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn respond(stream: &mut TcpStream, status: &str, kind: &str, extra: &str, body: &[u8]) -> Result<(), String> {
@@ -535,6 +592,9 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
     let token = cookie(&req);
     let signed_in = token.as_deref().is_some_and(|t| gate.lock().unwrap().valid(t));
     let html = "text/html; charset=utf-8";
+    if req.path.starts_with("/caravana/") {
+        return pass_to_caravana(caravana_port(), req, stream);
+    }
     match (req.method.as_str(), req.path.split('?').next().unwrap_or("/")) {
         ("GET", "/") => {
             // Back at the door after a while unused: why.
@@ -572,12 +632,20 @@ fn connection(mut stream: TcpStream, gate: &Arc<Mutex<Gate>>, hands: &Arc<Mutex<
             }
             respond(&mut stream, "303 See Other", html, "Set-Cookie: pleamar_remote=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0\r\nLocation: /\r\n", b"")
         }
+        // Caravana, the app (`caravana phone`): its page for a phone, here at the
+        // same address as this desktop —no second door to open—. It keeps its own
+        // key (a paired phone), so what comes is passed on as it comes.
+        ("GET", "/caravana") => respond(&mut stream, "303 See Other", html, "Location: /caravana/\r\n", b""),
         // The caravan: the session's agents on a page of their own, without the
         // desktop's picture —what a phone wants most of the time—. Small JSON,
-        // asked for every few seconds while the page is in sight.
+        // asked for every few seconds while the page is in sight. With Caravana
+        // running here, its page instead: the companions are its.
         ("GET", "/caravan") => {
             if !signed_in {
                 return respond(&mut stream, "303 See Other", html, "Location: /\r\n", b"");
+            }
+            if caravana_answers(caravana_port()) {
+                return respond(&mut stream, "303 See Other", html, "Location: /caravana/\r\n", b"");
             }
             respond(&mut stream, "200 OK", html, "", caravan_page(view_only).as_bytes())
         }
@@ -2902,5 +2970,72 @@ mod relay_tests {
         assert_eq!(relay_of("213.194.159.80"), None);
         assert_eq!(relay_of("192.168.3.56"), None);
         assert_eq!(relay_of("not an address"), None);
+    }
+}
+
+#[cfg(test)]
+mod caravana_tests {
+    use super::*;
+
+    /// What the remote passes on and what comes back: the path without
+    /// `/caravana`, the body whole, Caravana's cookie but not the remote's.
+    #[test]
+    fn passes_a_request_to_caravana_and_its_answer_back() {
+        let caravana = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = caravana.local_addr().unwrap().port();
+        let got = std::thread::spawn(move || {
+            let (mut s, _) = caravana.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !String::from_utf8_lossy(&seen).contains("abcdef") {
+                let n = s.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").unwrap();
+            String::from_utf8_lossy(&seen).into_owned()
+        });
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = front.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(at).unwrap();
+            c.write_all(b"POST /caravana/api/send?id=x HTTP/1.1\r\nHost: here\r\nCookie: pleamar_remote=SECRET; cvp=KEY\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nabcdef").unwrap();
+            let mut answer = String::new();
+            c.read_to_string(&mut answer).unwrap();
+            answer
+        });
+        let (mut s, _) = front.accept().unwrap();
+        let req = read_request(&mut s).unwrap();
+        pass_to_caravana(port, req, s).unwrap();
+        let seen = got.join().unwrap();
+        assert!(seen.starts_with("POST /api/send?id=x HTTP/1.1\r\n"), "{seen}");
+        assert!(seen.contains("cookie: cvp=KEY\r\n"), "{seen}");
+        assert!(!seen.contains("SECRET"), "{seen}");
+        assert!(!seen.contains("keep-alive"), "{seen}");
+        assert!(seen.ends_with("\r\n\r\nabcdef"), "{seen}");
+        assert!(client.join().unwrap().ends_with("\r\n\r\nok"));
+    }
+
+    #[test]
+    fn says_so_when_caravana_is_not_running() {
+        let gone = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = gone.local_addr().unwrap().port();
+        drop(gone);
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = front.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(at).unwrap();
+            c.write_all(b"GET /caravana/ HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
+            let mut answer = String::new();
+            c.read_to_string(&mut answer).unwrap();
+            answer
+        });
+        let (mut s, _) = front.accept().unwrap();
+        let req = read_request(&mut s).unwrap();
+        pass_to_caravana(port, req, s).unwrap();
+        assert!(client.join().unwrap().starts_with("HTTP/1.1 502"));
+        assert!(!caravana_answers(port));
     }
 }
