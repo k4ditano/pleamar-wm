@@ -353,7 +353,7 @@ pub(crate) async fn all<'a, T: 'a>(ex: &async_executor::LocalExecutor<'a>, futur
 
 /// Roles whose text is what they say.
 fn texty(role: &str) -> bool {
-    matches!(role, "text" | "entry" | "paragraph" | "heading" | "label" | "static" | "caption" | "document_text" | "terminal" | "editbar" | "list_item" | "table_cell" | "link")
+    matches!(role, "text" | "entry" | "combo_box" | "paragraph" | "heading" | "label" | "static" | "caption" | "document_text" | "terminal" | "editbar" | "list_item" | "table_cell" | "link")
 }
 
 /// A window's tree, as `A` answers: `nodes V` and its records, `|` between
