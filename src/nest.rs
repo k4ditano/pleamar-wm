@@ -2159,6 +2159,28 @@ impl State {
         self.write_desktop();
     }
 
+    /// A picture the card wrote into the program's buffer on the card: told it is ready.
+    fn hand_picture_on_card(&mut self, id: u64, ok: bool) {
+        let Some(p) = self.pictures.remove(&id) else { return };
+        if p.pointer {
+            layers::unwait_pointer(id);
+        }
+        if !ok {
+            p.frame.failed();
+            return;
+        }
+        let (w, h) = (p.piece[2] as u32, p.piece[3] as u32);
+        p.frame.flags(copy_frame::Flags::empty());
+        if p.damage && p.frame.version() >= 2 {
+            p.frame.damage(0, 0, w, h);
+        }
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: a valid timespec for the call to fill.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        let secs = ts.tv_sec as u64;
+        p.frame.ready((secs >> 32) as u32, secs as u32, ts.tv_nsec as u32);
+    }
+
     /// A picture taken: into the program's memory, and told it is ready.
     fn hand_picture(&mut self, id: u64, pixels: Option<Vec<u8>>) {
         // One the portal asked for (sharing the screen): its, not a program's.
@@ -2326,6 +2348,7 @@ impl State {
             ToLayers::Released(numbers) => self.release(numbers),
             ToLayers::Monitors => self.monitors_changed(),
             ToLayers::Captured { id, pixels } => self.hand_picture(id, pixels),
+            ToLayers::CapturedOnCard { id, ok } => self.hand_picture_on_card(id, ok),
             ToLayers::Relative { dx, dy, ux, uy, utime } => {
                 // A hold its program let go of (it unlocked): the pointer is free again.
                 if let Some(s) = self.constrained.clone() {
@@ -4569,6 +4592,13 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
         }
         frame.buffer(wl_shm::Format::Xrgb8888, piece[2] as u32, piece[3] as u32, piece[2] as u32 * 4);
         if frame.version() >= 3 {
+            // Also onto the card, if it can: a glass that bends what is behind it asks for this
+            // many times a second, and through memory every picture is read back, copied and read
+            // again. Not with the pointer in it, nor while a private window is shown on that monitor
+            // (both are drawn onto the pixels, by the processor).
+            if state.dmabuf_global.is_some() && !pointer && layers::private_on(&state.outputs[monitor].name()).is_empty() {
+                frame.linux_dmabuf(pleamar::dmabuf::XRGB, piece[2] as u32, piece[3] as u32);
+            }
             frame.buffer_done();
         }
         state.pictures.insert(id, Picture { frame, monitor, piece, buffer: None, damage: false, pointer });
@@ -4589,13 +4619,28 @@ impl Dispatch<ZwlrScreencopyFrameV1, u64> for State {
             _ => return,
         };
         let owner = buffer.client().map_or(0, |c| owner_hash(&c.id()));
+        let dmabuf = get_dmabuf(&buffer).ok();
+        let right_size = dmabuf.map(|d| (d.width() as i32, d.height() as i32));
+        let on_card = dmabuf.and_then(|d| dmabuf_piece(0, d));
         let Some(p) = state.pictures.get_mut(id) else { return };
+        let private = layers::private_on(&state.outputs[p.monitor].name());
+        if on_card.is_some() && (p.pointer || !private.is_empty() || right_size != Some((p.piece[2], p.piece[3]))) {
+            // Not onto the card any more (a private window appeared since it was offered): the
+            // program asks again, in memory.
+            let frame = p.frame.clone();
+            state.pictures.remove(id);
+            frame.failed();
+            return;
+        }
         p.buffer = Some(buffer);
         p.damage = damage;
         if crate::screen::capture_debug() {
             eprintln!("capture · {:.1} asked (damage {damage})", crate::screen::wall_ms());
         }
-        layers::capture(p.monitor, *id, p.piece, damage, owner);
+        match on_card {
+            Some(card) => layers::capture_card(p.monitor, *id, p.piece, damage, owner, card),
+            None => layers::capture(p.monitor, *id, p.piece, damage, owner),
+        }
         // Waiting for a change with the pointer in it: its moving is one.
         if damage && p.pointer {
             layers::wait_pointer(*id);

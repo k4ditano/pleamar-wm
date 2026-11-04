@@ -62,6 +62,9 @@ pub enum ToLayers {
     /// A picture a program asked for (wlr-screencopy): its pixels, BGRA,
     /// row after row with no padding; none if it could not be taken.
     Captured { id: u64, pixels: Option<Vec<u8>> },
+    /// The same picture, written by the card straight into the program's buffer on the card
+    /// (linux-dmabuf): whether it was.
+    CapturedOnCard { id: u64, ok: bool },
     /// The mouse moved, as it moved (a game that locked the pointer reads
     /// this): accelerated and not, and when, in µs.
     Relative { dx: f64, dy: f64, ux: f64, uy: f64, utime: u64 },
@@ -975,8 +978,26 @@ pub fn read_clients(monitor: usize, ids: Vec<u64>, to: std::sync::mpsc::Sender<V
     cv.notify_all();
 }
 
+/// Where the pictures that go onto the card are to be written, by picture.
+static CARD_TARGETS: Mutex<Vec<(u64, pleamar::scene::DmabufPiece)>> = Mutex::new(Vec::new());
+
+/// The same, into the program's buffer on the card (`target`): nothing is read
+/// back, and the program's memory is not touched by the processor.
+pub fn capture_card(monitor: usize, id: u64, piece: [i32; 4], on_change: bool, owner: u64, target: pleamar::scene::DmabufPiece) {
+    CARD_TARGETS.lock().unwrap().push((id, target));
+    capture(monitor, id, piece, on_change, owner);
+}
+
+/// Where picture `id` goes, if it goes onto the card.
+pub fn take_card_target(id: u64) -> Option<pleamar::scene::DmabufPiece> {
+    let mut all = CARD_TARGETS.lock().unwrap();
+    let k = all.iter().position(|t| t.0 == id)?;
+    Some(all.remove(k).1)
+}
+
 /// A picture no longer wanted: its program let it go before it was taken.
 pub fn uncapture(id: u64) {
+    CARD_TARGETS.lock().unwrap().retain(|t| t.0 != id);
     unwait_pointer(id);
     for (_, sc) in MONITORS.lock().unwrap().iter() {
         sc.0.lock().unwrap().captures.retain(|c| c.0 != id);
