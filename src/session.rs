@@ -238,6 +238,10 @@ struct State {
     drm: DrmDeviceFd,
     monitors: Vec<Monitor>,
     libinput: Libinput,
+    /// The keyboards plugged in, to light their Caps Lock, Num Lock and Scroll
+    /// Lock as the keys are locked (#43); and what they were last told.
+    keyboards: Vec<smithay::reexports::input::Device>,
+    leds: smithay::reexports::input::Led,
     to_render: Sender<ToRender>,
     keymap: xkb::State,
     pointer: (f64, f64),
@@ -412,7 +416,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     layers::set_card(drm.clone());
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
-    let mut state = State { mover, session, drm, monitors, libinput, to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
+    let mut state = State { mover, session, drm, monitors, libinput, keyboards: Vec::new(), leds: smithay::reexports::input::Led::empty(), to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
     // The cursor the scene and the programs ask for, whenever it changes.
     let (cursor_tx, cursor_rx) = smithay::reexports::calloop::channel::channel::<(bool, Cursor)>();
@@ -1601,7 +1605,17 @@ impl State {
                 let (dx, dy) = (p.x + x0 as f64 - self.pointer.0, p.y + y0 as f64 - self.pointer.1);
                 self.move_pointer(dx, dy);
             }
-            InputEvent::DeviceAdded { mut device } => set_up_device(&mut device),
+            InputEvent::DeviceAdded { mut device } => {
+                set_up_device(&mut device);
+                if device.has_capability(smithay::reexports::input::DeviceCapability::Keyboard) {
+                    // A keyboard plugged in (or back after the screen was away)
+                    // shows the locks as they are.
+                    device.led_update(self.leds);
+                    self.keyboards.retain(|k| *k != device);
+                    self.keyboards.push(device);
+                }
+            }
+            InputEvent::DeviceRemoved { device } => self.keyboards.retain(|k| *k != device),
             InputEvent::PointerButton { event } => {
                 let down = event.state() == ButtonState::Pressed;
                 let screens = self.screens();
@@ -1687,6 +1701,18 @@ impl State {
         }
     }
 
+    /// Every keyboard's lock lights as the keymap has them: one state for all
+    /// the keyboards, so Caps Lock pressed on one lights it on the others too.
+    fn light_locks(&mut self) {
+        let leds = lit_locks(&self.keymap);
+        if leds != self.leds {
+            self.leds = leds;
+            for k in &mut self.keyboards {
+                k.led_update(leds);
+            }
+        }
+    }
+
     fn key(&mut self, code: xkb::Keycode, down: bool) {
         let sym = self.keymap.key_get_one_sym(code);
         let name = xkb::keysym_get_name(sym);
@@ -1696,6 +1722,7 @@ impl State {
         self.keymap.update_key(code, if down { xkb::KeyDirection::Down } else { xkb::KeyDirection::Up });
         let locked = |s: &xkb::State, m: &str| s.mod_name_is_active(m, xkb::STATE_MODS_LOCKED);
         self.route.locks(locked(&self.keymap, xkb::MOD_NAME_CAPS), locked(&self.keymap, xkb::MOD_NAME_NUM));
+        self.light_locks();
         let evdev = code.raw().saturating_sub(8);
         if down {
             // The way out, whatever the scene is doing.
@@ -1883,6 +1910,18 @@ fn person_seen() {
 /// A mouse or a touchpad as the configuration says: its acceleration and
 /// speed, and on a touchpad, tapping, natural scrolling and ignoring it while
 /// typing.
+/// The lock lights a keymap's state has on.
+fn lit_locks(st: &xkb::State) -> smithay::reexports::input::Led {
+    use smithay::reexports::input::Led;
+    let mut leds = Led::empty();
+    for (name, led) in [(xkb::LED_NAME_CAPS, Led::CAPSLOCK), (xkb::LED_NAME_NUM, Led::NUMLOCK), (xkb::LED_NAME_SCROLL, Led::SCROLLLOCK)] {
+        if st.led_name_is_active(name) {
+            leds |= led;
+        }
+    }
+    leds
+}
+
 fn set_up_device(device: &mut smithay::reexports::input::Device) {
     use smithay::reexports::input::{AccelProfile, DeviceCapability};
     if !device.has_capability(DeviceCapability::Pointer) {
@@ -2237,5 +2276,28 @@ mod tests {
         assert!(!crate::layers::powered(0));
         assert!(crate::layers::powered(1));
         ASKED_AT.lock().unwrap().retain(|(n, _)| !n.starts_with("TEST-POW"));
+    }
+
+    /// Caps Lock and Num Lock light their keyboard's LED from the keymap's own
+    /// indicators, on when locked and off when pressed again (#43).
+    #[test]
+    fn the_locks_light_their_leds() {
+        use smithay::reexports::input::Led;
+        use xkbcommon::xkb;
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let map = xkb::Keymap::new_from_names(&ctx, "evdev", "pc105", "us", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS).expect("the us keymap");
+        let mut st = xkb::State::new(&map);
+        let lit = |st: &xkb::State| super::lit_locks(st);
+        let tap = |st: &mut xkb::State, code: u32| {
+            st.update_key(code.into(), xkb::KeyDirection::Down);
+            st.update_key(code.into(), xkb::KeyDirection::Up);
+        };
+        assert_eq!(lit(&st), Led::empty());
+        tap(&mut st, 66); // Caps Lock
+        assert_eq!(lit(&st), Led::CAPSLOCK);
+        tap(&mut st, 77); // Num Lock
+        assert_eq!(lit(&st), Led::CAPSLOCK | Led::NUMLOCK);
+        tap(&mut st, 66);
+        assert_eq!(lit(&st), Led::NUMLOCK);
     }
 }
