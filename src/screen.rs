@@ -699,7 +699,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
     let debug = std::env::var_os("PLEAMAR_DEBUG_SCREEN").is_some();
     let (lock, cv) = &*screen;
     loop {
-        let (quads, blurs, size, modifiers, fresh, anew, arrived, forget, shows, drew_clients, surfaces, changed, captures, unshared, reads) = {
+        let (quads, blurs, size, modifiers, fresh, anew, arrived, forget, shows, drew_clients, surfaces, changed, captures, unshared, reads, owners) = {
             let mut st = lock.lock().unwrap();
             while !st.quit && !(st.dirty && st.idle && !st.paused) {
                 st = cv.wait_timeout(st, Duration::from_millis(500)).unwrap().0;
@@ -714,6 +714,9 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             let mut quads: Vec<(Source, [i32; 4], bool)> = Vec::new();
             // The quads left out of the pictures taken of the monitor.
             let mut unshared: Vec<usize> = Vec::new();
+            // Whose each quad is (0: the scene's own): a program's picture
+            // leaves out what is stacked above its own surfaces.
+            let mut owners: Vec<u64> = Vec::new();
             // Before which quad what is behind gets blurred, and where (a program's glass).
             let mut blurs: Vec<Glass> = Vec::new();
             let mut arrived: Vec<(u64, Option<u64>, (u32, u32), PieceContent)> = Vec::new();
@@ -728,6 +731,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                                 unshared.push(quads.len());
                             }
                             quads.push((Source::Texture(t.clone()), l.rect, false));
+                            owners.push(0);
                         }
                     }
                     Item::Client(k) => {
@@ -744,6 +748,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                                 None => Source::Pixels(p.key),
                             };
                             quads.push((source, r, p.opaque));
+                            owners.push(c.owner);
                         }
                     }
                 }
@@ -815,7 +820,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                     (asked.collect(), to)
                 })
                 .collect();
-            (quads, blurs, st.size, st.modifiers.clone(), std::mem::take(&mut st.fresh), anew, arrived, std::mem::take(&mut st.forget), shows, drew_clients, surfaces, changed, due, unshared, reads)
+            (quads, blurs, st.size, st.modifiers.clone(), std::mem::take(&mut st.fresh), anew, arrived, std::mem::take(&mut st.forget), shows, drew_clients, surfaces, changed, due, unshared, reads, owners)
         };
         part(0, &mut parts);
         for b in &forget {
@@ -1042,9 +1047,10 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             done.wait(&device, Duration::from_secs(1));
             eprintln!("capture ·   the putting together took the card {:.1} ms more", t.elapsed().as_secs_f64() * 1000.0);
         }
-        for (id, piece, _, _) in &captures {
+        for (id, piece, _, owner) in &captures {
             let t = std::time::Instant::now();
-            let drawn = Drawn { pipeline: &pipeline, groups: &groups, unshared: &unshared, bound: &bound, rects: &quads.iter().map(|q| (q.1, q.2)).collect::<Vec<_>>(), blurs: &blurs, smooth: &smooth };
+            let upto = below_owner(&owners, *owner);
+            let drawn = Drawn { pipeline: &pipeline, groups: &groups, upto, unshared: &unshared, bound: &bound, rects: &quads.iter().map(|q| (q.1, q.2)).collect::<Vec<_>>(), blurs: &blurs, smooth: &smooth };
             capture(&device, &queue, &drawn, &mut frost, size, *piece, Some(&target), &mut readback, *id);
             if capture_debug() {
                 eprintln!("capture · {:.1} picture asked of the card in {:.1} ms", wall_ms(), t.elapsed().as_secs_f64() * 1000.0);
@@ -1155,6 +1161,9 @@ struct Glass {
 struct Drawn<'a> {
     pipeline: &'a wgpu::RenderPipeline,
     groups: &'a [Option<usize>],
+    /// Only the quads before this one are in the picture: what is stacked
+    /// above the surfaces of the program that asked is not (`below_owner`).
+    upto: usize,
     unshared: &'a [usize],
     bound: &'a [Bound],
     rects: &'a [([i32; 4], bool)],
@@ -1353,6 +1362,20 @@ fn bind(device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayo
     })
 }
 
+/// How many of the quads, from the bottom, a picture for `owner` has: up to
+/// and with its own topmost surface, and none above it. A glass asks for
+/// what is under its own surface and works the background out as «picture =
+/// its own + (1 - its alpha) · background»: another program's surface on top
+/// of it (a Vitreus add-on's panel over the shell's glass) would be taken for
+/// background, and bent and magnified under itself. A program with nothing on
+/// this monitor (grim, a recorder) gets all of it.
+fn below_owner(owners: &[u64], owner: u64) -> usize {
+    if owner == 0 {
+        return owners.len();
+    }
+    owners.iter().rposition(|o| *o == owner).map_or(owners.len(), |k| k + 1)
+}
+
 /// A piece of the monitor as it has just been put together (what the
 /// programs and the scene show; not the cursor, which is on its own plane),
 /// read back: BGRA, rows with no padding. Copied straight from what was put
@@ -1374,7 +1397,7 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
     }
     let t_made = std::time::Instant::now();
     let mut encoder = device.create_command_encoder(&Default::default());
-    let direct = target.filter(|t| unshared.is_empty() && t.usage().contains(wgpu::TextureUsages::COPY_SRC) && t.size().width == size.0 && t.size().height == size.1);
+    let direct = target.filter(|t| unshared.is_empty() && d.upto >= groups.len() && t.usage().contains(wgpu::TextureUsages::COPY_SRC) && t.size().width == size.0 && t.size().height == size.1);
     let source = match direct {
         Some(t) => t.clone(),
         None => {
@@ -1396,7 +1419,7 @@ fn capture(device: &wgpu::Device, queue: &wgpu::Queue, d: &Drawn, frost: &mut Fr
             // behind a glass that is for pictures too is blurred here as well.
             let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
             let mut from = 0;
-            for (upto, glass) in d.blurs.iter().map(|g| (g.at, Some(g))).chain(std::iter::once((groups.len(), None))) {
+            for (upto, glass) in d.blurs.iter().map(|g| (g.at, Some(g))).filter(|g| g.0 < d.upto).chain(std::iter::once((d.upto.min(groups.len()), None))) {
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("a picture"),
@@ -1708,4 +1731,20 @@ fn thread_cpu_ms() -> f64 {
         return t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6;
     }
     0.0
+}
+
+#[cfg(test)]
+mod below_owner_tests {
+    use super::below_owner;
+
+    #[test]
+    fn a_picture_leaves_out_what_is_above_the_program_that_asked() {
+        // wallpaper (scene), a window, the shell (7) twice, an add-on (9) above it.
+        let owners = [0, 3, 7, 7, 9];
+        assert_eq!(below_owner(&owners, 7), 4);
+        assert_eq!(below_owner(&owners, 9), 5);
+        // grim, with nothing on the monitor, and the scene itself: all of it.
+        assert_eq!(below_owner(&owners, 5), 5);
+        assert_eq!(below_owner(&owners, 0), 5);
+    }
 }
