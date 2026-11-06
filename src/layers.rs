@@ -978,6 +978,27 @@ pub fn read_clients(monitor: usize, ids: Vec<u64>, to: std::sync::mpsc::Sender<V
     cv.notify_all();
 }
 
+/// A flag of wlr-screencopy's frame of pleamar-wm's own (after `y_invert`,
+/// 1): the picture is of what is behind the program's own surfaces, without
+/// them. pleamar's glass then takes it as the background as it is.
+pub const WITHOUT_YOU: u32 = 1 << 16;
+
+/// The pictures drawn without the surfaces of the program that asked.
+static WITHOUT_OWNER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+/// Picture `id` was drawn without its program's own surfaces.
+pub fn drawn_without_owner(id: u64) {
+    WITHOUT_OWNER.lock().unwrap().push(id);
+}
+
+/// Whether picture `id` was (asked once, when it is handed over).
+pub fn take_without_owner(id: u64) -> bool {
+    let mut all = WITHOUT_OWNER.lock().unwrap();
+    let Some(k) = all.iter().position(|w| *w == id) else { return false };
+    all.swap_remove(k);
+    true
+}
+
 /// Where the pictures that go onto the card are to be written, by picture.
 static CARD_TARGETS: Mutex<Vec<(u64, pleamar::scene::DmabufPiece)>> = Mutex::new(Vec::new());
 
