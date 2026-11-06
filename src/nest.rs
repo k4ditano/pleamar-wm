@@ -352,6 +352,12 @@ fn phone_zoom(monitor: Option<&str>, monitor_w: i32, w: i32) -> f64 {
     (monitor_w as f64 / PHONE_ROOM).clamp(0.4, 1.0)
 }
 
+/// A picture's flags: `WITHOUT_YOU` when it was drawn without the surfaces
+/// of the program that asked (see `screen::below_owner`).
+fn picture_flags(without: bool) -> copy_frame::Flags {
+    if without { copy_frame::Flags::from_bits_retain(layers::WITHOUT_YOU) } else { copy_frame::Flags::empty() }
+}
+
 fn owner_of(surface: &WlSurface) -> u64 {
     surface.client().map_or(0, |c| owner_hash(&c.id()))
 }
@@ -2161,6 +2167,7 @@ impl State {
 
     /// A picture the card wrote into the program's buffer on the card: told it is ready.
     fn hand_picture_on_card(&mut self, id: u64, ok: bool) {
+        let without = layers::take_without_owner(id);
         let Some(p) = self.pictures.remove(&id) else { return };
         if p.pointer {
             layers::unwait_pointer(id);
@@ -2170,7 +2177,7 @@ impl State {
             return;
         }
         let (w, h) = (p.piece[2] as u32, p.piece[3] as u32);
-        p.frame.flags(copy_frame::Flags::empty());
+        p.frame.flags(picture_flags(without));
         if p.damage && p.frame.version() >= 2 {
             p.frame.damage(0, 0, w, h);
         }
@@ -2187,6 +2194,7 @@ impl State {
         if crate::portal::deliver(id, pixels.clone()) {
             return;
         }
+        let without = layers::take_without_owner(id);
         let Some(p) = self.pictures.remove(&id) else { return };
         let (w, h) = (p.piece[2] as usize, p.piece[3] as usize);
         if p.pointer {
@@ -2217,7 +2225,7 @@ impl State {
             p.frame.failed();
             return;
         }
-        p.frame.flags(copy_frame::Flags::empty());
+        p.frame.flags(picture_flags(without));
         if p.damage && p.frame.version() >= 2 {
             p.frame.damage(0, 0, w as u32, h as u32);
         }
