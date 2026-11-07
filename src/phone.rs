@@ -68,13 +68,14 @@ impl Output for Virtual {
         let now = Instant::now();
         self.next = (self.next + period).max(now);
         let at = self.next;
+        let beat = screen::monotonic_now() + at.saturating_duration_since(now);
         let (tx, device) = (self.to_render.clone(), device.clone());
         std::thread::spawn(move || {
             done.wait(&device, Duration::from_millis(200));
             if let Some(wait) = at.checked_duration_since(Instant::now()) {
                 std::thread::sleep(wait);
             }
-            screen::landed(&sc, &tx);
+            screen::landed(&sc, &tx, Some((beat, false)));
         });
         true
     }

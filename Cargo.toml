@@ -55,3 +55,5 @@ futures-lite = "2"
 # A client for tests/virtual_pointer.rs: the protocol's other end, already in the tree through pleamar.
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# tests/presentation_feedback.rs: xdg-shell and presentation-time, also already in the tree through pleamar.
+wayland-protocols = { version = "0.32", features = ["client"] }

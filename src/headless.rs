@@ -145,9 +145,11 @@ impl Output for Offscreen {
             let (tx, period) = (self.to_render.clone(), self.period);
             let since = self.started.elapsed().as_nanos();
             let wait = Duration::from_nanos((period.as_nanos() - since % period.as_nanos().max(1)) as u64);
+            // Told as that beat, not as when this thread wakes for it.
+            let beat = screen::monotonic_now() + wait;
             std::thread::spawn(move || {
                 std::thread::sleep(wait);
-                screen::landed(&sc, &tx);
+                screen::landed(&sc, &tx, Some((beat, false)));
             });
             return true;
         }
