@@ -199,7 +199,8 @@ pub struct ScreenState {
     /// Back from another TTY: the monitor has to be given its mode again.
     pub anew: bool,
     /// The sheets whose new frame goes with the next flip, and the ones
-    /// waiting for the flip on its way to land.
+    /// whose frame went in the flip on its way: told when it was seen when
+    /// it lands.
     pub fresh: Vec<u32>,
     pub on_flip: Vec<u32>,
     pub modifiers: Vec<u64>,
@@ -1103,8 +1104,14 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             // (`show` waited for it), and the next goes into their other one.
             // Waiting for the flip too put a whole refresh into each frame's
             // way, and a terminal that asked for 50 got 32.
-            for id in fresh {
+            for &id in &fresh {
                 let _ = to_render.send(ToRender::Frame(id));
+            }
+            // And when that flip lands, they are told when it was seen.
+            for id in fresh {
+                if !st.on_flip.contains(&id) {
+                    st.on_flip.push(id);
+                }
             }
             gone
         };
@@ -1715,13 +1722,34 @@ pub fn landed(screen: &Screen, to_render: &Sender<ToRender>, at: Option<Duration
     let (lock, cv) = &**screen;
     let mut st = lock.lock().unwrap();
     st.idle = true;
-    for id in st.on_flip.drain(..) {
-        let _ = to_render.send(ToRender::Frame(id));
-    }
+    let flipped: Vec<u32> = st.on_flip.drain(..).collect();
     let name = st.name.clone();
     cv.notify_all();
     drop(st);
+    // When they were seen, and how often this screen refreshes: the scene
+    // works its springs out for when its next frame will be seen. (They were
+    // asked for their next frame already, when the card had read this one.)
+    if !flipped.is_empty() {
+        let seen = at.and_then(monotonic_instant).unwrap_or_else(std::time::Instant::now);
+        let refresh = layers::monitors().iter().find(|m| m.name == name).map_or(Duration::ZERO, |m| Duration::from_nanos(1_000_000_000_000 / m.mhz.max(1) as u64));
+        for &id in &flipped {
+            let _ = to_render.send(ToRender::Shown(id, seen, refresh));
+        }
+    }
     layers::tell(ToLayers::Landed(name, at));
+}
+
+/// A moment on the monotonic clock (the card's) as an `Instant`: how long ago
+/// it was, by that clock now.
+fn monotonic_instant(t: Duration) -> Option<std::time::Instant> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let here = std::time::Instant::now();
+    // SAFETY: a valid timespec for the call to fill.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+        return None;
+    }
+    let now = Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32);
+    here.checked_sub(now.saturating_sub(t))
 }
 
 fn as_bytes<const N: usize>(v: &[f32; N]) -> &[u8] {
