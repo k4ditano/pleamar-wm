@@ -74,7 +74,7 @@ impl Output for Virtual {
             if let Some(wait) = at.checked_duration_since(Instant::now()) {
                 std::thread::sleep(wait);
             }
-            screen::landed(&sc, &tx);
+            screen::landed(&sc, &tx, None);
         });
         true
     }

@@ -2273,7 +2273,7 @@ impl State {
 
     /// What the session and the monitors say about the programs' surfaces.
     fn layer_input(&mut self, m: ToLayers) {
-        if std::env::var_os("PLEAMAR_DEBUG_WINDOWS").is_some() && !matches!(m, ToLayers::FrameDone(_) | ToLayers::Landed(_) | ToLayers::Released(_)) {
+        if std::env::var_os("PLEAMAR_DEBUG_WINDOWS").is_some() && !matches!(m, ToLayers::FrameDone(_) | ToLayers::Landed(..) | ToLayers::Released(_)) {
             eprintln!("windows · {m:?}");
         }
         let serial = SERIAL_COUNTER.next_serial();
@@ -2345,9 +2345,9 @@ impl State {
                 let monitor = layers::monitors().iter().position(|m| m.name == name);
                 self.frame_done(monitor);
             }
-            ToLayers::Landed(name) => {
+            ToLayers::Landed(name, at) => {
                 if let Some(m) = layers::monitors().iter().position(|m| m.name == name) {
-                    self.windows_landed(m);
+                    self.windows_landed(m, at);
                 }
             }
             ToLayers::Launch(command) => {
@@ -2774,12 +2774,11 @@ impl State {
             }
             !now
         });
-        self.presentation_done();
     }
 
     /// A frame of that monitor reached the screen: its windows are told, and
     /// its beat starts again from this refresh.
-    fn windows_landed(&mut self, m: usize) {
+    fn windows_landed(&mut self, m: usize, at: Option<Duration>) {
         if self.beats.len() <= m {
             self.beats.resize(m + 1, (Instant::now(), 0));
         }
@@ -2794,9 +2793,9 @@ impl State {
             }
             !now
         });
-        if any {
-            self.presentation_done();
-        }
+        let _ = any;
+        // What went in that frame was seen when it began to be shown.
+        self.presentation_done(Some(m), at);
     }
 
     /// How long until the next refresh of that monitor's beat its windows
@@ -2872,6 +2871,7 @@ impl State {
             self.answered_at = Instant::now();
         }
         // The refresh that has come, told (and those missed, skipped).
+        let due_monitors = due.clone();
         for m in due {
             let period = self.refresh_of(Some(m));
             if self.beats.len() <= m {
@@ -2880,8 +2880,11 @@ impl State {
             let (at, _) = self.beats[m];
             self.beats[m].1 = (at.elapsed().as_nanos() / period.as_nanos().max(1)) as u32;
         }
+        // A refresh with nothing new on the screen: what waited on it, told now.
         if any {
-            self.presentation_done();
+            for m in due_monitors {
+                self.presentation_done(Some(m), None);
+            }
         }
     }
 
@@ -2898,23 +2901,34 @@ impl State {
             }
             hidden
         });
-        self.presentation_done();
+        self.presentation_done(None, None);
     }
 
-    fn presentation_done(&mut self) {
-        // When they were shown (presentation-time): now, on their monitor.
-        if !self.presented.is_empty() {
-            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            // SAFETY: a valid timespec for the call to fill.
-            unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-            let now = Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32);
-            self.presented_seq += 1;
-            for (cb, monitor) in std::mem::take(&mut self.presented) {
-                let Some(output) = self.outputs.get(monitor).or(self.outputs.first()) else { continue };
-                let mhz = output.current_mode().map_or(60_000, |m| m.refresh.max(1));
-                let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / mhz as u64));
-                cb.presented(output, now, refresh, self.presented_seq, wp_presentation_feedback::Kind::Vsync);
+    /// When they were shown (presentation-time), those on that monitor (or
+    /// all): at the moment the card says the screen began to show the frame
+    /// they went in, or now. Told as now at every answer, a program counting
+    /// refreshes from them got times 12 and 19 ms apart on a 60 Hz screen.
+    fn presentation_done(&mut self, only: Option<usize>, at: Option<Duration>) {
+        if self.presented.iter().all(|(_, m)| only.is_some_and(|o| o != *m)) {
+            return;
+        }
+        let (when, kind) = match at {
+            Some(t) => (t, wp_presentation_feedback::Kind::Vsync | wp_presentation_feedback::Kind::HwClock | wp_presentation_feedback::Kind::HwCompletion),
+            None => {
+                let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+                // SAFETY: a valid timespec for the call to fill.
+                unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+                (Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32), wp_presentation_feedback::Kind::Vsync)
             }
+        };
+        self.presented_seq += 1;
+        let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.presented).into_iter().partition(|(_, m)| only.is_none_or(|o| o == *m));
+        self.presented = later;
+        for (cb, monitor) in now {
+            let Some(output) = self.outputs.get(monitor).or(self.outputs.first()) else { continue };
+            let mhz = output.current_mode().map_or(60_000, |m| m.refresh.max(1));
+            let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / mhz as u64));
+            cb.presented(output, when, refresh, self.presented_seq, kind);
         }
     }
 

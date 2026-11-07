@@ -141,7 +141,7 @@ impl Output for Offscreen {
             let wait = Duration::from_nanos((period.as_nanos() - since % period.as_nanos().max(1)) as u64);
             std::thread::spawn(move || {
                 std::thread::sleep(wait);
-                screen::landed(&sc, &tx);
+                screen::landed(&sc, &tx, None);
             });
             return true;
         }

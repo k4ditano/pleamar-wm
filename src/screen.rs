@@ -1711,7 +1711,7 @@ fn client_texture(device: &wgpu::Device, (w, h): (u32, u32)) -> wgpu::Texture {
 
 /// A flip has landed on this monitor: the sheets whose frame it carried may
 /// paint the next one, and the monitor can be put together again.
-pub fn landed(screen: &Screen, to_render: &Sender<ToRender>) {
+pub fn landed(screen: &Screen, to_render: &Sender<ToRender>, at: Option<Duration>) {
     let (lock, cv) = &**screen;
     let mut st = lock.lock().unwrap();
     st.idle = true;
@@ -1721,7 +1721,7 @@ pub fn landed(screen: &Screen, to_render: &Sender<ToRender>) {
     let name = st.name.clone();
     cv.notify_all();
     drop(st);
-    layers::tell(ToLayers::Landed(name));
+    layers::tell(ToLayers::Landed(name, at));
 }
 
 fn as_bytes<const N: usize>(v: &[f32; N]) -> &[u8] {
