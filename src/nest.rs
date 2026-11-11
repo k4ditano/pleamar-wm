@@ -483,11 +483,33 @@ impl Shell {
 #[derive(Default)]
 struct ClientState {
     compositor: CompositorClientState,
+    /// Who it is (its process and name), said when it goes: a program the compositor throws out says why.
+    who: String,
 }
 
 impl ClientData for ClientState {
     fn initialized(&self, _: ClientId) {}
-    fn disconnected(&self, _: ClientId, _: DisconnectReason) {}
+    fn disconnected(&self, _: ClientId, reason: DisconnectReason) {
+        // A program that simply closes is ordinary; one thrown out (a protocol error) is a bug of one side or the
+        // other, and without this line nothing says which.
+        if let DisconnectReason::ProtocolError(e) = reason {
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            eprintln!("windows · {} thrown out at {secs} (unix): {e}", self.who);
+        }
+    }
+}
+
+/// «pid 123 (name)» of what is at the other end of a program's socket.
+fn client_who(stream: &std::os::unix::net::UnixStream) -> String {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ok = unsafe { libc::getsockopt(stream.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED, &mut cred as *mut _ as *mut libc::c_void, &mut len) } == 0;
+    if !ok || cred.pid <= 0 {
+        return "a program".into();
+    }
+    let name = std::fs::read_to_string(format!("/proc/{}/comm", cred.pid)).unwrap_or_default();
+    format!("pid {} ({})", cred.pid, name.trim())
 }
 
 /// A computer-use agent's hands (`agent on`): see `agent.rs`.
@@ -723,7 +745,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         .handle()
         .insert_source(source, |stream, _, state: &mut State| {
             remember_client(&stream);
-            if let Err(e) = state.dh.insert_client(stream, Arc::new(ClientState::default())) {
+            let who = client_who(&stream);
+            if let Err(e) = state.dh.insert_client(stream, Arc::new(ClientState { who, ..Default::default() })) {
                 eprintln!("windows · a program could not connect: {e}");
             }
         })
@@ -2731,8 +2754,14 @@ impl State {
     }
 
     fn dismiss_popups_not_under(&mut self, root: &WlSurface) {
-        let root = root.clone();
         let focused = self.pointer.current_focus();
+        self.dismiss_popups_not_focused(root, focused);
+    }
+
+    /// The same, with the surface the pointer that pressed is over: an agent's hands
+    /// are a pointer of their own, and their press closes the menus they are not in too.
+    pub(crate) fn dismiss_popups_not_focused(&mut self, root: &WlSurface, focused: Option<WlSurface>) {
+        let root = root.clone();
         for (popup, _) in PopupManager::popups_for_surface(&root) {
             let inside = focused.as_ref().is_some_and(|f| {
                 let mut s = f.clone();
@@ -3220,6 +3249,16 @@ impl State {
         let roots: Vec<WlSurface> = self.slots.iter().flatten().map(|w| w.surface.clone()).collect();
         for root in roots {
             self.dismiss_popups_not_under(&root);
+        }
+    }
+
+    /// An agent's press: every window's and panel's menus close unless that pointer
+    /// is in them, as the person's press closes them (`ToNest::Button`).
+    pub(crate) fn dismiss_popups_for_press(&mut self, focused: Option<WlSurface>) {
+        let mut roots: Vec<WlSurface> = self.slots.iter().flatten().map(|w| w.surface.clone()).collect();
+        roots.extend(self.panels.iter().map(|p| p.shell.wl_surface().clone()));
+        for root in roots {
+            self.dismiss_popups_not_focused(&root, focused.clone());
         }
     }
 

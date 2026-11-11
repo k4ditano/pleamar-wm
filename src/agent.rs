@@ -1838,6 +1838,11 @@ impl State {
         let agent = self.agent.as_ref().ok_or("off")?;
         let (_, pointer, _) = agent.seats.get(idx).cloned().ok_or("bad-cursor")?;
         let raw = agent.raw_entered[idx].clone();
+        // A press outside a menu closes it, as the person's does: where these hands are, not
+        // where the person's pointer is (their clicks left an open menu open).
+        if pressed {
+            self.dismiss_popups_for_press(raw.clone().or_else(|| pointer.current_focus()));
+        }
         if let Some(surface) = raw {
             let client = surface.client().ok_or("gone")?;
             let state = if pressed { wl_pointer::ButtonState::Pressed } else { wl_pointer::ButtonState::Released };
@@ -2162,6 +2167,9 @@ impl State {
         let (_, pointer, _) = self.agent.as_ref().ok_or("off")?.seats.get(idx).cloned().ok_or("bad-cursor")?;
         if pointer.current_focus().as_ref() != Some(&root) {
             return Err("no-pointer-resource");
+        }
+        if pressed {
+            self.dismiss_popups_for_press(pointer.current_focus());
         }
         let (serial, time) = (SERIAL_COUNTER.next_serial(), self.time());
         let state = if pressed { ButtonState::Pressed } else { ButtonState::Released };
