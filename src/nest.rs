@@ -22,6 +22,8 @@
 mod x11;
 #[path = "capture.rs"]
 mod capture;
+#[path = "output_management.rs"]
+mod output_management;
 
 use crate::layers::{self, ClientLayer, ClientPiece, ToLayers};
 use smithay::wayland::xwayland_shell::XWaylandShellState;
@@ -39,6 +41,8 @@ use smithay::wayland::foreign_toplevel_list::{ForeignToplevelHandle, ForeignTopl
 use smithay::wayland::idle_inhibit::{IdleInhibitHandler, IdleInhibitManagerState};
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface as ImePopup};
+use smithay::wayland::keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor, KeyboardShortcutsInhibitorSeat};
+use smithay::wayland::pointer_gestures::PointerGesturesState;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint, PointerConstraintsHandler, PointerConstraintsState};
 use smithay::wayland::presentation::{PresentationFeedbackCachedState, PresentationFeedbackCallback, PresentationState, Refresh};
 use smithay::wayland::relative_pointer::RelativePointerManagerState;
@@ -667,6 +671,10 @@ struct State {
     _input_method: InputMethodManagerState,
     _constraints: PointerConstraintsState,
     _relative: RelativePointerManagerState,
+    /// Touchpad gestures for the program under the pointer (session.rs sends them).
+    _gestures: PointerGesturesState,
+    /// A program asking for the compositor's shortcuts to leave its keys alone.
+    shortcuts: KeyboardShortcutsInhibitState,
     foreign: XdgForeignState,
     _dialog: XdgDialogState,
     toplevel_list: ForeignToplevelListState,
@@ -692,6 +700,8 @@ struct State {
     hold_pointers: Vec<PointerHandle<State>>,
     /// Who watches a monitor's power (wlr-output-power-management), and which.
     powers: Vec<(ZwlrOutputPowerV1, usize)>,
+    /// The programs that configure the monitors (wlr-randr, kanshi).
+    output_managers: output_management::Managers,
     /// Who sets a monitor's colour ramps (wlr-gamma-control), and which: one
     /// program a monitor.
     gammas: Vec<(ZwlrGammaControlV1, usize)>,
@@ -807,6 +817,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         dh.create_global::<State, ZwlrScreencopyManagerV1, _>(3, ());
         // And their power, for what turns them off when idle (hypridle, wlopm).
         dh.create_global::<State, ZwlrOutputPowerManagerV1, _>(1, ());
+        // And their modes, places and scales, for what configures them (wlr-randr, kanshi).
+        output_management::global(&dh);
         // And their colour ramps, for a night light (wlsunset, gammastep).
         dh.create_global::<State, ZwlrGammaControlManagerV1, _>(1, ());
     }
@@ -864,6 +876,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         _input_method: InputMethodManagerState::new::<State, _>(&dh, |_| true),
         _constraints: PointerConstraintsState::new::<State>(&dh),
         _relative: RelativePointerManagerState::new::<State>(&dh),
+        _gestures: PointerGesturesState::new::<State>(&dh),
+        shortcuts: KeyboardShortcutsInhibitState::new::<State>(&dh),
         foreign: XdgForeignState::new::<State>(&dh),
         _dialog: XdgDialogState::new::<State>(&dh),
         toplevel_list: ForeignToplevelListState::new::<State>(&dh),
@@ -879,6 +893,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         constrained: None,
         hold_pointers: Vec::new(),
         powers: Vec::new(),
+        output_managers: Default::default(),
         gammas: Vec::new(),
         seats,
         seat,
@@ -2024,6 +2039,7 @@ impl State {
     /// surfaces are told they are closed (as layer-shell asks).
     fn monitors_changed(&mut self) {
         let monitors = layers::monitors();
+        self.output_managers.update(&self.dh);
         if monitors.is_empty() {
             // Not one monitor left (all of them asleep): our own outputs are kept —the windows are
             // placed by them—, but the programs must not go on believing in them: their outputs are
@@ -2338,6 +2354,20 @@ impl State {
                 let p = self.pointer.clone();
                 let state = if down { smithay::backend::input::ButtonState::Pressed } else { smithay::backend::input::ButtonState::Released };
                 p.button(self, &ButtonEvent { serial, time, button: code, state });
+                p.frame(self);
+            }
+            // Whatever program is under the pointer hears them, if it asked: none
+            // is a pointer over the scene, and nobody hears.
+            ToLayers::Gesture(g) => {
+                use smithay::input::pointer::{GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent};
+                let p = self.pointer.clone();
+                match g {
+                    layers::Gesture::PinchBegin { fingers } => p.gesture_pinch_begin(self, &GesturePinchBeginEvent { serial, time, fingers }),
+                    layers::Gesture::PinchUpdate { dx, dy, scale, rotation } => p.gesture_pinch_update(self, &GesturePinchUpdateEvent { time, delta: (dx, dy).into(), scale, rotation }),
+                    layers::Gesture::PinchEnd { cancelled } => p.gesture_pinch_end(self, &GesturePinchEndEvent { serial, time, cancelled }),
+                    layers::Gesture::HoldBegin { fingers } => p.gesture_hold_begin(self, &GestureHoldBeginEvent { serial, time, fingers }),
+                    layers::Gesture::HoldEnd { cancelled } => p.gesture_hold_end(self, &GestureHoldEndEvent { serial, time, cancelled }),
+                }
                 p.frame(self);
             }
             ToLayers::Wheel(dy) => self.handle(ToNest::Wheel(dy as f64)),
@@ -4229,6 +4259,7 @@ impl SeatHandler for State {
         if agent::is_agent_seat(seat) {
             return;
         }
+        self.note_shortcuts(focused);
         // What is copied goes with the keyboard: the focused program is offered it.
         let client = focused.and_then(|s| self.dh.get_client(s.id()).ok());
         smithay::wayland::selection::data_device::set_data_device_focus(&self.dh, seat, client.clone());
@@ -5020,6 +5051,41 @@ impl PointerConstraintsHandler for State {
     fn cursor_position_hint(&mut self, _: &WlSurface, _: &PointerHandle<Self>, _: Point<f64, Logical>) {}
 }
 
+/// A virtual machine or a remote desktop asks for the shortcuts to leave its
+/// keys alone: granted at once, and for as long as it has the keyboard (the
+/// person's own way out, Ctrl+Alt+Backspace, is not a shortcut and stays).
+impl KeyboardShortcutsInhibitHandler for State {
+    fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
+        &mut self.shortcuts
+    }
+
+    fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
+        // An agent's own seat does not take the person's shortcuts away.
+        if inhibitor.seat(&self.dh).is_some_and(|s| Seat::<State>::from_resource(&s).is_some_and(|seat| agent::is_agent_seat(&seat))) {
+            return;
+        }
+        inhibitor.activate();
+        let focused = self.keyboard.current_focus();
+        self.note_shortcuts(focused.as_ref());
+    }
+
+    fn inhibitor_destroyed(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
+        // Whatever has the keyboard now, without the one that is going (a program
+        // that closed or was closed): another may have asked too.
+        let focused = self.keyboard.current_focus().filter(|s| s != inhibitor.wl_surface());
+        self.note_shortcuts(focused.as_ref());
+    }
+}
+
+impl State {
+    /// Tells the session (route.rs) whether the program that has the keyboard
+    /// keeps the shortcuts for itself.
+    fn note_shortcuts(&self, focused: Option<&WlSurface>) {
+        let on = focused.and_then(|s| self.seat.keyboard_shortcuts_inhibitor_for_surface(s)).is_some_and(|i| i.is_active());
+        layers::set_shortcuts_inhibited(on);
+    }
+}
+
 impl XdgForeignHandler for State {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.foreign
@@ -5062,6 +5128,8 @@ smithay::delegate_text_input_manager!(State);
 smithay::delegate_input_method_manager!(State);
 smithay::delegate_pointer_constraints!(State);
 smithay::delegate_relative_pointer!(State);
+smithay::delegate_pointer_gestures!(State);
+smithay::delegate_keyboard_shortcuts_inhibit!(State);
 smithay::delegate_xdg_foreign!(State);
 smithay::delegate_xdg_dialog!(State);
 smithay::delegate_foreign_toplevel_list!(State);

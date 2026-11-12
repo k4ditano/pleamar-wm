@@ -660,10 +660,13 @@ is on the whole desktop is said, as it moves, on the `cursor.sock` next to
 the session's other sockets (`PLEAMAR_SOCKETS`): a pleamar scene that reads
 `cursor.x` gets it from there, so Marea's eyes follow the mouse anywhere and
 moving it wakes her. Monitors can be plugged in and out while it runs.
-`pleamar-wm output NAME at X,Y` moves one on the desktop and `… vrr on|off`
-turns its variable refresh on or off, until the session ends; each says what
-was done or why not (`output.sock`, beside `cursor.sock`). A mode, a scale or
-a turn is still a `monitor` line in session.conf, read at start.
+`pleamar-wm output NAME at X,Y` moves one on the desktop, `… vrr on|off`
+turns its variable refresh on or off, and `… mode WxH@HZ`, `… scale S` and
+`… transform 0|90|180|270` drive it another way, until the session ends; each
+says what was done or why not (`output.sock`, beside `cursor.sock`). Programs
+that configure monitors (`wlr-randr`, `kanshi`, `wdisplays`) do the same
+through `wlr-output-management`; turning a monitor off from there is not done
+(a `monitor NAME off` line in session.conf is).
 
 # What programs find
 

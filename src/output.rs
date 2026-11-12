@@ -4,9 +4,10 @@
 //! its `apply_output`, where the card is.
 //!
 //! A wish is checked whole before any of it is done: one part that cannot be
-//! done leaves the monitor as it was. Only what needs no new mode is done for
-//! now (where it is, variable refresh); a mode, a scale or a turn needs the
-//! monitor's buffers made again, and is answered as not yet.
+//! done leaves the monitor as it was. A new mode, scale or turn puts the
+//! monitor up again with them, as if it were plugged in again; where it is
+//! and variable refresh change in place. Programs ask the same through
+//! `wlr-output-management` (output_management.rs).
 
 use crate::config::ModeWish;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -78,12 +79,11 @@ impl Wish {
         Ok(wish)
     }
 
-    /// What it asks for that is not done while the session runs yet: a new
-    /// mode, scale or turn needs the monitor set again with buffers of the
-    /// new size, which only happens at start.
+    /// What a headless session cannot do: its monitors have no modes, and
+    /// are not made again at another scale or turned while it runs.
     pub fn not_yet(&self) -> Option<String> {
         let parts: Vec<&str> = [(self.mode.is_some(), "mode"), (self.scale.is_some(), "scale"), (self.transform.is_some(), "transform")].into_iter().filter_map(|(asked, name)| asked.then_some(name)).collect();
-        (!parts.is_empty()).then(|| format!("{} not yet: it needs the monitor set again, which happens only at start for now (a monitor line in session.conf)", parts.join(", ")))
+        (!parts.is_empty()).then(|| format!("{} not on a headless session: its monitors are as it started them", parts.join(", ")))
     }
 }
 
@@ -118,8 +118,9 @@ pub fn overlapping(boxes: &[(&str, [i32; 4])]) -> Option<(String, String)> {
     None
 }
 
-/// A wish for a monitor by its name, and where its answer goes.
-pub type Asked = (String, Wish, mpsc::Sender<Result<String, String>>);
+/// Wishes for monitors by name, all done or none; whether only to see that
+/// they can be (`true`: nothing is done); and where the answer goes.
+pub type Asked = (Vec<(String, Wish)>, bool, mpsc::Sender<Result<String, String>>);
 type Sink = Box<dyn Fn(Asked) -> bool + Send>;
 static SINK: Mutex<Option<Sink>> = Mutex::new(None);
 
@@ -130,8 +131,14 @@ pub fn set_sink(sink: Sink) {
 
 /// Asks for it and waits for the answer.
 fn apply(name: &str, wish: Wish) -> Result<String, String> {
+    apply_many(vec![(name.to_owned(), wish)], false)
+}
+
+/// Several at once, all or none (a program's output configuration), or only
+/// whether they can be done; waits for the answer.
+pub fn apply_many(wishes: Vec<(String, Wish)>, only_check: bool) -> Result<String, String> {
     let (tx, rx) = mpsc::channel();
-    let sent = SINK.lock().unwrap().as_ref().is_some_and(|sink| sink((name.to_owned(), wish, tx)));
+    let sent = SINK.lock().unwrap().as_ref().is_some_and(|sink| sink((wishes, only_check, tx)));
     if !sent {
         return Err("this session has no monitors of its own to change".to_owned());
     }
@@ -277,12 +284,12 @@ mod tests {
         assert_eq!(Wish::parse(&["at", "-1000000,1000000"]).unwrap().at, Some((-1_000_000, 1_000_000)));
     }
 
-    /// What needs a new mode is named, and only that.
+    /// What a headless session cannot do is named, and only that.
     #[test]
-    fn a_new_mode_is_not_yet() {
+    fn a_new_mode_is_not_for_a_headless_session() {
         assert_eq!(Wish { at: Some((0, 0)), vrr: Some(false), ..Default::default() }.not_yet(), None);
         let w = Wish::parse(&["vrr", "on", "scale", "1.5", "mode", "1920x1080"]).unwrap();
-        assert!(w.not_yet().unwrap().starts_with("mode, scale not yet"));
+        assert!(w.not_yet().unwrap().starts_with("mode, scale not on a headless session"));
     }
 
     #[test]

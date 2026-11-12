@@ -46,7 +46,7 @@ pub struct MonitorRule {
     pub off: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ModeWish {
     /// The one the monitor says it prefers.
     #[default]

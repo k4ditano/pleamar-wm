@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 /// A monitor as the programs see it: its name (`DP-3`), size, where it is on
 /// the desktop (its top left corner), and its refresh in mHz.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MonitorInfo {
     pub name: String,
     pub size: (u32, u32),
@@ -26,6 +26,16 @@ pub struct MonitorInfo {
     /// How many pixels a unit of the desktop is (1, 1.5, 2): `size` is in
     /// pixels, `x` and `y` in units.
     pub scale: f64,
+    /// For whoever configures monitors (output_management.rs): the modes the
+    /// card offers (width and height in pixels as the monitor stands
+    /// unturned, mHz, whether it prefers it), the one it is at, the quarter
+    /// turns it stands at, whether variable refresh is asked, and its size in
+    /// mm. Empty where none of that is known (a headless session, the phone).
+    pub modes: Vec<(u32, u32, i32, bool)>,
+    pub mode: Option<(u32, u32, i32)>,
+    pub turn: u8,
+    pub vrr: bool,
+    pub mm: (u32, u32),
 }
 
 
@@ -45,6 +55,9 @@ pub enum ToLayers {
     /// the right, positive); and lifted.
     Scroll(f64, f64),
     ScrollEnd,
+    /// A touchpad gesture (a pinch, a hold) for the program under the pointer,
+    /// which asked for them (`zwp_pointer_gestures_v1`).
+    Gesture(Gesture),
     /// A key for that one: it takes the keyboard if it did not have it.
     Key { id: u64, code: u32, down: bool },
     /// The keyboard goes back to the windows.
@@ -750,6 +763,33 @@ pub fn window_keyboard() -> u64 {
     WINDOW_KEYBOARD.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// A touchpad gesture, as libinput reports it, for the program under the pointer.
+/// Pinches of two fingers and holds are the programs' (a browser's zoom); swipes
+/// and pinches of three or more are the scene's, by name (see session.rs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Gesture {
+    PinchBegin { fingers: u32 },
+    PinchUpdate { dx: f64, dy: f64, scale: f64, rotation: f64 },
+    PinchEnd { cancelled: bool },
+    HoldBegin { fingers: u32 },
+    HoldEnd { cancelled: bool },
+}
+
+/// Whether the program with the keyboard has asked to keep the compositor's
+/// shortcuts from taking keys (`zwp_keyboard_shortcuts_inhibit_v1`: a virtual
+/// machine, a remote desktop). Then keys.conf's bindings and the portal's
+/// shortcuts do not take any: they go to the program. Ctrl+Alt+Backspace,
+/// the way out, is not a binding and always works.
+static SHORTCUTS_INHIBITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn shortcuts_inhibited() -> bool {
+    SHORTCUTS_INHIBITED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_shortcuts_inhibited(yes: bool) {
+    SHORTCUTS_INHIBITED.store(yes, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Whether a lock screen holds the session (ext-session-lock).
 static LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -771,6 +811,11 @@ pub fn set_locked(yes: bool) {
 }
 
 /// The monitors of the session, left to right.
+/// What each monitor shows, as they are now.
+pub fn screens() -> Vec<Screen> {
+    MONITORS.lock().unwrap().iter().map(|(_, s)| s.clone()).collect()
+}
+
 pub fn register(monitors: Vec<(MonitorInfo, Screen)>) {
     let left: Vec<Screen> = {
         let mut all = MONITORS.lock().unwrap();
@@ -1105,7 +1150,7 @@ pub(crate) mod tests {
     #[test]
     fn dragging_while_windows_redraw_does_not_freeze() {
         let _drag = DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
-        let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0 };
+        let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0, ..Default::default() };
         register(vec![(info, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere)))]);
         show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn: true });
         set_drag_icon(vec![(0, 7)]);

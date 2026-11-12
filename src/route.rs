@@ -265,8 +265,9 @@ impl Route {
             let _ = self.to_render.send(ToRender::Fact("keys.super", if down { 1.0 } else { 0.0 }));
         }
         // A binding (keys.conf) takes the key before anyone —while locked,
-        // only the ones marked `locked`—.
-        if down {
+        // only the ones marked `locked`—. Not while the program with the keyboard
+        // keeps the shortcuts for itself (a virtual machine): they are its keys.
+        if down && !layers::shortcuts_inhibited() {
             let keys = crate::keys::get();
             let open = |b: &&crate::keys::Bind| b.locked || !layers::locked();
             let bind = keys.bind(name, mods).or_else(|| base.and_then(|b| keys.bind(b, mods))).filter(open);
