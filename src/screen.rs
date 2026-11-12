@@ -223,6 +223,9 @@ pub struct ScreenState {
     pub reads: Vec<(Vec<u64>, Sender<Vec<layers::ClientPicture>>)>,
     output: Option<Box<dyn Output>>,
     pub quit: bool,
+    /// Whether the one that puts it together is running: started with the
+    /// first frame, and gone after `quit`.
+    running: bool,
     /// A window is fullscreen on this monitor: other programs' bars (their
     /// `top` layer) are not shown over it, as on any desktop.
     pub fullscreen: bool,
@@ -249,9 +252,51 @@ pub type Screen = Arc<(Mutex<ScreenState>, Condvar)>;
 
 pub fn screen(name: String, size: (u32, u32), output: Box<dyn Output>) -> Screen {
     Arc::new((
-        Mutex::new(ScreenState { name, size, layers: Vec::new(), dirty: false, idle: true, paused: false, anew: true, fresh: Vec::new(), on_flip: Vec::new(), modifiers: Vec::new(), clients: Vec::new(), held: Vec::new(), forget: Vec::new(), changed: Vec::new(), changed_all: true, captures: Vec::new(), reads: Vec::new(), output: Some(output), quit: false, fullscreen: false }),
+        Mutex::new(ScreenState { name, size, layers: Vec::new(), dirty: false, idle: true, paused: false, anew: true, fresh: Vec::new(), on_flip: Vec::new(), modifiers: Vec::new(), clients: Vec::new(), held: Vec::new(), forget: Vec::new(), changed: Vec::new(), changed_all: true, captures: Vec::new(), reads: Vec::new(), output: Some(output), quit: false, running: false, fullscreen: false }),
         Condvar::new(),
     ))
+}
+
+/// What would show a screen that has not shown a frame yet: taken out of it.
+pub fn take_output(screen: &Screen) -> Option<Box<dyn Output>> {
+    screen.0.lock().unwrap().output.take()
+}
+
+/// The same monitor driven another way (a new mode, scale or turn): the one
+/// that puts it together stops, and what shows it is replaced, at its new
+/// size; the next frame starts another. It stays the same screen, with the
+/// programs' surfaces on it: a bar on a monitor whose mode changed is not
+/// told it is closed. False if the old one did not stop in time (nothing
+/// is changed then).
+/// `between`: done once the old one has stopped and before the new one is
+/// in, under the screen's lock, so no frame can start the new one first
+/// (letting go of the monitor's controller).
+pub fn replace_output(screen: &Screen, size: (u32, u32), output: Box<dyn Output>, between: impl FnOnce()) -> bool {
+    let (lock, cv) = &**screen;
+    let mut st = lock.lock().unwrap();
+    st.quit = true;
+    cv.notify_all();
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while st.running {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            st.quit = false;
+            return false;
+        }
+        st = cv.wait_timeout(st, left).unwrap().0;
+    }
+    st.quit = false;
+    between();
+    st.output = Some(output);
+    st.size = size;
+    // No flip of the old one is on its way any more, and the new one sets its mode.
+    st.idle = true;
+    st.anew = true;
+    st.on_flip.clear();
+    st.fresh.clear();
+    st.changed_all = true;
+    st.dirty = true;
+    true
 }
 
 /// Where a surface goes on a monitor of that size: its size (0 is all of
@@ -469,7 +514,13 @@ impl Frames for LayerFrames {
         if let Some(output) = st.output.take() {
             let (screen, device, queue, to_render) = (self.screen.clone(), device.clone(), queue.clone(), self.to_render.clone());
             let name = st.name.clone();
-            let _ = std::thread::Builder::new().name(format!("screen {name}")).spawn(move || compose_loop(screen, output, device, queue, to_render));
+            st.running = true;
+            let _ = std::thread::Builder::new().name(format!("screen {name}")).spawn(move || {
+                let this = screen.clone();
+                compose_loop(screen, output, device, queue, to_render);
+                this.0.lock().unwrap().running = false;
+                this.1.notify_all();
+            });
         }
         cv.notify_all();
     }

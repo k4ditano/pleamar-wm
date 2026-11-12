@@ -22,6 +22,8 @@
 mod x11;
 #[path = "capture.rs"]
 mod capture;
+#[path = "output_management.rs"]
+mod output_management;
 
 use crate::layers::{self, ClientLayer, ClientPiece, ToLayers};
 use smithay::wayland::xwayland_shell::XWaylandShellState;
@@ -670,6 +672,8 @@ struct State {
     hold_pointers: Vec<PointerHandle<State>>,
     /// Who watches a monitor's power (wlr-output-power-management), and which.
     powers: Vec<(ZwlrOutputPowerV1, usize)>,
+    /// The programs that configure the monitors (wlr-randr, kanshi).
+    output_managers: output_management::Managers,
     /// Who sets a monitor's colour ramps (wlr-gamma-control), and which: one
     /// program a monitor.
     gammas: Vec<(ZwlrGammaControlV1, usize)>,
@@ -784,6 +788,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         dh.create_global::<State, ZwlrScreencopyManagerV1, _>(3, ());
         // And their power, for what turns them off when idle (hypridle, wlopm).
         dh.create_global::<State, ZwlrOutputPowerManagerV1, _>(1, ());
+        // And their modes, places and scales, for what configures them (wlr-randr, kanshi).
+        output_management::global(&dh);
         // And their colour ramps, for a night light (wlsunset, gammastep).
         dh.create_global::<State, ZwlrGammaControlManagerV1, _>(1, ());
     }
@@ -856,6 +862,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         constrained: None,
         hold_pointers: Vec::new(),
         powers: Vec::new(),
+        output_managers: Default::default(),
         gammas: Vec::new(),
         seats,
         seat,
@@ -2001,6 +2008,7 @@ impl State {
     /// surfaces are told they are closed (as layer-shell asks).
     fn monitors_changed(&mut self) {
         let monitors = layers::monitors();
+        self.output_managers.update(&self.dh);
         if monitors.is_empty() {
             // Not one monitor left (all of them asleep): our own outputs are kept —the windows are
             // placed by them—, but the programs must not go on believing in them: their outputs are
