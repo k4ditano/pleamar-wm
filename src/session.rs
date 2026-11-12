@@ -93,6 +93,11 @@ struct Monitor {
     /// set now, to be let go of when another replaces it (0: none).
     lut: Option<smithay::reexports::drm::control::property::Handle>,
     lut_blob: u32,
+    /// The mode it is driven at; none on the phone's. And the ones its
+    /// connector offers, and its size in mm, as the card says.
+    mode: Option<Mode>,
+    modes: Vec<Mode>,
+    mm: (u32, u32),
 }
 
 /// A monitor's buffers on the card: three, what each frame is put together
@@ -341,11 +346,11 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     let sheets = give_sheets(&monitors, &surfaces, &to_render, &cursor_kind, &mut next_sheet);
     // A surface that changes level or edge while running (Marea's).
     {
-        let screens: Vec<Screen> = monitors.iter().map(|m| m.screen.clone()).collect();
-        let again = screens.clone();
+        // The monitors as they are when it is asked, not as they were at the
+        // start: one plugged in later, or put up again at another mode, is another screen.
         pleamar::provide_layer_hooks(pleamar::LayerHooks {
             relayer: Box::new(move |which, level| {
-                for sc in &screens {
+                for sc in &layers::screens() {
                     let mut st = sc.0.lock().unwrap();
                     let mut any = false;
                     for l in st.layers.iter_mut().filter(|l| l.surface == which) {
@@ -360,7 +365,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
                 }
             }),
             reanchor: Box::new(move |which, anchor| {
-                for sc in &again {
+                for sc in &layers::screens() {
                     let mut st = sc.0.lock().unwrap();
                     let size = st.size;
                     let mut any = false;
@@ -416,7 +421,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
 
     let first = monitors.first().map_or((0.0, 0.0), |m| (m.x as f64 + m.units().0 as f64 / 2.0, m.y as f64 + m.units().1 as f64 / 2.0));
     layers::set_card(drm.clone());
-    layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
+    layers::register(monitors.iter().map(|m| (monitor_info(m), m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
     let mut state = State { mover, session, drm, monitors, libinput, keyboards: Vec::new(), leds: smithay::reexports::input::Led::empty(), to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, pinch_to_program: false, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
@@ -503,8 +508,8 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     event_loop
         .handle()
         .insert_source(output_rx, |event, _, state: &mut State| {
-            if let smithay::reexports::calloop::channel::Event::Msg((name, wish, answer)) = event {
-                let _ = answer.send(state.apply_output(&name, &wish));
+            if let smithay::reexports::calloop::channel::Event::Msg((wishes, only_check, answer)) = event {
+                let _ = answer.send(state.apply_outputs(&wishes, only_check));
             }
         })
         .map_err(|e| e.to_string())?;
@@ -556,7 +561,8 @@ fn connected(drm: &DrmDeviceFd) -> Vec<(String, connector::Handle, Mode, Vec<crt
         if rule.is_some_and(|r| r.off) {
             continue;
         }
-        let Some(mode) = choose_mode(info.modes(), rule.map(|r| &r.mode)) else { continue };
+        let wish = asked(&ASKED_MODE, &name).or_else(|| rule.map(|r| r.mode));
+        let Some(mode) = choose_mode(info.modes(), wish.as_ref()) else { continue };
         let crtcs: Vec<crtc::Handle> = info.encoders().iter().filter_map(|e| drm.get_encoder(*e).ok()).flat_map(|e| res.filter_crtcs(e.possible_crtcs())).collect();
         out.push((name, conn, mode, crtcs));
     }
@@ -632,6 +638,12 @@ static ASKED_VRR: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 /// Where, and whether `pleamar-wm output` asked it (true) or it was kept
 /// where it was when another one moved (false).
 static ASKED_AT: Mutex<Vec<(String, ((i32, i32), bool))>> = Mutex::new(Vec::new());
+/// Its mode, its scale and how far it is turned, as asked while the session
+/// runs (`pleamar-wm output`, or a program through output management): they
+/// outrank its monitor line the same way, and hold if it is plugged in again.
+static ASKED_MODE: Mutex<Vec<(String, config::ModeWish)>> = Mutex::new(Vec::new());
+static ASKED_SCALE: Mutex<Vec<(String, f64)>> = Mutex::new(Vec::new());
+static ASKED_TURN: Mutex<Vec<(String, u8)>> = Mutex::new(Vec::new());
 
 /// How firmly a monitor is held where it is, firmest first: when two would
 /// cover the same part of the desktop, the looser one joins the row.
@@ -770,6 +782,33 @@ fn choose_mode(modes: &[Mode], wish: Option<&config::ModeWish>) -> Option<Mode> 
     }
 }
 
+/// The mode a wish names exactly: that size, at the refresh closest to the
+/// one asked (within a hertz; 0, the most that size has). Unlike
+/// `choose_mode`, never another one: what is asked while the session runs
+/// is done as asked or not at all.
+fn mode_for(modes: &[Mode], wish: &config::ModeWish) -> Option<Mode> {
+    match wish {
+        config::ModeWish::Exact(w, h, hz) => {
+            let same = modes.iter().filter(|m| m.size() == (*w as u16, *h as u16));
+            if *hz > 0.0 {
+                same.min_by_key(|m| (refresh_mhz(m) - (hz * 1000.0) as i32).abs()).filter(|m| (refresh_mhz(m) - (hz * 1000.0) as i32).abs() <= 1000).copied()
+            } else {
+                same.max_by_key(|m| refresh_mhz(m)).copied()
+            }
+        }
+        other => choose_mode(modes, Some(other)),
+    }
+}
+
+fn mode_words(w: &config::ModeWish) -> String {
+    match w {
+        config::ModeWish::Exact(w, h, hz) if *hz > 0.0 => format!("{w}x{h}@{hz}"),
+        config::ModeWish::Exact(w, h, _) => format!("{w}x{h}"),
+        config::ModeWish::Highest => "highest".to_owned(),
+        config::ModeWish::Preferred => "preferred".to_owned(),
+    }
+}
+
 /// A program's own cursor on the card: its pixels in the plane's 64 × 64
 /// (what is beyond, cut), its tip inside it.
 fn custom_cursor(gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, p: &layers::CursorPicture) -> Option<(gbm::BufferObject<()>, (i32, i32), std::sync::Arc<(Vec<u8>, (i32, i32))>)> {
@@ -804,7 +843,7 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     let flips: Arc<Mutex<Flips>> = Default::default();
     let output = DrmOutput { drm: drm.clone(), gbm: gbm.clone(), connector: conn, crtc, mode, size: real, name: name.clone(), buffers: Vec::new(), failed: false, flips: flips.clone() };
     // Standing on its side: everything else sees it upright, taller than wide.
-    let turn = config::get().monitor(&name).map_or(0, |r| r.transform % 4);
+    let turn = asked(&ASKED_TURN, &name).unwrap_or_else(|| config::get().monitor(&name).map_or(0, |r| r.transform)) % 4;
     let (size, output): ((u32, u32), Box<dyn screen::Output>) = if turn == 0 {
         (real, Box::new(output))
     } else {
@@ -813,7 +852,7 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
         (if turn % 2 == 1 { (real.1, real.0) } else { real }, Box::new(t))
     };
     let screen = screen::screen(name.clone(), size, output);
-    let scale = config::get().monitor(&name).and_then(|r| r.scale).unwrap_or(1.0).clamp(0.5, 4.0);
+    let scale = asked(&ASKED_SCALE, &name).or_else(|| config::get().monitor(&name).and_then(|r| r.scale)).unwrap_or(1.0).clamp(0.5, 4.0);
     if scale != 1.0 {
         println!("session · {name}: scale {scale}");
     }
@@ -826,7 +865,8 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     if gamma > 0 {
         println!("session · {name}: colour ramps of {gamma} steps{}", if lut.is_some() { " (GAMMA_LUT)" } else { "" });
     }
-    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode), gamma, tinted: false, lut, lut_blob: 0 }
+    let (modes, mm) = drm.get_connector(conn, false).map_or((Vec::new(), (0, 0)), |i| (i.modes().to_vec(), i.size().unwrap_or((0, 0))));
+    Monitor { name, crtc: Some(crtc), connector: Some(conn), on: true, size, turn, x: 0, y: 0, scale, screen, flips, mhz: refresh_mhz(&mode), gamma, tinted: false, lut, lut_blob: 0, mode: Some(mode), modes, mm }
 }
 
 /// Ramps of `n` steps that leave every colour as it is: red, green and blue.
@@ -839,9 +879,26 @@ fn straight_ramps(n: usize) -> Vec<u16> {
 /// index: where each is, and whether it is lit. Both lists follow a re-sort
 /// together, or a power control made after it reads another monitor's.
 fn publish(monitors: &[Monitor]) {
-    layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
+    layers::register(monitors.iter().map(|m| (monitor_info(m), m.screen.clone())).collect());
     layers::set_powered(monitors.iter().map(|m| m.on).collect());
     layers::set_gamma_sizes(monitors.iter().map(|m| m.gamma).collect());
+}
+
+/// A monitor as the programs and whoever configures monitors see it.
+fn monitor_info(m: &Monitor) -> MonitorInfo {
+    MonitorInfo {
+        name: m.name.clone(),
+        size: m.size,
+        x: m.x,
+        y: m.y,
+        mhz: m.mhz,
+        scale: m.scale,
+        modes: m.modes.iter().map(|o| (o.size().0 as u32, o.size().1 as u32, refresh_mhz(o), o.mode_type().contains(ModeTypeFlags::PREFERRED))).collect(),
+        mode: m.mode.map(|o| (o.size().0 as u32, o.size().1 as u32, refresh_mhz(&o))),
+        turn: m.turn,
+        vrr: asked(&ASKED_VRR, &m.name).unwrap_or_else(|| config::get().monitor(&m.name).is_some_and(|r| r.vrr)),
+        mm: m.mm,
+    }
 }
 
 /// Where the configuration puts them; the ones it does not place, left to
@@ -993,57 +1050,162 @@ impl State {
         self.monitors_changed();
     }
 
-    /// One monitor changed as `pleamar-wm output` asks: all of the wish or
-    /// none of it, and what was done or why not.
-    fn apply_output(&mut self, name: &str, wish: &crate::output::Wish) -> Result<String, String> {
-        if let Some(why) = wish.not_yet() {
-            return Err(why);
+    /// Monitors changed as `pleamar-wm output` asks, or a program's output
+    /// configuration (several at once,
+    /// see output_management.rs): every wish is checked before any is done, so
+    /// one that cannot be done leaves them all as they were. `only_check`:
+    /// checked and nothing done (the protocol's `test`).
+    fn apply_outputs(&mut self, wishes: &[(String, crate::output::Wish)], only_check: bool) -> Result<String, String> {
+        // What each would be, to check them together: its mode, its scale, its turn and where it goes.
+        struct Plan {
+            k: usize,
+            mode: Mode,
+            scale: f64,
+            turn: u8,
+            at: Option<(i32, i32)>,
+            again: bool,
         }
-        let Some(m) = self.monitors.iter().find(|m| m.name == name) else {
-            let names: Vec<&str> = self.monitors.iter().filter(|m| m.crtc.is_some()).map(|m| m.name.as_str()).collect();
-            return Err(format!("there is no monitor {name}; there are {}", names.join(", ")));
-        };
-        let (Some(conn), Some(crtc)) = (m.connector, m.crtc) else {
-            return Err(format!("{name} is the phone's: `pleamar-wm remote` puts it where it goes"));
-        };
-        // Everything checked before anything is done.
-        if let Some((x, y)) = wish.at {
-            let boxes: Vec<(&str, [i32; 4])> = self
-                .monitors
-                .iter()
-                .filter(|o| o.crtc.is_some())
-                .map(|o| {
+        let mut plans: Vec<Plan> = Vec::new();
+        for (name, wish) in wishes {
+            let Some(k) = self.monitors.iter().position(|m| &m.name == name) else {
+                let names: Vec<&str> = self.monitors.iter().filter(|m| m.crtc.is_some()).map(|m| m.name.as_str()).collect();
+                return Err(format!("there is no monitor {name}; there are {}", names.join(", ")));
+            };
+            let m = &self.monitors[k];
+            let (Some(conn), Some(_), Some(now)) = (m.connector, m.crtc, m.mode) else {
+                return Err(format!("{name} is the phone's: `pleamar-wm remote` puts it where it goes"));
+            };
+            let mode = match &wish.mode {
+                None => now,
+                Some(w) => {
+                    let modes = self.drm.get_connector(conn, false).map(|i| i.modes().to_vec()).unwrap_or_default();
+                    mode_for(&modes, w).ok_or_else(|| format!("{name} has no mode {}; it has {}", mode_words(w), modes.iter().map(|m| format!("{}x{}@{:.3}", m.size().0, m.size().1, refresh_mhz(m) as f64 / 1000.0)).collect::<Vec<_>>().join(", ")))?
+                }
+            };
+            let scale = match wish.scale {
+                Some(s) if !(0.5..=4.0).contains(&s) => return Err(format!("{name}: a scale of {s} is out of 0.5 to 4")),
+                Some(s) => s,
+                None => m.scale,
+            };
+            let turn = wish.transform.map_or(m.turn, |t| t % 4);
+            let again = mode != now || (scale - m.scale).abs() > 1e-6 || turn != m.turn;
+            plans.push(Plan { k, mode, scale, turn, at: wish.at, again });
+        }
+        // Where they would all be: the moved ones where they are asked, the others where they are.
+        let boxes: Vec<(String, [i32; 4])> = self
+            .monitors
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.crtc.is_some())
+            .map(|(k, o)| match plans.iter().find(|p| p.k == k) {
+                Some(p) => {
+                    let (w, h) = p.mode.size();
+                    let upright = if p.turn % 2 == 1 { (h as f64, w as f64) } else { (w as f64, h as f64) };
+                    let (x, y) = p.at.unwrap_or((o.x, o.y));
+                    (o.name.clone(), [x, y, (upright.0 / p.scale).round() as i32, (upright.1 / p.scale).round() as i32])
+                }
+                None => {
                     let (w, h) = o.units();
-                    (o.name.as_str(), if o.name == name { [x, y, w, h] } else { [o.x, o.y, w, h] })
-                })
-                .collect();
-            if let Some((a, b)) = crate::output::overlapping(&boxes) {
+                    (o.name.clone(), [o.x, o.y, w, h])
+                }
+            })
+            .collect();
+        if plans.iter().any(|p| p.at.is_some()) {
+            let refs: Vec<(&str, [i32; 4])> = boxes.iter().map(|(n, b)| (n.as_str(), *b)).collect();
+            if let Some((a, b)) = crate::output::overlapping(&refs) {
                 return Err(format!("{a} and {b} would cover the same part of the desktop"));
             }
         }
-        // Variable refresh first: the one part the card can still refuse.
-        let mut done = Vec::new();
-        if let Some(on) = wish.vrr {
-            // Not lit yet, it is kept for the first frame: whether that can
-            // be done is asked of the card now, while nothing has moved.
-            if on && !m.flips.lock().unwrap().set {
+        // Variable refresh can still be refused by the card: asked before anything moves.
+        for ((name, wish), p) in wishes.iter().zip(&plans) {
+            let m = &self.monitors[p.k];
+            if let (Some(true), Some(conn), Some(crtc)) = (wish.vrr, m.connector, m.crtc) {
                 crate::output::vrr_change(name, property(&self.drm, conn, "vrr_capable").map(|(_, v)| v), property(&self.drm, crtc, "VRR_ENABLED").map(|(_, v)| v), true)?;
             }
-            done.push(vrr_now_or_when_lit(&m.flips, name, on, || set_vrr(&self.drm, conn, crtc, name, on))?);
         }
-        if let Some(at) = wish.at {
-            // The others stay where they are: placed where they were, or the
-            // row left to right would close up around the one moved.
-            for o in self.monitors.iter().filter(|o| o.crtc.is_some() && o.name != name) {
-                if asked(&ASKED_AT, &o.name).is_none() && config::get().monitor(&o.name).and_then(|r| r.at).is_none() {
-                    ask(&ASKED_AT, &o.name, ((o.x, o.y), false));
+        if only_check {
+            return Ok("it can be done".to_owned());
+        }
+        let mut done = Vec::new();
+        let mut moved = false;
+        for ((name, wish), p) in wishes.iter().zip(&plans) {
+            if let Some(on) = wish.vrr {
+                let m = &self.monitors[p.k];
+                if let (Some(conn), Some(crtc)) = (m.connector, m.crtc) {
+                    done.push(vrr_now_or_when_lit(&m.flips, name, on, || set_vrr(&self.drm, conn, crtc, name, on))?);
                 }
             }
-            ask(&ASKED_AT, name, (at, true));
+            if p.again {
+                let (w, h) = p.mode.size();
+                ask(&ASKED_MODE, name, config::ModeWish::Exact(w as u32, h as u32, refresh_mhz(&p.mode) as f64 / 1000.0));
+                ask(&ASKED_SCALE, name, p.scale);
+                ask(&ASKED_TURN, name, p.turn);
+                done.push(format!("{name} {w}x{h}@{:.3} scale {} transform {}", refresh_mhz(&p.mode) as f64 / 1000.0, p.scale, p.turn as u32 * 90));
+            }
+            if let Some(at) = p.at {
+                // The others stay where they are: placed where they were, or the
+                // row left to right would close up around the one moved.
+                for o in self.monitors.iter().filter(|o| o.crtc.is_some() && &o.name != name) {
+                    if asked(&ASKED_AT, &o.name).is_none() && config::get().monitor(&o.name).and_then(|r| r.at).is_none() {
+                        ask(&ASKED_AT, &o.name, ((o.x, o.y), false));
+                    }
+                }
+                ask(&ASKED_AT, name, (at, true));
+                moved = true;
+                done.push(format!("{name} at {},{}", at.0, at.1));
+            }
+        }
+        // A new mode, scale or turn: the monitor is put up again, as if it had
+        // been unplugged and plugged back in with them. Its pools stay: its
+        // name never leaves the row.
+        let again: Vec<usize> = plans.iter().filter(|p| p.again).map(|p| p.k).collect();
+        let mut failed = Vec::new();
+        for &k in &again {
+            if let Err(e) = self.put_up_again(k) {
+                eprintln!("session · {e}");
+                failed.push(e);
+            }
+        }
+        if moved || !again.is_empty() {
             self.monitors_changed();
-            done.push(format!("{name} at {},{}", at.0, at.1));
+        }
+        if !failed.is_empty() {
+            return Err(failed.join("; "));
+        }
+        if !moved && again.is_empty() && wishes.iter().any(|(_, w)| w.vrr.is_some()) {
+            // Only variable refresh: nothing moves, but whoever configures monitors is told.
+            publish(&self.monitors);
+            layers::tell(ToLayers::Monitors);
         }
         Ok(done.join("; "))
+    }
+
+    /// The monitor `k` driven again with what is asked for it now: the one
+    /// that puts it together stops, the controller is let go, and the new
+    /// mode is set with its first frame. It keeps its screen, and with it the
+    /// programs' surfaces on it.
+    fn put_up_again(&mut self, k: usize) -> Result<(), String> {
+        let (Some(conn), Some(crtc)) = (self.monitors[k].connector, self.monitors[k].crtc) else { return Ok(()) };
+        let name = self.monitors[k].name.clone();
+        let info = self.drm.get_connector(conn, false).map_err(|e| format!("{name}: the card does not say its modes: {e}"))?;
+        let wish = asked(&ASKED_MODE, &name).or_else(|| config::get().monitor(&name).map(|r| r.mode));
+        let mode = choose_mode(info.modes(), wish.as_ref()).ok_or_else(|| format!("{name} offers no mode"))?;
+        // Made whole, as when it is plugged in, then its new output moved into the screen it had.
+        let mut m = make_monitor(&self.drm, &self.gbm, name.clone(), conn, mode, crtc);
+        let output = screen::take_output(&m.screen).ok_or_else(|| format!("{name}: nothing made to show it"))?;
+        let old = self.monitors[k].screen.clone();
+        // The controller let go of only once nothing of the old one can flip on it.
+        let drm = self.drm.clone();
+        if !screen::replace_output(&old, m.size, output, || {
+            let _ = drm.set_crtc(crtc, None, (0, 0), &[], None);
+        }) {
+            return Err(format!("{name}: what puts it together did not stop in time; it stays as it was"));
+        }
+        m.screen = old;
+        // Lit or dark, as it was; where it was, until it is placed again.
+        (m.on, m.x, m.y) = (self.monitors[k].on, self.monitors[k].x, self.monitors[k].y);
+        self.monitors[k] = m;
+        Ok(())
     }
 
     /// The row of monitors is new (one plugged in or out, the phone's put up
@@ -1121,7 +1283,7 @@ impl State {
             let screen = crate::phone::make(w.size, &self.to_render);
             let scale = w.scale.clamp(0.5, 4.0);
             println!("session · a monitor for the phone: {}×{} at scale {scale}", w.size.0, w.size.1);
-            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ, gamma: 0, tinted: false, lut: None, lut_blob: 0 });
+            self.monitors.push(Monitor { name: layers::PHONE_NAME.to_owned(), crtc: None, connector: None, on: true, size: w.size, turn: 0, x: 0, y: 0, scale, screen, flips: Default::default(), mhz: crate::phone::PHONE_MHZ, gamma: 0, tinted: false, lut: None, lut_blob: 0, mode: None, modes: Vec::new(), mm: (0, 0) });
         }
         self.monitors_changed();
     }
@@ -2280,7 +2442,7 @@ mod tests {
     fn monitor(name: &str, crtc: u32, on: bool, x: i32) -> Monitor {
         let crtc = smithay::reexports::drm::control::crtc::Handle::from(std::num::NonZeroU32::new(crtc).unwrap());
         let screen = crate::screen::screen(name.into(), (1920, 1080), Box::new(Nowhere));
-        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000, gamma: 0, tinted: false, lut: None, lut_blob: 0 }
+        Monitor { name: name.into(), crtc: Some(crtc), connector: None, on, size: (1920, 1080), turn: 0, x, y: 0, scale: 1.0, screen, flips: Arc::new(Mutex::new(Flips::default())), mhz: 60000, gamma: 0, tinted: false, lut: None, lut_blob: 0, mode: None, modes: Vec::new(), mm: (0, 0) }
     }
 
     /// The right one dark, then moved left of the other: once re-sorted, the
