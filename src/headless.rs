@@ -533,6 +533,26 @@ impl Hand {
                     route.fingers(crate::layers::Fingers::Moved(x, y));
                 }
             }
+            // The touchpad's, for the program under the pointer: `pinch:begin:2`,
+            // `pinch:scale:1.4` (as far as it opened since it began), `pinch:end`,
+            // `hold:begin:1`, `hold:end`.
+            _ if what.starts_with("pinch:") || what.starts_with("hold:") => {
+                use crate::layers::{Gesture, ToLayers};
+                let parts: Vec<&str> = what.split(':').collect();
+                let n = parts.get(2).and_then(|n| n.parse::<f64>().ok());
+                let g = match (parts[0], parts.get(1).copied()) {
+                    ("pinch", Some("begin")) => Some(Gesture::PinchBegin { fingers: n.unwrap_or(2.0) as u32 }),
+                    ("pinch", Some("scale")) => n.map(|scale| Gesture::PinchUpdate { dx: 0.0, dy: 0.0, scale, rotation: 0.0 }),
+                    ("pinch", Some("end")) => Some(Gesture::PinchEnd { cancelled: false }),
+                    ("hold", Some("begin")) => Some(Gesture::HoldBegin { fingers: n.unwrap_or(1.0) as u32 }),
+                    ("hold", Some("end")) => Some(Gesture::HoldEnd { cancelled: false }),
+                    _ => None,
+                };
+                if let Some(g) = g {
+                    println!("headless · gesture {g:?}");
+                    crate::layers::tell(ToLayers::Gesture(g));
+                }
+            }
             // `wheel:-1` a notch down (as the session tells it: up is positive).
             _ if what.starts_with("wheel:") => {
                 if let Ok(n) = what[6..].parse::<f32>() {
