@@ -12,7 +12,7 @@ use pleamar::scene::{Cursor, Mods, Screens, Surface, ToRender};
 use pleamar::wgpu;
 use crate::config;
 use crate::cursor_theme::{self, Playing, Theme};
-use crate::layers::{self, MonitorInfo, ToLayers};
+use crate::layers::{self, Gesture, MonitorInfo, ToLayers};
 use crate::route::Route;
 use crate::screen::{self, Hit, LayerFrames, LayerWindow, Output, Screen};
 use pleamar::{NewSheet, Target, View};
@@ -281,6 +281,8 @@ struct State {
     /// a pinch: how many, and how much bigger or smaller.
     swipe: Option<(u32, f64, f64)>,
     pinch: Option<(u32, f64)>,
+    /// Whether that pinch is the program's under the pointer (two fingers).
+    pinch_to_program: bool,
     last_touch: std::time::Instant,
     /// The last input, and whether the monitors went dark for lack of it.
     last_input: std::time::Instant,
@@ -416,7 +418,7 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
     layers::set_card(drm.clone());
     layers::register(monitors.iter().map(|m| (MonitorInfo { name: m.name.clone(), size: m.size, x: m.x, y: m.y, mhz: m.mhz, scale: m.scale }, m.screen.clone())).collect());
     let mover = CursorMover::new(drm.clone());
-    let mut state = State { mover, session, drm, monitors, libinput, keyboards: Vec::new(), leds: smithay::reexports::input::Led::empty(), to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
+    let mut state = State { mover, session, drm, monitors, libinput, keyboards: Vec::new(), leds: smithay::reexports::input::Led::empty(), to_render: to_render.clone(), keymap, pointer: first, cursors: Vec::new(), cursor_theme: Theme::load(), cursor_sizes: Vec::new(), cursor_gbm: None, shown: None, playing: None, queued: None, frame: 0, frame_carry: 0.0, frame_timer: None, on_plane: None, cursor_used: Default::default(), cursor_clock: 0, hidden: false, custom: None, scene_cursor: Cursor::Normal, program_cursor: Cursor::Normal, scroll: 0.0, scroll_sideways: 0.0, swipe: None, pinch: None, pinch_to_program: false, last_touch: std::time::Instant::now(), last_input: std::time::Instant::now(), dark_for_idle: false, route: Route::new(to_render), cursor_pictures: Vec::new(), handle: event_loop.handle(), gbm: gbm.clone(), surfaces, cursor_kind, sheets, next_sheet, quit: false, desk_moved: 0.0, desk_moved_at: std::time::Instant::now() };
     state.make_cursors(&gbm);
     // The cursor the scene and the programs ask for, whenever it changes.
     let (cursor_tx, cursor_rx) = smithay::reexports::calloop::channel::channel::<(bool, Cursor)>();
@@ -1684,13 +1686,30 @@ impl State {
                     }
                 }
             }
-            InputEvent::GesturePinchBegin { event } => self.pinch = Some((event.fingers(), 1.0)),
+            InputEvent::GesturePinchBegin { event } => {
+                // Two fingers are the program's under the pointer (a browser's zoom);
+                // three or more, the scene's.
+                self.pinch_to_program = event.fingers() < 3 && !layers::locked();
+                if self.pinch_to_program {
+                    layers::tell(ToLayers::Gesture(Gesture::PinchBegin { fingers: event.fingers() }));
+                }
+                self.pinch = Some((event.fingers(), 1.0))
+            }
             InputEvent::GesturePinchUpdate { event } => {
+                if self.pinch_to_program {
+                    layers::tell(ToLayers::Gesture(Gesture::PinchUpdate { dx: event.delta_x(), dy: event.delta_y(), scale: event.scale(), rotation: event.rotation() }));
+                }
                 if let Some(p) = &mut self.pinch {
                     p.1 = event.scale();
                 }
             }
+            // A finger held on the touchpad: the program stops its kinetic scrolling.
+            InputEvent::GestureHoldBegin { event } if !layers::locked() => layers::tell(ToLayers::Gesture(Gesture::HoldBegin { fingers: event.fingers() })),
+            InputEvent::GestureHoldEnd { event } if !layers::locked() => layers::tell(ToLayers::Gesture(Gesture::HoldEnd { cancelled: event.cancelled() })),
             InputEvent::GesturePinchEnd { event } => {
+                if std::mem::take(&mut self.pinch_to_program) {
+                    layers::tell(ToLayers::Gesture(Gesture::PinchEnd { cancelled: event.cancelled() }));
+                }
                 if let Some((fingers, scale)) = self.pinch.take() {
                     if !event.cancelled() && fingers >= 3 && !(0.8..=1.25).contains(&scale) {
                         self.gesture(format!("pinch{fingers}_{}", if scale < 1.0 { "in" } else { "out" }));

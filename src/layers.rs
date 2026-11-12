@@ -45,6 +45,9 @@ pub enum ToLayers {
     /// the right, positive); and lifted.
     Scroll(f64, f64),
     ScrollEnd,
+    /// A touchpad gesture (a pinch, a hold) for the program under the pointer,
+    /// which asked for them (`zwp_pointer_gestures_v1`).
+    Gesture(Gesture),
     /// A key for that one: it takes the keyboard if it did not have it.
     Key { id: u64, code: u32, down: bool },
     /// The keyboard goes back to the windows.
@@ -747,6 +750,33 @@ pub fn keyboard_to_window() {
 
 pub fn window_keyboard() -> u64 {
     WINDOW_KEYBOARD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A touchpad gesture, as libinput reports it, for the program under the pointer.
+/// Pinches of two fingers and holds are the programs' (a browser's zoom); swipes
+/// and pinches of three or more are the scene's, by name (see session.rs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Gesture {
+    PinchBegin { fingers: u32 },
+    PinchUpdate { dx: f64, dy: f64, scale: f64, rotation: f64 },
+    PinchEnd { cancelled: bool },
+    HoldBegin { fingers: u32 },
+    HoldEnd { cancelled: bool },
+}
+
+/// Whether the program with the keyboard has asked to keep the compositor's
+/// shortcuts from taking keys (`zwp_keyboard_shortcuts_inhibit_v1`: a virtual
+/// machine, a remote desktop). Then keys.conf's bindings and the portal's
+/// shortcuts do not take any: they go to the program. Ctrl+Alt+Backspace,
+/// the way out, is not a binding and always works.
+static SHORTCUTS_INHIBITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn shortcuts_inhibited() -> bool {
+    SHORTCUTS_INHIBITED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_shortcuts_inhibited(yes: bool) {
+    SHORTCUTS_INHIBITED.store(yes, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether a lock screen holds the session (ext-session-lock).
