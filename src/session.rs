@@ -896,7 +896,6 @@ fn monitor_info(m: &Monitor) -> MonitorInfo {
         turn: m.turn,
         vrr: asked(&ASKED_VRR, &m.name).unwrap_or_else(|| config::get().monitor(&m.name).is_some_and(|r| r.vrr)),
         mm: m.mm,
-        settable: m.crtc.is_some() && m.connector.is_some(),
     }
 }
 

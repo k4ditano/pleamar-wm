@@ -36,8 +36,6 @@ pub struct MonitorInfo {
     pub turn: u8,
     pub vrr: bool,
     pub mm: (u32, u32),
-    /// Whether it can be changed (a card's monitor; not the phone's).
-    pub settable: bool,
 }
 
 
