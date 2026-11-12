@@ -240,7 +240,7 @@ impl Dispatch<ZwlrOutputModeV1, ModeOf> for State {
 }
 
 impl Dispatch<ZwlrOutputConfigurationV1, Mutex<Pending>> for State {
-    fn request(state: &mut Self, _: &Client, conf: &ZwlrOutputConfigurationV1, request: configuration::Request, pending: &Mutex<Pending>, _: &DisplayHandle, init: &mut DataInit<'_, Self>) {
+    fn request(state: &mut Self, _: &Client, conf: &ZwlrOutputConfigurationV1, request: configuration::Request, pending: &Mutex<Pending>, dh: &DisplayHandle, init: &mut DataInit<'_, Self>) {
         let mut p = pending.lock().unwrap();
         match request {
             configuration::Request::EnableHead { id, head } => {
@@ -260,8 +260,8 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<Pending>> for State {
                 }
                 p.heads.push((name, None));
             }
-            configuration::Request::Apply => finish(state, conf, &mut p, false),
-            configuration::Request::Test => finish(state, conf, &mut p, true),
+            configuration::Request::Apply => finish(state, dh, conf, &mut p, false),
+            configuration::Request::Test => finish(state, dh, conf, &mut p, true),
             _ => {}
         }
     }
@@ -269,7 +269,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<Pending>> for State {
 
 /// A configuration applied or tested: cancelled if the monitors changed since
 /// it was made; failed if any part cannot be done; else done, or seen to be doable.
-fn finish(state: &mut State, conf: &ZwlrOutputConfigurationV1, p: &mut Pending, only_check: bool) {
+fn finish(state: &mut State, dh: &DisplayHandle, conf: &ZwlrOutputConfigurationV1, p: &mut Pending, only_check: bool) {
     if std::mem::replace(&mut p.used, true) {
         conf.post_error(configuration::Error::AlreadyUsed, "a configuration is applied or tested once");
         return;
@@ -290,6 +290,14 @@ fn finish(state: &mut State, conf: &ZwlrOutputConfigurationV1, p: &mut Pending, 
                     println!("windows · a program configured the monitors: {done}");
                 }
                 conf.succeeded();
+                // What was done, said now with a new serial, as the protocol asks
+                // after `succeeded`: a configuration made before it is cancelled.
+                // Not left to the monitors' own notice, which comes later or (only
+                // variable refresh, or a place already the same) not at all: a
+                // program that started meanwhile still saw the old serial.
+                if !only_check {
+                    state.output_managers.update(dh);
+                }
             }
             Err(why) => {
                 println!("windows · a program's monitor configuration was refused: {why}");
