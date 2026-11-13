@@ -1,6 +1,7 @@
 language 0.1
 // What the virtual-pointer test (tests/virtual_pointer.rs) looks at: a desk that is one big zone
 // which counts what reaches it —clicks of each button, the wheel, where the pointer is.
+// (`wheel`, not `wheel.y`/`wheel.x`: those are only in pleamar exp2, and this builds on main.)
 scene VirtualPointerDesk {
     surface { size: 1920, 1080 }
     windows win max 2
@@ -11,6 +12,6 @@ scene VirtualPointerDesk {
     zone box pad { from: 0, 0; size: 1920, 1080 }
     on press pad { clicks = clicks + 1 }
     on press right pad { rights = rights + 1 }
-    on scroll pad { wheeled = wheeled + wheel.y; sideways = sideways + wheel.x }
+    on scroll pad { wheeled = wheeled + wheel }
     text "{pointer.x, 0},{pointer.y, 0} · {clicks, 0} clicks · {rights, 0} right · wheel {wheeled, 0}/{sideways, 0}" { at: 20, 40; size: 20; color: #f5f7f5 }
 }
