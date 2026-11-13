@@ -1186,6 +1186,16 @@ impl State {
                     *a = Some((w, h));
                 }
                 if let Some(Some(win)) = self.slots.get(slot) {
+                    // Floated by a rule, it is never a tile: a tile's size
+                    // the scene asked before it knew (it heard of the window
+                    // first, and of the rule a frame later) is not passed on.
+                    // Fullscreen it is the monitor's size it must be told.
+                    if win.dialog && win.ruled.is_some() && win.floating && !win.fullscreen && (w, h) != (0, 0) {
+                        if let Some(a) = self.asked.get_mut(slot) {
+                            *a = Some((0, 0));
+                        }
+                        return;
+                    }
                     // Floating at its own size (`ask: 0, 0`) with a rule that gives it one: that one.
                     let (w, h) = match win.ruled {
                         Some(Some(size)) if (w, h) == (0, 0) => size,
@@ -1659,6 +1669,22 @@ impl State {
             w.floating |= rules.float;
             if let Some((a, b)) = size {
                 w.toplevel.resize(a, b);
+            } else if rules.float {
+                // Not yet told a size (its first configure goes on its first
+                // commit, and it says who it is before that): its own, not
+                // the one this slot's last window had —a tile's—, which it
+                // would draw once, as big as the monitor, and then shrink.
+                if let Toplevel::Xdg(t) = &w.toplevel {
+                    if !t.is_initial_configure_sent() {
+                        t.with_pending_state(|s| s.size = None);
+                    }
+                }
+            }
+        }
+        if rules.float {
+            // (What the scene asks of a floating one, `0 × 0`: already so.)
+            if let Some(a) = self.asked.get_mut(slot) {
+                *a = Some((0, 0));
             }
         }
         if rules.float {

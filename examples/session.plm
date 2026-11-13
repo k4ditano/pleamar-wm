@@ -2062,6 +2062,12 @@ scene Session {
         on change bye.$i { tre.bye.$i = if(bye.$i > 0.5, 1, 0) }
         prop seen.$i = 0 ~260ms
         follow seen.$i = if(win.$i.open and bye.$i < 0.5, 1, 0)
+        // Whether it was a dialog (or floated by a rule) while it was open:
+        // closed, `dialog` is false again at once, and what is seen leaving
+        // would be its tile —all of the monitor, for a window that never had one—.
+        fact wasd.$i = 0
+        on change win.$i.open while win.$i.open { wasd.$i = 0 }
+        on change win.$i.dialog while win.$i.open { wasd.$i = if(win.$i.dialog, 1, 0) }
         // How full of water it is: filling as it opens, draining as it goes
         // (and filling again if it stays, because it asked whether to save).
         let water = min(fill.$i, seen.$i)
@@ -2136,7 +2142,7 @@ scene Session {
             z: zz + if(win.$i.floating, 50000, 0)
             // Carried, it is drawn over the others, further down; flying into
             // the island or out of it, too.
-            show: seen.$i > 0.01 and sc == screen.index and ws.vis and dragging != i and not (landing == i and sc != landing.to) and not win.$i.dialog and mini.$i <= 0.02
+            show: seen.$i > 0.01 and sc == screen.index and ws.vis and dragging != i and not (landing == i and sc != landing.to) and not win.$i.dialog and wasd.$i < 0.5 and mini.$i <= 0.02
             // Filling, in the rain or the snow (their glass has its own
             // shader): it simply comes in.
             opacity: smooth(0, 0.3, seen.$i) * if(wet > 0.001 or cold > 0.001, water, 1) * (1 - 0.25 * ovcarry.$i) * if(card, if(ph.row, clamp(1.2 - 0.35 * abs(ph.d), 0.4, 1), clamp(1 + 0.2 * ph.d, 0.3, 1)), 1)
@@ -3533,11 +3539,13 @@ scene Session {
         prop dlg.$i = 0 ~220ms
         let dlg.ws = win.$i.pool == inpool[max(win.$i.screen, 0)]
         // The mouse going into it gives it the keyboard, as it does a window.
-        let dlg.pointed = win.$i.dialog and win.$i.open and dlg.ws and win.$i.screen == mon and abs(mouse.x - Wmon / 2) <= dw / 2 and abs(mouse.y - Hmon / 2) <= dh / 2
+        let dlg.pointed = win.$i.dialog and win.$i.open and not win.$i.fullscreen and dlg.ws and win.$i.screen == mon and abs(mouse.x - Wmon / 2) <= dw / 2 and abs(mouse.y - Hmon / 2) <= dh / 2
         on change dlg.pointed while dlg.pointed and dragging < 0 and not overview { focus win.$i }
-        follow dlg.$i = if(win.$i.dialog and win.$i.open and dlg.ws, 1, 0)
+        // (Once it has drawn: until then it has no size, and it would be a
+        // little empty box in the middle for as long as its program takes.)
+        follow dlg.$i = if(win.$i.dialog and win.$i.open and dlg.ws and win.$i.width > 0.5, 1, 0)
         group {
-            show: dlg.$i > 0.01 and win.$i.screen == screen.index
+            show: dlg.$i > 0.01 and not win.$i.fullscreen and win.$i.screen == screen.index
             opacity: dlg.$i
             pivot: dx + dw / 2, dy + dh / 2
             scale: 0.94 + 0.06 * dlg.$i
