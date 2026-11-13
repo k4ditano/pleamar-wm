@@ -399,8 +399,22 @@ struct Picture {
     piece: [i32; 4],
     buffer: Option<WlBuffer>,
     damage: bool,
+    /// Whose picture it is: what the monitor tracks for it is lost if the picture is.
+    owner: u64,
     /// The pointer drawn into it: its program asked for it (`overlay_cursor`).
     pointer: bool,
+}
+
+/// What a picture says changed in it (`copy_with_damage`): what the monitor knows has changed
+/// since this program's last picture of that piece; all of it when that is not known, and
+/// with the pointer in the picture (its moving is not in what the monitor knows).
+fn picture_damage(p: &Picture, id: u64, w: u32, h: u32) -> (u32, u32, u32, u32) {
+    // (Taken either way: it was set for this picture, whatever came of it.)
+    let known = layers::take_damage(id);
+    match known.filter(|_| !p.pointer) {
+        Some([x, y, dw, dh]) if x >= 0 && y >= 0 && dw > 0 && dh > 0 && x as u32 + dw as u32 <= w && y as u32 + dh as u32 <= h => (x as u32, y as u32, dw as u32, dh as u32),
+        _ => (0, 0, w, h),
+    }
 }
 
 /// A program's buffer on loan: given back with `release`, and, with
@@ -2219,13 +2233,15 @@ impl State {
             layers::unwait_pointer(id);
         }
         if !ok {
+            layers::lose_damage(p.owner);
             p.frame.failed();
             return;
         }
         let (w, h) = (p.piece[2] as u32, p.piece[3] as u32);
         p.frame.flags(picture_flags(without));
         if p.damage && p.frame.version() >= 2 {
-            p.frame.damage(0, 0, w, h);
+            let (x, y, w, h) = picture_damage(&p, id, w, h);
+            p.frame.damage(x, y, w, h);
         }
         let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
         // SAFETY: a valid timespec for the call to fill.
@@ -2268,12 +2284,14 @@ impl State {
             _ => false,
         };
         if !written {
+            layers::lose_damage(p.owner);
             p.frame.failed();
             return;
         }
         p.frame.flags(picture_flags(without));
         if p.damage && p.frame.version() >= 2 {
-            p.frame.damage(0, 0, w as u32, h as u32);
+            let (x, y, w, h) = picture_damage(&p, id, w as u32, h as u32);
+            p.frame.damage(x, y, w, h);
         }
         // On the presentation clock, CLOCK_MONOTONIC, as the protocol asks: a
         // recorder (wf-recorder) times its frames by it, and with the wall
@@ -4670,7 +4688,7 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
             }
             frame.buffer_done();
         }
-        state.pictures.insert(id, Picture { frame, monitor, piece, buffer: None, damage: false, pointer });
+        state.pictures.insert(id, Picture { frame, monitor, piece, buffer: None, damage: false, owner: 0, pointer });
     }
 }
 
@@ -4703,6 +4721,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, u64> for State {
         }
         p.buffer = Some(buffer);
         p.damage = damage;
+        p.owner = owner;
         if crate::screen::capture_debug() {
             eprintln!("capture · {:.1} asked (damage {damage})", crate::screen::wall_ms());
         }

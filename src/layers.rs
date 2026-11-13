@@ -1091,6 +1091,33 @@ pub fn take_without_owner(id: u64) -> bool {
     true
 }
 
+/// What changed in picture `id` since its program's last one of that piece (x, y, w, h, in
+/// the picture's pixels), when it is known: set before the picture is handed over.
+static DAMAGE: Mutex<Vec<(u64, [i32; 4])>> = Mutex::new(Vec::new());
+
+pub fn set_damage(id: u64, rect: [i32; 4]) {
+    DAMAGE.lock().unwrap().push((id, rect));
+}
+
+/// Taken once, when the picture is handed over: none says all of it.
+pub fn take_damage(id: u64) -> Option<[i32; 4]> {
+    let mut all = DAMAGE.lock().unwrap();
+    let k = all.iter().position(|d| d.0 == id)?;
+    Some(all.swap_remove(k).1)
+}
+
+/// Programs whose last picture failed: what the monitor tracked of what they were not told is
+/// no good any more, and their next one says all of it.
+static LOST: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+pub fn lose_damage(owner: u64) {
+    LOST.lock().unwrap().push(owner);
+}
+
+pub fn take_lost_damage() -> Vec<u64> {
+    std::mem::take(&mut *LOST.lock().unwrap())
+}
+
 /// Where the pictures that go onto the card are to be written, by picture.
 static CARD_TARGETS: Mutex<Vec<(u64, pleamar::scene::DmabufPiece)>> = Mutex::new(Vec::new());
 
@@ -1111,6 +1138,7 @@ pub fn take_card_target(id: u64) -> Option<pleamar::scene::DmabufPiece> {
 /// A picture no longer wanted: its program let it go before it was taken.
 pub fn uncapture(id: u64) {
     CARD_TARGETS.lock().unwrap().retain(|t| t.0 != id);
+    DAMAGE.lock().unwrap().retain(|d| d.0 != id);
     unwait_pointer(id);
     for (_, sc) in MONITORS.lock().unwrap().iter() {
         sc.0.lock().unwrap().captures.retain(|c| c.0 != id);

@@ -749,8 +749,10 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
     let mut yuv: Option<pleamar::dmabuf::YuvToRgb> = None;
     let debug = std::env::var_os("PLEAMAR_DEBUG_SCREEN").is_some();
     let (lock, cv) = &*screen;
+    // The programs that were handed a picture of this monitor lately, and what changed since.
+    let mut handed: std::collections::HashMap<u64, Handed> = Default::default();
     loop {
-        let (quads, blurs, size, modifiers, fresh, anew, arrived, forget, shows, drew_clients, surfaces, changed, captures, unshared, reads, owners) = {
+        let (quads, blurs, size, modifiers, fresh, anew, arrived, forget, shows, drew_clients, surfaces, changed, captures, unshared, reads, owners, this_round) = {
             let mut st = lock.lock().unwrap();
             while !st.quit && !(st.dirty && st.idle && !st.paused) {
                 st = cv.wait_timeout(st, Duration::from_millis(500)).unwrap().0;
@@ -833,6 +835,14 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                 Some(b)
             };
             let changes = std::mem::take(&mut st.changed);
+            // What this round changes, for the damage the pictures say (before a picture asked for
+            // makes it «all of it»): with glass, all of it, as the monitor itself is put together.
+            let this_round = match changed {
+                _ if !blurs.is_empty() => Damage::All,
+                None => Damage::All,
+                Some(b) if b[2] <= b[0] || b[3] <= b[1] => Damage::Nothing,
+                Some(b) => Damage::Box(b),
+            };
             // The pictures due now: the plain ones, and the ones waiting for a
             // change once something changed where they look.
             // Waiting for a change: someone else's, where it looks. A program's
@@ -871,7 +881,7 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
                     (asked.collect(), to)
                 })
                 .collect();
-            (quads, blurs, st.size, st.modifiers.clone(), std::mem::take(&mut st.fresh), anew, arrived, std::mem::take(&mut st.forget), shows, drew_clients, surfaces, changed, due, unshared, reads, owners)
+            (quads, blurs, st.size, st.modifiers.clone(), std::mem::take(&mut st.fresh), anew, arrived, std::mem::take(&mut st.forget), shows, drew_clients, surfaces, changed, due, unshared, reads, owners, this_round)
         };
         part(0, &mut parts);
         for b in &forget {
@@ -1098,6 +1108,28 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             done.wait(&device, Duration::from_secs(1));
             eprintln!("capture ·   the putting together took the card {:.1} ms more", t.elapsed().as_secs_f64() * 1000.0);
         }
+        // What each program has not been told since its last picture of this monitor: from its first on.
+        let now_at = std::time::Instant::now();
+        for owner in layers::take_lost_damage() {
+            handed.remove(&owner);
+        }
+        for h in handed.values_mut() {
+            h.since.add(this_round);
+        }
+        handed.retain(|_, h| now_at.duration_since(h.at) < Duration::from_secs(10));
+        for (id, piece, _, owner) in &captures {
+            let told = match handed.get_mut(owner) {
+                Some(h) if h.piece == *piece => std::mem::replace(&mut h.since, Damage::Nothing),
+                _ => Damage::All,
+            };
+            handed.insert(*owner, Handed { piece: *piece, since: Damage::Nothing, at: now_at });
+            if capture_debug() {
+                eprintln!("capture · {:.1} picture {id} of {owner}: this round {this_round:?}, since its last {told:?}", wall_ms());
+            }
+            if let Some(r) = told.within(*piece) {
+                layers::set_damage(*id, r);
+            }
+        }
         for (id, piece, _, owner) in &captures {
             let t = std::time::Instant::now();
             let (upto, without) = below_owner(&owners, *owner);
@@ -1173,6 +1205,41 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
         }
         part(5, &mut parts);
     }
+}
+
+/// What changed on a monitor, as far as is known: nothing, a box (x0, y0, x1, y1), or all of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Damage {
+    Nothing,
+    Box([i32; 4]),
+    All,
+}
+
+impl Damage {
+    pub fn add(&mut self, other: Damage) {
+        *self = match (*self, other) {
+            (Damage::All, _) | (_, Damage::All) => Damage::All,
+            (d, Damage::Nothing) | (Damage::Nothing, d) => d,
+            (Damage::Box(a), Damage::Box(b)) => Damage::Box([a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]),
+        };
+    }
+
+    /// Where it is within a picture of that piece (x, y, w, h), in the picture's own pixels, if
+    /// it is known and something of it is in the picture: none says «all of it».
+    pub fn within(&self, piece: [i32; 4]) -> Option<[i32; 4]> {
+        let Damage::Box(b) = self else { return None };
+        let (x0, y0) = (b[0].max(piece[0]), b[1].max(piece[1]));
+        let (x1, y1) = (b[2].min(piece[0] + piece[2]), b[3].min(piece[1] + piece[3]));
+        (x1 > x0 && y1 > y0).then(|| [x0 - piece[0], y0 - piece[1], x1 - x0, y1 - y0])
+    }
+}
+
+/// A program that was handed a picture of a monitor: of what piece, what changed
+/// since, and when (the ones not heard of for a while are forgotten).
+struct Handed {
+    piece: [i32; 4],
+    since: Damage,
+    at: std::time::Instant,
 }
 
 /// `PLEAMAR_DEBUG_CAPTURE=1`: when a monitor is put together and its pictures

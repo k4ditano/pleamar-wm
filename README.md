@@ -653,7 +653,13 @@ The cursor is the system's theme (XCURSOR_THEME, or what ~/.icons/default
 inherits), on the card's cursor plane, with the shape whoever has the pointer
 asks for. Other programs' bars keep their room (exclusive zones: the scene
 reads `win.reserved.$s.top`…). Screenshots work (`wlr-screencopy`: grim, a
-recorder, Marea's lens), and `pleamar-wm hyprctl`
+recorder, Marea's lens), and a picture asked for with `copy_with_damage`
+(wf-recorder, wayvnc, the lens) says only what changed since that program's last
+one of that piece, the box round what the monitor repainted, not all of it each
+time: a recorder or a remote desktop copies that, not the whole screen. All of it
+is said where that is not known (a program's first picture, another piece, the
+pointer drawn into it, or glass on the monitor, which is put together whole).
+`pleamar-wm hyprctl`
 `monitors|activewindow|locked` says the desktop the way Hyprland does, for
 what used to ask it. Where the mouse
 is on the whole desktop is said, as it moves, on the `cursor.sock` next to
