@@ -2565,7 +2565,7 @@ scene Session {
         // it can: a zoom out if it is bigger than the view (never closer), and a push just far enough
         // to bring it in, with a little air. (Centring it, as Super and a double click do, moved
         // the whole canvas after every resize.)
-        let kv.z = clamp(min(cz, (mg.Ws - 2 * gap) / max(fw.$i, 1), (mg.ah - gap) / max(fh.$i + bar, 1)), 0.1, 1)
+        let kv.z = clamp(min(cz, min((mg.Ws - 2 * gap) / max(fw.$i, 1), (mg.ah - gap) / max(fh.$i + bar, 1))), 0.1, 1)
         let kv.pad = gap / kv.z
         let kv.x0 = cvx[sc] + win.reserved[sc].left
         let kv.y0 = cvy[sc] + win.reserved[sc].top + bar
