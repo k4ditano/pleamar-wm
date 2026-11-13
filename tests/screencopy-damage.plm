@@ -1,0 +1,12 @@
+language 0.1
+// What the screencopy-damage test (tests/screencopy_damage.rs) films: a dark desk with one box that
+// changes colour when the desk is pressed. Only that box changes from one picture to the next.
+scene ScreencopyDesk {
+    surface { size: 1920, 1080 }
+    windows win max 2
+    fact lit = 0
+    box { from: 0, 0; size: 1920, 1080; color: #101418 }
+    box { from: 400, 300; size: 200, 120; color: if(lit > 0.5, #ef7a66, #3a3f44) }
+    zone box pad { from: 0, 0; size: 1920, 1080 }
+    on press pad { lit = 1 - lit }
+}
