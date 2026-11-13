@@ -50,3 +50,8 @@ async-executor = "1"
 async-channel = "2"
 async-io = "2"
 futures-lite = "2"
+
+[dev-dependencies]
+# A client for tests/virtual_pointer.rs: the protocol's other end, already in the tree through pleamar.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

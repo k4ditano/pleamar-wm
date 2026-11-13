@@ -2233,6 +2233,8 @@ dependencies = [
  "str0m",
  "tungstenite",
  "vt100",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "xcursor",
  "xkbcommon",
  "zbus",
