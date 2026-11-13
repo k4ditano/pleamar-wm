@@ -438,18 +438,39 @@ impl pleamar::Platform for Headless {
         // try it without real devices).
         let script = std::env::var("PLEAMAR_HEADLESS_INPUT").ok();
         let fifo = std::env::var("PLEAMAR_HEADLESS_INPUT_FIFO").ok();
-        if script.is_some() || fifo.is_some() {
-            let route = Arc::new(Mutex::new(crate::route::Route::new(to_render.clone())));
-            // A pointer to be seen where one is drawn into a picture (sharing
-            // the screen), as the cursor theme draws it.
-            let look = Look::start(route.clone(), scale);
-            // A phone's fingers, as the session's own would take them.
-            let theirs = route.clone();
-            crate::layers::set_fingers_sink(Box::new(move |f| {
-                theirs.lock().unwrap().fingers(f);
+        // The hand is made when it is first needed: by a script, a pipe or a
+        // program's virtual pointer (`wlrctl`, `ydotool`). Nobody uses it, nothing is made.
+        let desktop = (unit_w * count as i32, (size.1 as f64 / scale).round() as i32);
+        let made: Arc<Mutex<Option<Hand>>> = Arc::new(Mutex::new(None));
+        let make_hand = {
+            let (screens, phone, to_render) = (screens.clone(), phone.clone(), to_render.clone());
+            Arc::new(move || {
+                let route = Arc::new(Mutex::new(crate::route::Route::new(to_render.clone())));
+                // A pointer to be seen where one is drawn into a picture (sharing
+                // the screen), as the cursor theme draws it.
+                let look = Look::start(route.clone(), scale);
+                // A phone's fingers, as the session's own would take them.
+                let theirs = route.clone();
+                crate::layers::set_fingers_sink(Box::new(move |f| {
+                    theirs.lock().unwrap().fingers(f);
+                    true
+                }));
+                // Where the session starts it: in the middle of the first monitor.
+                let at = Arc::new(Mutex::new((unit_w as f64 / 2.0, desktop.1 as f64 / 2.0)));
+                Hand { route, screens: screens.clone(), phone: phone.clone(), unit_w, scale, look, at, desktop }
+            })
+        };
+        // A program's virtual pointer (wlr-virtual-pointer), by the same road as a mouse's.
+        {
+            let (made, make_hand) = (made.clone(), make_hand.clone());
+            crate::layers::set_virtual_pointer_sink(Box::new(move |e| {
+                let hand = made.lock().unwrap().get_or_insert_with(|| make_hand()).clone();
+                hand.virtual_pointer(e);
                 true
             }));
-            let hand = Hand { route, screens: screens.clone(), phone: phone.clone(), unit_w, scale, look };
+        }
+        if script.is_some() || fifo.is_some() {
+            let hand = made.lock().unwrap().get_or_insert_with(|| make_hand()).clone();
             if let Some(script) = script {
                 let hand = hand.clone();
                 std::thread::spawn(move || {
@@ -506,9 +527,74 @@ struct Hand {
     scale: f64,
     /// Told when what is under the pointer changes, for its shape.
     look: channel::Sender<()>,
+    /// Where the pointer is, in units of the desktop, for what moves it by an amount.
+    at: Arc<Mutex<(f64, f64)>>,
+    /// The desktop's size in units.
+    desktop: (i32, i32),
 }
 
 impl Hand {
+    /// What a program's virtual pointer does, as the script's steps would say it.
+    fn virtual_pointer(&self, e: crate::layers::VirtualPointer) {
+        use crate::layers::{VirtualAxisSource as Source, VirtualPointer as V};
+        let (w, h) = (self.desktop.0 as f64, self.desktop.1 as f64);
+        let go_to = |x: f64, y: f64| {
+            let (x, y) = (x.clamp(0.0, (w - 1.0).max(0.0)), y.clamp(0.0, (h - 1.0).max(0.0)));
+            *self.at.lock().unwrap() = (x, y);
+            self.step(&format!("{x},{y}"));
+        };
+        match e {
+            V::Motion { dx, dy, time } => {
+                crate::layers::tell(crate::layers::ToLayers::Relative { dx, dy, ux: dx, uy: dy, utime: time as u64 * 1000 });
+                let (x, y) = *self.at.lock().unwrap();
+                go_to(x + dx, y + dy);
+            }
+            V::Absolute { x, y, output } => {
+                // Over the monitor it was made for (`HEADLESS-2`), or all of the desktop.
+                let monitor = output.and_then(|n| n.strip_prefix("HEADLESS-").and_then(|k| k.parse::<usize>().ok())).and_then(|k| k.checked_sub(1)).filter(|k| *k < self.screens.len());
+                let (x0, mw) = match monitor {
+                    Some(k) => ((k as i32 * self.unit_w) as f64, self.unit_w as f64),
+                    None => (0.0, w),
+                };
+                go_to(x0 + x * mw, y * h);
+            }
+            V::Button { code, down } => {
+                let screens = self.all_screens();
+                self.route.lock().unwrap().button(&screens, code, down);
+            }
+            V::Axis { source, vertical, horizontal } => {
+                let fingers = matches!(source, Source::Finger | Source::Continuous);
+                if fingers {
+                    let (x, y) = (horizontal.amount.unwrap_or(0.0), vertical.amount.unwrap_or(0.0));
+                    if (x != 0.0 || y != 0.0) && !(vertical.stop || horizontal.stop) {
+                        self.step(&format!("scroll:{x},{y}"));
+                    } else if source == Source::Finger {
+                        self.step("scrollend");
+                    }
+                } else {
+                    // A wheel: in notches, up positive; down is positive on the wire.
+                    let notches = |a: crate::layers::VirtualAxis| a.v120.map(|v| -v / 120.0).or(a.amount.map(|v| -v / 15.0)).unwrap_or(0.0);
+                    let (n, side) = (notches(vertical), notches(horizontal));
+                    if n != 0.0 {
+                        self.step(&format!("wheel:{n}"));
+                    }
+                    if side != 0.0 {
+                        self.step(&format!("wheelx:{side}"));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every monitor, the phone's too.
+    fn all_screens(&self) -> Vec<Screen> {
+        let mut screens = self.screens.clone();
+        if let Some((sc, ..)) = self.phone.lock().unwrap().as_ref() {
+            screens.push(sc.clone());
+        }
+        screens
+    }
+
     fn step(&self, what: &str) {
         let phone = self.phone.lock().unwrap().clone();
         let mut screens = self.screens.clone();

@@ -692,6 +692,17 @@ through `wlr-output-management`; turning a monitor off from there is not done
 - **Touchpad**: three and four finger swipes and pinches are the scene's
   events (`swipe3_down`, `swipe4_left`, `pinch3_in`…); session.plm does as
   Hyprland did.
+- **A virtual pointer for any program** (wlr-virtual-pointer, as sway has
+  it, and open to every program like the virtual keyboard): `wlrctl pointer`,
+  `ydotool` over Wayland, wayvnc or a remote-desktop server move the pointer
+  (by an amount or to a place on the desktop or on one monitor), press its
+  buttons and turn its wheel, and what they send goes the road a mouse's goes:
+  to the scene, to a program's surface, to a window. It counts as someone
+  using the machine (the screen does not dim under it), though not as the
+  person being there. Nothing runs until a program uses it. It drives the
+  person's pointer, and the gate's rules for an agent's hands
+  (`pleamar-wm agent`) do not reach it: any program that may talk to the
+  compositor may click, as with the virtual keyboard.
 - And the usual: xdg-activation, the middle-click selection and clipboard
   managers (wlr and ext data-control), virtual keyboards (wtype), input
   methods (text-input, input-method), pointer lock and relative motion

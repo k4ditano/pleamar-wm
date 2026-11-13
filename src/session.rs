@@ -527,6 +527,18 @@ fn run(surfaces: Vec<Surface>, to_render: Sender<ToRender>) -> Result<(), String
             }
         })
         .map_err(|e| e.to_string())?;
+    // A program's virtual pointer (wlr-virtual-pointer: wlrctl, ydotool, wayvnc): what it says goes
+    // where a mouse's would.
+    let (virtual_tx, virtual_rx) = smithay::reexports::calloop::channel::channel::<layers::VirtualPointer>();
+    layers::set_virtual_pointer_sink(Box::new(move |e| virtual_tx.send(e).is_ok()));
+    event_loop
+        .handle()
+        .insert_source(virtual_rx, |event, _, state: &mut State| {
+            if let smithay::reexports::calloop::channel::Event::Msg(e) = event {
+                state.virtual_pointer(e);
+            }
+        })
+        .map_err(|e| e.to_string())?;
     // Idleness, looked at once a second.
     event_loop
         .handle()
@@ -1711,6 +1723,117 @@ impl State {
         }
     }
 
+    /// The pointer moved by that much, as a mouse says it (accelerated, and as
+    /// the device itself did), at that time in microseconds.
+    fn pointer_by(&mut self, dx: f64, dy: f64, ux: f64, uy: f64, utime: u64) {
+        // As it moved, for a program that locked the pointer (a game).
+        layers::tell(ToLayers::Relative { dx, dy, ux, uy, utime });
+        match layers::pointer_hold() {
+            // Locked: the pointer stays where it is; only the motion is told.
+            Some(layers::Hold::Locked) => {}
+            _ => self.move_pointer(dx, dy),
+        }
+    }
+
+    /// The pointer put there, in units of the desktop.
+    fn pointer_to(&mut self, x: f64, y: f64) {
+        let (dx, dy) = (x - self.pointer.0, y - self.pointer.1);
+        self.move_pointer(dx, dy);
+    }
+
+    /// The desktop as the monitors lay it out: left, top, right and bottom.
+    fn desktop(&self) -> (i32, i32, i32, i32) {
+        let x0 = self.monitors.iter().map(|m| m.x).min().unwrap_or(0);
+        let y0 = self.monitors.iter().map(|m| m.y).min().unwrap_or(0);
+        let x1 = self.monitors.iter().map(|m| m.x + m.units().0).max().unwrap_or(1);
+        let y1 = self.monitors.iter().map(|m| m.y + m.units().1).max().unwrap_or(1);
+        (x0, y0, x1, y1)
+    }
+
+    /// What a program's virtual pointer does (virtual_pointer.rs): as libinput's
+    /// own events would, by the same roads.
+    fn virtual_pointer(&mut self, event: layers::VirtualPointer) {
+        use layers::VirtualPointer as V;
+        // Someone, or something, is using the machine: it is not idle (nor dark).
+        self.activity();
+        match event {
+            V::Motion { dx, dy, time } => self.pointer_by(dx, dy, dx, dy, time as u64 * 1000),
+            V::Absolute { x, y, output } => {
+                // Over the monitor it was made for, or all of the desktop.
+                let (x0, y0, x1, y1) = output
+                    .and_then(|n| self.monitors.iter().find(|m| m.name == n))
+                    .map(|m| (m.x, m.y, m.x + m.units().0, m.y + m.units().1))
+                    .unwrap_or_else(|| self.desktop());
+                self.pointer_to(x0 as f64 + x * (x1 - x0) as f64, y0 as f64 + y * (y1 - y0) as f64);
+            }
+            V::Button { code, down } => self.button(code, down),
+            V::Axis { source, vertical, horizontal } => {
+                use smithay::backend::input::AxisSource;
+                let source = match source {
+                    layers::VirtualAxisSource::Wheel => AxisSource::Wheel,
+                    layers::VirtualAxisSource::Finger => AxisSource::Finger,
+                    layers::VirtualAxisSource::Continuous => AxisSource::Continuous,
+                    layers::VirtualAxisSource::WheelTilt => AxisSource::WheelTilt,
+                };
+                // A stop is a finger lifted: libinput says it as an amount of nothing.
+                let amount = |a: layers::VirtualAxis| if a.stop { Some(0.0) } else { a.amount };
+                self.axis(source, (vertical.v120, amount(vertical)), (horizontal.v120, amount(horizontal)));
+            }
+        }
+    }
+
+    /// A button, by its evdev code.
+    fn button(&mut self, code: u32, down: bool) {
+        let screens = self.screens();
+        if self.route.button(&screens, code, down) && !down {
+            self.move_pointer(0.0, 0.0);
+        }
+    }
+
+    /// A wheel's or a touchpad's: each axis in 120ths of a notch (a wheel) and in units (fingers).
+    fn axis(&mut self, source: smithay::backend::input::AxisSource, (v120_v, amount_v): (Option<f64>, Option<f64>), (v120_h, amount_h): (Option<f64>, Option<f64>)) {
+        // A wheel in notches; a touchpad, a notch every 15 px of finger.
+        let fingers = matches!(source, AxisSource::Finger | AxisSource::Continuous);
+        let notches = match (source, v120_v, amount_v) {
+            (AxisSource::Wheel, Some(v), _) => -v / 120.0,
+            (_, _, Some(a)) => {
+                self.scroll += a;
+                let n = (self.scroll / 15.0).trunc();
+                self.scroll -= n * 15.0;
+                -n
+            }
+            _ => 0.0,
+        };
+        let sideways = match (source, v120_h, amount_h) {
+            (AxisSource::Wheel, Some(v), _) => -v / 120.0,
+            (_, _, Some(a)) => {
+                self.scroll_sideways += a;
+                let n = (self.scroll_sideways / 15.0).trunc();
+                self.scroll_sideways -= n * 15.0;
+                -n
+            }
+            _ => 0.0,
+        };
+        if fingers {
+            // Fingers: a program follows them as far as they went (the
+            // scene, the same notches as ever); and, once they are
+            // lifted (no way at all, said of each axis), it may go on.
+            let (x, y) = (amount_h.unwrap_or(0.0), amount_v.unwrap_or(0.0));
+            if x != 0.0 || y != 0.0 {
+                self.route.scroll(x, y, (notches + sideways) as f32);
+            } else if source == AxisSource::Finger {
+                self.route.scroll_end();
+            }
+        } else {
+            if notches != 0.0 {
+                self.route.wheel(notches as f32);
+            }
+            if sideways != 0.0 {
+                self.route.wheel_sideways(sideways as f32);
+            }
+        }
+    }
+
     fn input(&mut self, event: InputEvent<LibinputInputBackend>) {
         // Anything but a device coming or going is someone there.
         if !matches!(event, InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. }) {
@@ -1751,23 +1874,13 @@ impl State {
         }
         match event {
             InputEvent::PointerMotion { event } => {
-                // As it moved, for a program that locked the pointer (a game).
-                layers::tell(ToLayers::Relative { dx: event.delta_x(), dy: event.delta_y(), ux: event.delta_x_unaccel(), uy: event.delta_y_unaccel(), utime: smithay::backend::input::Event::time(&event) });
-                match layers::pointer_hold() {
-                    // Locked: the pointer stays where it is; only the motion is told.
-                    Some(layers::Hold::Locked) => {}
-                    _ => self.move_pointer(event.delta_x(), event.delta_y()),
-                }
+                self.pointer_by(event.delta_x(), event.delta_y(), event.delta_x_unaccel(), event.delta_y_unaccel(), smithay::backend::input::Event::time(&event));
             }
             InputEvent::PointerMotionAbsolute { event } => {
                 // A tablet or a virtual machine's pointer: over all of the desktop.
-                let x0 = self.monitors.iter().map(|m| m.x).min().unwrap_or(0);
-                let y0 = self.monitors.iter().map(|m| m.y).min().unwrap_or(0);
-                let x1 = self.monitors.iter().map(|m| m.x + m.units().0).max().unwrap_or(1);
-                let y1 = self.monitors.iter().map(|m| m.y + m.units().1).max().unwrap_or(1);
+                let (x0, y0, x1, y1) = self.desktop();
                 let p = event.position_transformed((x1 - x0, y1 - y0).into());
-                let (dx, dy) = (p.x + x0 as f64 - self.pointer.0, p.y + y0 as f64 - self.pointer.1);
-                self.move_pointer(dx, dy);
+                self.pointer_to(p.x + x0 as f64, p.y + y0 as f64);
             }
             InputEvent::DeviceAdded { mut device } => {
                 set_up_device(&mut device);
@@ -1780,54 +1893,10 @@ impl State {
                 }
             }
             InputEvent::DeviceRemoved { device } => self.keyboards.retain(|k| *k != device),
-            InputEvent::PointerButton { event } => {
-                let down = event.state() == ButtonState::Pressed;
-                let screens = self.screens();
-                if self.route.button(&screens, event.button_code(), down) && !down {
-                    self.move_pointer(0.0, 0.0);
-                }
-            }
+            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state() == ButtonState::Pressed),
             InputEvent::PointerAxis { event } => {
-                // A wheel in notches; a touchpad, a notch every 15 px of finger.
-                let fingers = matches!(event.source(), AxisSource::Finger | AxisSource::Continuous);
-                let notches = match (event.source(), event.amount_v120(Axis::Vertical), event.amount(Axis::Vertical)) {
-                    (AxisSource::Wheel, Some(v), _) => -v / 120.0,
-                    (_, _, Some(a)) => {
-                        self.scroll += a;
-                        let n = (self.scroll / 15.0).trunc();
-                        self.scroll -= n * 15.0;
-                        -n
-                    }
-                    _ => 0.0,
-                };
-                let sideways = match (event.source(), event.amount_v120(Axis::Horizontal), event.amount(Axis::Horizontal)) {
-                    (AxisSource::Wheel, Some(v), _) => -v / 120.0,
-                    (_, _, Some(a)) => {
-                        self.scroll_sideways += a;
-                        let n = (self.scroll_sideways / 15.0).trunc();
-                        self.scroll_sideways -= n * 15.0;
-                        -n
-                    }
-                    _ => 0.0,
-                };
-                if fingers {
-                    // Fingers: a program follows them as far as they went (the
-                    // scene, the same notches as ever); and, once they are
-                    // lifted (no way at all, said of each axis), it may go on.
-                    let (x, y) = (event.amount(Axis::Horizontal).unwrap_or(0.0), event.amount(Axis::Vertical).unwrap_or(0.0));
-                    if x != 0.0 || y != 0.0 {
-                        self.route.scroll(x, y, (notches + sideways) as f32);
-                    } else if event.source() == AxisSource::Finger {
-                        self.route.scroll_end();
-                    }
-                } else {
-                    if notches != 0.0 {
-                        self.route.wheel(notches as f32);
-                    }
-                    if sideways != 0.0 {
-                        self.route.wheel_sideways(sideways as f32);
-                    }
-                }
+                let (v, h) = (Axis::Vertical, Axis::Horizontal);
+                self.axis(event.source(), (event.amount_v120(v), event.amount(v)), (event.amount_v120(h), event.amount(h)));
             }
             InputEvent::Keyboard { event } => self.key(event.key_code(), event.state() == KeyState::Pressed),
             // Swipes and pinches with three or more fingers are the scene's, by
@@ -1941,8 +2010,13 @@ impl State {
     /// Someone is there: the compositor tells whoever watches for idleness
     /// (not more than a few times a second).
     fn touched(&mut self) {
-        self.last_input = std::time::Instant::now();
         person_seen();
+        self.activity();
+    }
+
+    /// Something used the machine (a person, or a program's virtual input): it is not idle.
+    fn activity(&mut self) {
+        self.last_input = std::time::Instant::now();
         // Dark for lack of input: any input lights them again.
         if self.dark_for_idle {
             self.dark_for_idle = false;

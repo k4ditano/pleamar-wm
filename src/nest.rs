@@ -24,6 +24,8 @@ mod x11;
 mod capture;
 #[path = "output_management.rs"]
 mod output_management;
+#[path = "virtual_pointer.rs"]
+mod virtual_pointer;
 
 use crate::layers::{self, ClientLayer, ClientPiece, ToLayers};
 use smithay::wayland::xwayland_shell::XWaylandShellState;
@@ -796,6 +798,8 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         dh.create_global::<State, ZwlrOutputPowerManagerV1, _>(1, ());
         // And their modes, places and scales, for what configures them (wlr-randr, kanshi).
         output_management::global(&dh);
+        // And a pointer of their own, open to every program as the virtual keyboard is (wlrctl, ydotool, wayvnc).
+        virtual_pointer::global(&dh);
         // And their colour ramps, for a night light (wlsunset, gammastep).
         dh.create_global::<State, ZwlrGammaControlManagerV1, _>(1, ());
     }

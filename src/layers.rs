@@ -726,6 +726,53 @@ pub fn fingers(f: Fingers) -> bool {
     FINGERS.lock().unwrap().as_ref().is_some_and(|sink| sink(f))
 }
 
+/// What a program's virtual pointer (wlr-virtual-pointer: `wlrctl`, `ydotool`,
+/// `wayvnc`, a remote-desktop server) does, once the protocol's requests are
+/// put together (virtual_pointer.rs). It goes where a real mouse's would: the
+/// session (session.rs) or the headless one (headless.rs) takes it as libinput's
+/// own events, through the same route.
+#[derive(Clone, Debug, PartialEq)]
+pub enum VirtualPointer {
+    /// By that much, in units (what the screen's pixels are worth at scale 1), at that time (ms).
+    Motion { dx: f64, dy: f64, time: u32 },
+    /// At that fraction (0 to 1) of the desktop, or of the monitor `output` names.
+    Absolute { x: f64, y: f64, output: Option<String> },
+    /// A button (evdev code), pressed or let go.
+    Button { code: u32, down: bool },
+    /// What one `frame` of axis events came to.
+    Axis { source: VirtualAxisSource, vertical: VirtualAxis, horizontal: VirtualAxis },
+}
+
+/// Where an axis event comes from, as the protocol says it (`wl_pointer.axis_source`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VirtualAxisSource {
+    Wheel,
+    Finger,
+    Continuous,
+    WheelTilt,
+}
+
+/// One axis in a frame: how far (in units, down and to the right positive), in notches
+/// of a wheel if it said so (120 to the notch), and whether it stopped.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VirtualAxis {
+    pub amount: Option<f64>,
+    pub v120: Option<f64>,
+    pub stop: bool,
+}
+
+type VirtualPointerSink = Box<dyn Fn(VirtualPointer) -> bool + Send>;
+static VIRTUAL_POINTER: Mutex<Option<VirtualPointerSink>> = Mutex::new(None);
+
+pub fn set_virtual_pointer_sink(sink: VirtualPointerSink) {
+    *VIRTUAL_POINTER.lock().unwrap() = Some(sink);
+}
+
+/// false: no session to hand it to.
+pub fn virtual_pointer(e: VirtualPointer) -> bool {
+    VIRTUAL_POINTER.lock().unwrap().as_ref().is_some_and(|sink| sink(e))
+}
+
 /// The name a phone's monitor has, to tell it from the real ones.
 pub const PHONE_NAME: &str = "PHONE-1";
 
