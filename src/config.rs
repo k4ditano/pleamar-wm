@@ -22,6 +22,7 @@
 //! window app=discord workspace 3 monitor HDMI-A-1
 //! window title="Picture-in-Picture" float
 //! window app=org.keepassxc.KeePassXC private
+//! scanout on
 //! ```
 //!
 //! What it does not say is looked for in Hyprland's own configuration
@@ -124,6 +125,10 @@ pub struct Config {
     /// shell as it is, without the layer that lets wired windows read and
     /// type in them (see `term.rs`). On unless said.
     pub terminals_off: bool,
+    /// `scanout on`: a window that fills a monitor with nothing over it goes
+    /// straight to the screen (see `scanout.rs`). Off unless said; also
+    /// `PLEAMAR_WM_SCANOUT=1`.
+    pub scanout: bool,
 }
 
 /// How fast the agent's hands go, for every agent of the session.
@@ -750,6 +755,10 @@ pub fn parse(text: &str, c: &mut Config) {
                 [v] if on(Some(v)).is_some() => c.a11y = on(Some(v)) == Some(true),
                 _ => eprintln!("config · line {}: `a11y on|off`, or `a11y reader /full/path/of/the/program`", n + 1),
             },
+            "scanout" => c.scanout = on(rest.first()).unwrap_or_else(|| {
+                eprintln!("config · line {}: `scanout on` or `scanout off`", n + 1);
+                false
+            }),
             "terminals" => c.terminals_off = !on(rest.first()).unwrap_or_else(|| {
                 eprintln!("config · line {}: `terminals on` or `terminals off`", n + 1);
                 true
