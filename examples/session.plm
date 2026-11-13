@@ -3539,13 +3539,13 @@ scene Session {
         prop dlg.$i = 0 ~220ms
         let dlg.ws = win.$i.pool == inpool[max(win.$i.screen, 0)]
         // The mouse going into it gives it the keyboard, as it does a window.
-        let dlg.pointed = win.$i.dialog and win.$i.open and dlg.ws and win.$i.screen == mon and abs(mouse.x - Wmon / 2) <= dw / 2 and abs(mouse.y - Hmon / 2) <= dh / 2
+        let dlg.pointed = win.$i.dialog and win.$i.open and not win.$i.fullscreen and dlg.ws and win.$i.screen == mon and abs(mouse.x - Wmon / 2) <= dw / 2 and abs(mouse.y - Hmon / 2) <= dh / 2
         on change dlg.pointed while dlg.pointed and dragging < 0 and not overview { focus win.$i }
         // (Once it has drawn: until then it has no size, and it would be a
         // little empty box in the middle for as long as its program takes.)
         follow dlg.$i = if(win.$i.dialog and win.$i.open and dlg.ws and win.$i.width > 0.5, 1, 0)
         group {
-            show: dlg.$i > 0.01 and win.$i.screen == screen.index
+            show: dlg.$i > 0.01 and not win.$i.fullscreen and win.$i.screen == screen.index
             opacity: dlg.$i
             pivot: dx + dw / 2, dy + dh / 2
             scale: 0.94 + 0.06 * dlg.$i

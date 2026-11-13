@@ -1189,7 +1189,8 @@ impl State {
                     // Floated by a rule, it is never a tile: a tile's size
                     // the scene asked before it knew (it heard of the window
                     // first, and of the rule a frame later) is not passed on.
-                    if win.dialog && win.ruled.is_some() && win.floating && (w, h) != (0, 0) {
+                    // Fullscreen it is the monitor's size it must be told.
+                    if win.dialog && win.ruled.is_some() && win.floating && !win.fullscreen && (w, h) != (0, 0) {
                         if let Some(a) = self.asked.get_mut(slot) {
                             *a = Some((0, 0));
                         }
