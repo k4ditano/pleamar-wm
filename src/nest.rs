@@ -31,7 +31,6 @@ use crate::layers::{self, ClientLayer, ClientPiece, ToLayers};
 use smithay::wayland::xwayland_shell::XWaylandShellState;
 use smithay::xwayland::{X11Surface, X11Wm, XWaylandClientData};
 use pleamar::scene::{DmabufPiece, NestEvent, PieceContent, ToNest, ToRender, WindowPicture, WindowPiece};
-use smithay::delegate_layer_shell;
 use smithay::input::pointer::RelativeMotionEvent;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay::wayland::content_type::ContentTypeState;
@@ -85,7 +84,8 @@ use smithay::reexports::wayland_protocols::ext::background_effect::v1::server::{
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::wayland::compositor::RectangleKind;
 use smithay::wayland::output::OutputManagerState;
-use smithay::wayland::shell::wlr_layer::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer as ShellLayer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler, WlrLayerShellState};
+use smithay::wayland::shell::wlr_layer::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer as ShellLayer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellGlobalData, WlrLayerShellHandler, WlrLayerShellState, WlrLayerSurfaceUserData};
+use crate::layer_v5;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::{Buffer, Format, Fourcc, Modifier};
 use smithay::delegate_dmabuf;
@@ -918,7 +918,12 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         keyboard,
         pointer,
         _output_manager: OutputManagerState::new_with_xdg_output::<State>(&dh),
-        layer_shell: WlrLayerShellState::new::<State>(&dh),
+        // Version 5 of the layer shell: smithay's global (version 4) gives its place to ours (layer_v5.rs).
+        layer_shell: {
+            let shell = WlrLayerShellState::new::<State>(&dh);
+            layer_v5::advertise::<State>(&dh, shell.shell_global());
+            shell
+        },
         outputs,
         output_globals,
         outputs_asleep: false,
@@ -2812,15 +2817,9 @@ impl State {
             }
             let c = with_states(layer.wl_surface(), |s| *s.cached_state.get::<LayerSurfaceCachedState>().current());
             let ExclusiveZone::Exclusive(zone) = c.exclusive_zone else { continue };
-            let (t, r, b, l) = (c.anchor.contains(Anchor::TOP), c.anchor.contains(Anchor::RIGHT), c.anchor.contains(Anchor::BOTTOM), c.anchor.contains(Anchor::LEFT));
-            // One edge, or an edge and both of its sides: which one it keeps.
-            let edge = match (t, r, b, l) {
-                (true, _, false, _) if r == l || (r && l) => Some((0, c.margin.top)),
-                (false, _, true, _) if r == l || (r && l) => Some((2, c.margin.bottom)),
-                (_, true, _, false) if t == b || (t && b) => Some((1, c.margin.right)),
-                (_, false, _, true) if t == b || (t && b) => Some((3, c.margin.left)),
-                _ => None,
-            };
+            // One edge, or an edge and both of its sides: which one it keeps; or the one the
+            // program named (layer shell 5, `set_exclusive_edge`) when the anchors do not tell.
+            let edge = layer_v5::reserved_side(c.anchor, layer_v5::exclusive_edge(layer), (c.margin.top, c.margin.right, c.margin.bottom, c.margin.left));
             if let (Some((e, margin)), Some(m)) = (edge, now.get_mut(p.monitor)) {
                 m[e] += zone as f32 + margin.max(0) as f32;
             }
@@ -3865,6 +3864,10 @@ impl CompositorHandler for State {
                     o.enter(surface);
                 }
             }
+        }
+        // A layer surface's exclusive edge has to be one of its anchors (layer shell 5).
+        if let Some(Shell::Layer(l)) = self.panels.iter().find(|p| p.shell.wl_surface() == surface).map(|p| &p.shell) {
+            layer_v5::check(l);
         }
         let (buffer, callbacks) = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
@@ -5176,7 +5179,14 @@ delegate_data_device!(State);
 delegate_output!(State);
 delegate_cursor_shape!(State);
 delegate_dmabuf!(State);
-delegate_layer_shell!(State);
+// smithay's `delegate_layer_shell!`, with the global and the layer surface's requests going
+// through `layer_v5` (version 5 of the protocol: smithay's own is 4).
+type LayerShellV1 = smithay::reexports::wayland_protocols_wlr::layer_shell::v1::server::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+type LayerSurfaceV1 = smithay::reexports::wayland_protocols_wlr::layer_shell::v1::server::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
+smithay::reexports::wayland_server::delegate_dispatch!(State: [LayerShellV1: ()] => WlrLayerShellState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [LayerSurfaceV1: WlrLayerSurfaceUserData] => layer_v5::LayerShellV5);
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [LayerShellV1: WlrLayerShellGlobalData] => WlrLayerShellState);
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [LayerShellV1: layer_v5::GlobalV5] => layer_v5::LayerShellV5);
 delegate_session_lock!(State);
 delegate_drm_syncobj!(State);
 smithay::delegate_primary_selection!(State);
