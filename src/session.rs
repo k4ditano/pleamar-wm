@@ -58,6 +58,9 @@ impl pleamar::Platform for Session {
 struct Flips {
     on_screen: Option<usize>,
     pending: Option<usize>,
+    /// Direct scanout: a program's buffer (by its number) on its way to the
+    /// screen instead of one of ours.
+    direct_pending: Option<u64>,
     /// Whether the monitor has been given its mode with a first frame.
     set: bool,
 }
@@ -113,6 +116,12 @@ struct DrmOutput {
     buffers: Vec<Buffer>,
     failed: bool,
     flips: Arc<Mutex<Flips>>,
+    /// Direct scanout (only with it on): its primary plane, whether the card
+    /// takes atomic commits (to test a buffer before flipping to it), and the
+    /// programs' buffers made framebuffers so far, the last used last.
+    plane: Option<smithay::reexports::drm::control::plane::Handle>,
+    atomic: bool,
+    direct: Vec<(u64, smithay::backend::drm::gbm::GbmFramebuffer)>,
 }
 
 struct Buffer {
@@ -171,7 +180,99 @@ impl DrmOutput {
     }
 }
 
+impl DrmOutput {
+    /// That program's buffer as a framebuffer of the card: made once, and kept
+    /// while it is used (the last few; never one on screen or on its way).
+    fn direct_fb(&mut self, number: u64, d: &smithay::backend::allocator::dmabuf::Dmabuf) -> Result<smithay::reexports::drm::control::framebuffer::Handle, String> {
+        if let Some(k) = self.direct.iter().position(|(n, _)| *n == number) {
+            let kept = self.direct.remove(k);
+            let fb = *kept.1.as_ref();
+            self.direct.push(kept);
+            return Ok(fb);
+        }
+        // `true`: a buffer with alpha said to be opaque is read as its twin without (XR24 for AR24).
+        let fb = smithay::backend::drm::gbm::framebuffer_from_dmabuf(&self.drm, &*self.gbm.lock().unwrap(), d, true, true).map_err(|e| format!("it cannot be made a framebuffer: {e}"))?;
+        let handle = *fb.as_ref();
+        self.direct.push((number, fb));
+        // The oldest go, but not what may still be read.
+        let read = crate::scanout::LENDING.lock().unwrap().on_screen(&self.name);
+        let pending = self.flips.lock().unwrap().direct_pending;
+        while self.direct.len() > 6 {
+            let Some(k) = self.direct.iter().position(|(n, _)| Some(*n) != read && Some(*n) != pending && *n != number) else { break };
+            self.direct.remove(k);
+        }
+        Ok(handle)
+    }
+}
+
 impl Output for DrmOutput {
+    fn plane_formats(&mut self) -> Vec<(u32, u64)> {
+        use smithay::reexports::drm::ClientCapability;
+        use smithay::reexports::drm::Device as _;
+        // Only with direct scanout on: without it, the card is asked nothing new.
+        if self.drm.set_client_capability(ClientCapability::UniversalPlanes, true).is_err() {
+            return Vec::new();
+        }
+        self.atomic = self.drm.set_client_capability(ClientCapability::Atomic, true).is_ok();
+        let Ok(res) = self.drm.resource_handles() else { return Vec::new() };
+        let Ok(planes) = self.drm.plane_handles() else { return Vec::new() };
+        let primary = planes.into_iter().find(|p| {
+            let Ok(info) = self.drm.get_plane(*p) else { return false };
+            res.filter_crtcs(info.possible_crtcs()).contains(&self.crtc) && property(&self.drm, *p, "type").map(|(_, v)| v) == Some(1)
+        });
+        let Some(plane) = primary else { return Vec::new() };
+        self.plane = Some(plane);
+        let blob = property(&self.drm, plane, "IN_FORMATS").and_then(|(_, id)| self.drm.get_property_blob(id).ok());
+        match blob {
+            Some(b) => crate::scanout::in_formats(&b),
+            // An old driver says only formats: each in the linear layout.
+            None => self.drm.get_plane(plane).map(|i| i.formats().iter().map(|f| (*f, 0)).collect()).unwrap_or_default(),
+        }
+    }
+
+    fn test_direct(&mut self, number: u64, d: &smithay::backend::allocator::dmabuf::Dmabuf, _format: u32) -> Result<(), String> {
+        use smithay::reexports::drm::control::{atomic::AtomicModeReq, property::Value, AtomicCommitFlags};
+        let fb = self.direct_fb(number, d)?;
+        let Some(plane) = self.plane else { return Err("its primary plane was not found".to_owned()) };
+        if !self.atomic {
+            // Without atomic commits nothing can be tried: the flip itself will say (and a refused one changes nothing on screen).
+            return Ok(());
+        }
+        let (w, h) = self.size;
+        let mut req = AtomicModeReq::new();
+        let mut set = |name: &str, v: Value<'static>| -> Result<(), String> {
+            let (h, _) = property(&self.drm, plane, name).ok_or_else(|| format!("its plane has no {name}"))?;
+            req.add_property(plane, h, v);
+            Ok(())
+        };
+        set("FB_ID", Value::Framebuffer(Some(fb)))?;
+        set("CRTC_ID", Value::CRTC(Some(self.crtc)))?;
+        set("SRC_X", Value::UnsignedRange(0))?;
+        set("SRC_Y", Value::UnsignedRange(0))?;
+        set("SRC_W", Value::UnsignedRange((w as u64) << 16))?;
+        set("SRC_H", Value::UnsignedRange((h as u64) << 16))?;
+        set("CRTC_X", Value::SignedRange(0))?;
+        set("CRTC_Y", Value::SignedRange(0))?;
+        set("CRTC_W", Value::UnsignedRange(w as u64))?;
+        set("CRTC_H", Value::UnsignedRange(h as u64))?;
+        self.drm.atomic_commit(AtomicCommitFlags::TEST_ONLY, req).map_err(|e| format!("{e}"))
+    }
+
+    fn show_direct(&mut self, number: u64, d: &smithay::backend::allocator::dmabuf::Dmabuf, _format: u32) -> Result<bool, String> {
+        {
+            let f = self.flips.lock().unwrap();
+            if !f.set || f.pending.is_some() || f.direct_pending.is_some() {
+                return Ok(false);
+            }
+        }
+        let fb = self.direct_fb(number, d)?;
+        // The program's frame is ready: its acquire point was waited for before it reached the render.
+        self.drm.page_flip(self.crtc, fb, PageFlipFlags::EVENT, None).map_err(|e| format!("{e}"))?;
+        self.flips.lock().unwrap().direct_pending = Some(number);
+        crate::scanout::LENDING.lock().unwrap().flipping(&self.name, Some(number));
+        Ok(true)
+    }
+
     fn buffer(&mut self, device: &wgpu::Device, modifiers: &[u64]) -> Option<(usize, wgpu::Texture)> {
         if self.failed {
             return None;
@@ -224,6 +325,10 @@ impl Output for DrmOutput {
             match self.drm.page_flip(self.crtc, fb, PageFlipFlags::EVENT, None) {
                 Ok(()) => {
                     f.pending = Some(which);
+                    // What a program's buffer on screen is replaced with (direct scanout).
+                    if crate::scanout::asked() {
+                        crate::scanout::LENDING.lock().unwrap().flipping(&self.name, None);
+                    }
                     true
                 }
                 Err(e) => {
@@ -853,7 +958,7 @@ fn make_monitor(drm: &DrmDeviceFd, gbm: &Arc<Mutex<gbm::Device<DrmDeviceFd>>>, n
     println!("session · monitor {name}: {w}×{h} at {:.2} Hz", refresh_mhz(&mode) as f64 / 1000.0);
     let real = (w as u32, h as u32);
     let flips: Arc<Mutex<Flips>> = Default::default();
-    let output = DrmOutput { drm: drm.clone(), gbm: gbm.clone(), connector: conn, crtc, mode, size: real, name: name.clone(), buffers: Vec::new(), failed: false, flips: flips.clone() };
+    let output = DrmOutput { drm: drm.clone(), gbm: gbm.clone(), connector: conn, crtc, mode, size: real, name: name.clone(), buffers: Vec::new(), failed: false, flips: flips.clone(), plane: None, atomic: false, direct: Vec::new() };
     // Standing on its side: everything else sees it upright, taller than wide.
     let turn = asked(&ASKED_TURN, &name).unwrap_or_else(|| config::get().monitor(&name).map_or(0, |r| r.transform)) % 4;
     let (size, output): ((u32, u32), Box<dyn screen::Output>) = if turn == 0 {
@@ -1035,6 +1140,12 @@ impl State {
         self.monitors = kept;
         for m in gone {
             println!("session · monitor {} unplugged", m.name);
+            if crate::scanout::asked() {
+                let free = crate::scanout::LENDING.lock().unwrap().monitor_gone(&m.name);
+                if !free.is_empty() {
+                    crate::layers::tell(crate::layers::ToLayers::Released(free));
+                }
+            }
             let mut st = m.screen.0.lock().unwrap();
             st.quit = true;
             drop(st);
@@ -1679,8 +1790,18 @@ impl State {
                 for m in self.monitors.iter().filter(|m| m.crtc == Some(e.crtc)) {
                     {
                         let mut f = m.flips.lock().unwrap();
-                        if let Some(p) = f.pending.take() {
+                        if f.direct_pending.take().is_some() {
+                            // A program's buffer is on screen: none of ours is.
+                            f.on_screen = None;
+                        } else if let Some(p) = f.pending.take() {
                             f.on_screen = Some(p);
+                        }
+                    }
+                    // What that flip replaced may go back to its program now.
+                    if crate::scanout::asked() {
+                        let free = crate::scanout::LENDING.lock().unwrap().landed(&m.name);
+                        if !free.is_empty() {
+                            crate::layers::tell(crate::layers::ToLayers::Released(free));
                         }
                     }
                     screen::landed(&m.screen, &self.to_render);
@@ -1695,7 +1816,18 @@ impl State {
                 println!("session · another TTY has the screen");
                 self.libinput.suspend();
                 for m in &self.monitors {
-                    m.flips.lock().unwrap().pending = None;
+                    {
+                        let mut f = m.flips.lock().unwrap();
+                        f.pending = None;
+                        f.direct_pending = None;
+                    }
+                    // Another TTY shows its own: no program's buffer is read by this monitor.
+                    if crate::scanout::asked() {
+                        let free = crate::scanout::LENDING.lock().unwrap().monitor_gone(&m.name);
+                        if !free.is_empty() {
+                            crate::layers::tell(crate::layers::ToLayers::Released(free));
+                        }
+                    }
                     let mut st = m.screen.0.lock().unwrap();
                     st.paused = true;
                     st.idle = true;

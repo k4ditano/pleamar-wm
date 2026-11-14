@@ -25,9 +25,18 @@
 //! And then the card has the last word: an atomic commit with `TEST_ONLY`
 //! before the real one; if it says no, the frame is put together as now.
 
-// The decision is all there is so far: what calls it (the render's word, the plane
-// flip) is the second part (docs/scanout.md).
-#![allow(dead_code)]
+//!
+//! Who does what (docs/scanout.md):
+//! - pleamar's render says, before painting a monitor's frame, whether it would be
+//!   exactly one program's buffer (`Frames::sole_window`); `screen.rs` decides here,
+//!   and if it goes straight the render paints nothing for it;
+//! - the monitor's thread tests it on the card once for each format and layout
+//!   (`Output::test_direct`), and flips to it (`Output::show_direct`);
+//! - the buffer stays lent (`Lending`) from the moment it is chosen until the flip
+//!   that replaces it lands: whatever the render hands back meanwhile is kept, and
+//!   given back to its program —its `release`, or its syncobj point— only then;
+//! - leaving (something over it, a capture, another buffer size…), the frame is
+//!   put together whole again.
 
 /// A DRM format, as a fourcc code.
 pub type Fourcc = u32;
@@ -174,13 +183,134 @@ pub fn decide(screen: &Screen, sole: Result<&Sole, &str>, buffer: Option<&Buffer
     Ok(Plan { buffer: sole.buffer, format, modifier: b.modifier })
 }
 
-/// `PLEAMAR_WM_SCANOUT=1`, or `scanout on` in `session.conf`.
+/// `PLEAMAR_WM_SCANOUT=1`, or `scanout on` in `session.conf`: read once, as
+/// the session starts. Off, nothing here is ever reached.
 pub fn asked() -> bool {
-    match std::env::var("PLEAMAR_WM_SCANOUT") {
-        Ok(v) => !v.is_empty() && v != "0",
-        Err(_) => crate::config::get().scanout,
+    static ASKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ASKED.get_or_init(|| {
+        let on = match std::env::var("PLEAMAR_WM_SCANOUT") {
+            Ok(v) => !v.is_empty() && v != "0",
+            Err(_) => crate::config::get().scanout,
+        };
+        if on {
+            println!("scanout · on: a window that fills a monitor with nothing over it goes straight to the screen (PLEAMAR_WM_SCANOUT=0, or `scanout off`, turns it off)");
+        }
+        on
+    })
+}
+
+/// What the program's buffers on the card are, by the number the render knows
+/// them by: noted as programs commit them (only with direct scanout on), for
+/// the monitors' threads to put one on a plane.
+pub struct Known {
+    pub dmabuf: smithay::backend::allocator::dmabuf::Dmabuf,
+    pub buffer: Buffer,
+    /// Whose (`window 2 (mpv)`), for the log.
+    pub what: String,
+}
+
+static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<u64, Known>>> = std::sync::Mutex::new(None);
+
+/// A program committed that buffer.
+pub fn note(number: u64, k: Known) {
+    KNOWN.lock().unwrap().get_or_insert_with(Default::default).insert(number, k);
+}
+
+/// What that buffer is, if it is one on the card.
+pub fn known(number: u64) -> Option<(smithay::backend::allocator::dmabuf::Dmabuf, Buffer, String)> {
+    KNOWN.lock().unwrap().as_ref()?.get(&number).map(|k| (k.dmabuf.clone(), k.buffer.clone(), k.what.clone()))
+}
+
+/// The program destroyed it.
+pub fn forget(number: u64) {
+    if let Some(m) = KNOWN.lock().unwrap().as_mut() {
+        m.remove(&number);
+    }
+    LENDING.lock().unwrap().forget(number);
+}
+
+/// Which programs' buffers the monitors show themselves, and which of those the
+/// render has already handed back: those go back to their programs only when no
+/// monitor reads them any more. Per monitor: the one chosen and not flipped to
+/// yet, the flip on its way (to a buffer, or to a frame put together: `None`),
+/// and what is on screen.
+#[derive(Default, Debug)]
+pub struct Lending {
+    monitors: std::collections::BTreeMap<String, Flight>,
+    kept: Vec<u64>,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct Flight {
+    chosen: Option<u64>,
+    on_its_way: Option<Option<u64>>,
+    on_screen: Option<u64>,
+}
+
+impl Lending {
+    fn read(&self, n: u64) -> bool {
+        self.monitors.values().any(|f| f.chosen == Some(n) || f.on_its_way == Some(Some(n)) || f.on_screen == Some(n))
+    }
+    /// What was kept and is no longer read: to give back now.
+    fn free(&mut self) -> Vec<u64> {
+        let (free, kept): (Vec<u64>, Vec<u64>) = std::mem::take(&mut self.kept).into_iter().partition(|n| !self.monitors.values().any(|f| f.chosen == Some(*n) || f.on_its_way == Some(Some(*n)) || f.on_screen == Some(*n)));
+        self.kept = kept;
+        free
+    }
+    /// That monitor will show that buffer (none: it goes back to putting frames
+    /// together). What is no longer going to be read is given back.
+    pub fn choose(&mut self, monitor: &str, n: Option<u64>) -> Vec<u64> {
+        self.monitors.entry(monitor.to_owned()).or_default().chosen = n;
+        self.free()
+    }
+    /// A flip is on its way there: to a buffer, or to a frame put together
+    /// (only once the card took it: one refused changes nothing).
+    pub fn flipping(&mut self, monitor: &str, n: Option<u64>) {
+        let f = self.monitors.entry(monitor.to_owned()).or_default();
+        f.on_its_way = Some(n);
+        if n.is_some() && f.chosen == n {
+            f.chosen = None;
+        }
+    }
+    /// The flip landed: what it brought is on screen, and what it replaced may go back.
+    pub fn landed(&mut self, monitor: &str) -> Vec<u64> {
+        if let Some(f) = self.monitors.get_mut(monitor) {
+            if let Some(n) = f.on_its_way.take() {
+                f.on_screen = n;
+            }
+        }
+        self.free()
+    }
+    /// The render (or a monitor) hands these back: those still read are kept.
+    pub fn give_back(&mut self, numbers: Vec<u64>) -> Vec<u64> {
+        let (read, now): (Vec<u64>, Vec<u64>) = numbers.into_iter().partition(|n| self.read(*n));
+        for n in read {
+            if !self.kept.contains(&n) {
+                self.kept.push(n);
+            }
+        }
+        now
+    }
+    /// A monitor that is gone (or another TTY took the screen): it reads nothing.
+    pub fn monitor_gone(&mut self, monitor: &str) -> Vec<u64> {
+        self.monitors.remove(monitor);
+        self.free()
+    }
+    fn forget(&mut self, n: u64) {
+        self.kept.retain(|k| *k != n);
+        for f in self.monitors.values_mut() {
+            if f.chosen == Some(n) {
+                f.chosen = None;
+            }
+        }
+    }
+    pub fn on_screen(&self, monitor: &str) -> Option<u64> {
+        self.monitors.get(monitor).and_then(|f| f.on_screen)
     }
 }
+
+pub static LENDING: std::sync::Mutex<Lending> = std::sync::Mutex::new(Lending { monitors: std::collections::BTreeMap::new(), kept: Vec::new() });
+
 
 /// The decision of each monitor, said only when it changes.
 #[derive(Default)]
@@ -306,6 +436,49 @@ mod tests {
         let off = decide(&screen(), Err("a popup is over it"), None, &plane());
         assert!(said.line("DP-1", &off, None).unwrap().ends_with("off — a popup is over it"));
         assert!(said.line("DP-2", &off, None).is_some());
+    }
+
+    #[test]
+    fn a_buffer_goes_back_only_once_the_flip_that_replaces_it_lands() {
+        let mut l = Lending::default();
+        // Buffer 1 chosen; the render hands it back after copying it: kept.
+        assert!(l.choose("DP-1", Some(1)).is_empty());
+        assert!(l.give_back(vec![1, 9]) == vec![9], "9 is not on any monitor: back at once");
+        l.flipping("DP-1", Some(1));
+        assert!(l.landed("DP-1").is_empty(), "1 is on screen now");
+        assert_eq!(l.on_screen("DP-1"), Some(1));
+        // The next frame, buffer 2: 1 still on screen until 2 lands.
+        l.choose("DP-1", Some(2));
+        assert!(l.give_back(vec![2]).is_empty());
+        l.flipping("DP-1", Some(2));
+        assert!(l.give_back(vec![]).is_empty());
+        assert_eq!(l.landed("DP-1"), vec![1]);
+        // Leaving: a frame put together replaces 2, and 2 goes back when it lands.
+        l.choose("DP-1", None);
+        l.flipping("DP-1", None);
+        assert!(l.give_back(vec![]).is_empty());
+        assert_eq!(l.landed("DP-1"), vec![2]);
+        assert_eq!(l.on_screen("DP-1"), None);
+    }
+
+    #[test]
+    fn a_buffer_chosen_and_dropped_lends_nothing() {
+        let mut l = Lending::default();
+        // Chosen and then not wanted (something came over it before the flip, or the card refused it).
+        l.choose("DP-1", Some(4));
+        assert!(l.give_back(vec![4]).is_empty());
+        assert_eq!(l.choose("DP-1", None), vec![4]);
+        // On two monitors' minds, it stays until neither reads it.
+        l.choose("DP-1", Some(5));
+        l.choose("HDMI-A-1", Some(5));
+        assert!(l.give_back(vec![5]).is_empty());
+        assert!(l.choose("DP-1", None).is_empty());
+        assert_eq!(l.monitor_gone("HDMI-A-1"), vec![5]);
+        // Destroyed by its program while kept: forgotten, never given back.
+        l.choose("DP-1", Some(6));
+        l.give_back(vec![6]);
+        l.forget(6);
+        assert!(l.choose("DP-1", None).is_empty());
     }
 
     #[test]

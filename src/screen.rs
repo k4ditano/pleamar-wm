@@ -11,12 +11,14 @@
 //! with page flips, or textures for a picture with no screen— is its `Output`.
 
 use crate::layers::{self, ClientLayer, ToLayers};
+use crate::scanout;
 use pleamar::scene::{Cursor, Keyboard, Level, PieceContent, Surface, SurfaceAnchor, ToRender};
 use pleamar::wgpu;
 use pleamar::{Frames, PlatformWindow};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
+use smithay::backend::allocator::dmabuf::Dmabuf;
 
 /// Where a monitor's frames end up.
 pub trait Output: Send {
@@ -26,6 +28,21 @@ pub trait Output: Send {
     /// Show that one once `done` has been done. Whether a flip is now on its
     /// way —its landing will be told— or it is already shown.
     fn show(&mut self, which: usize, done: pleamar::Sent, device: &wgpu::Device, queue: &wgpu::Queue, anew: bool) -> bool;
+    /// Direct scanout (`scanout.rs`): the formats and layouts its primary plane
+    /// takes; none, a monitor that cannot show a program's buffer itself.
+    fn plane_formats(&mut self) -> Vec<(u32, u64)> {
+        Vec::new()
+    }
+    /// Whether the card would show that program's buffer, read as `format`,
+    /// on the primary plane (an atomic commit with `TEST_ONLY`).
+    fn test_direct(&mut self, _number: u64, _d: &Dmabuf, _format: u32) -> Result<(), String> {
+        Err("this monitor does not show a program's buffer itself".to_owned())
+    }
+    /// Flip to that program's buffer. Whether the flip is on its way (false: one
+    /// is still on its way, try again when it lands).
+    fn show_direct(&mut self, _number: u64, _d: &Dmabuf, _format: u32) -> Result<bool, String> {
+        Err("this monitor does not show a program's buffer itself".to_owned())
+    }
 }
 
 /// A monitor standing on its side (or upside down): everything is put
@@ -229,6 +246,26 @@ pub struct ScreenState {
     /// A window is fullscreen on this monitor: other programs' bars (their
     /// `top` layer) are not shown over it, as on any desktop.
     pub fullscreen: bool,
+    /// Direct scanout (`scanout.rs`), only ever used with it on.
+    pub direct: Direct,
+}
+
+/// What a monitor knows of showing a program's buffer itself.
+#[derive(Default)]
+pub struct Direct {
+    /// The formats and layouts its primary plane takes (none: it cannot).
+    pub plane: Vec<(u32, u64)>,
+    /// The buffer it shows now instead of a frame put together.
+    pub now: Option<(scanout::Plan, String)>,
+    /// One to try on the card before going straight (`TEST_ONLY`), and what
+    /// the card said of each format and layout tried.
+    pub test: Option<scanout::Plan>,
+    pub tested: Vec<((u32, u64), Result<(), String>)>,
+    /// The last one flipped to.
+    pub shown: Option<u64>,
+    /// Left from the monitor's side: the scene's frame is stale until the render paints one.
+    pub stale: bool,
+    pub said: scanout::Said,
 }
 
 impl ScreenState {
@@ -250,9 +287,18 @@ impl ScreenState {
 
 pub type Screen = Arc<(Mutex<ScreenState>, Condvar)>;
 
-pub fn screen(name: String, size: (u32, u32), output: Box<dyn Output>) -> Screen {
+pub fn screen(name: String, size: (u32, u32), mut output: Box<dyn Output>) -> Screen {
+    // What its plane takes is only asked with direct scanout on: off, nothing changes.
+    let direct = Direct { plane: if crate::scanout::asked() { output.plane_formats() } else { Vec::new() }, ..Default::default() };
+    if crate::scanout::asked() {
+        if direct.plane.is_empty() {
+            println!("scanout · {name}: this monitor cannot show a program's buffer itself (turned, headless, or its card does not say what its plane takes)");
+        } else {
+            println!("scanout · {name}: its primary plane takes {} formats and layouts", direct.plane.len());
+        }
+    }
     Arc::new((
-        Mutex::new(ScreenState { name, size, layers: Vec::new(), dirty: false, idle: true, paused: false, anew: true, fresh: Vec::new(), on_flip: Vec::new(), modifiers: Vec::new(), clients: Vec::new(), held: Vec::new(), forget: Vec::new(), changed: Vec::new(), changed_all: true, captures: Vec::new(), reads: Vec::new(), output: Some(output), quit: false, running: false, fullscreen: false }),
+        Mutex::new(ScreenState { name, size, layers: Vec::new(), dirty: false, idle: true, paused: false, anew: true, fresh: Vec::new(), on_flip: Vec::new(), modifiers: Vec::new(), clients: Vec::new(), held: Vec::new(), forget: Vec::new(), changed: Vec::new(), changed_all: true, captures: Vec::new(), reads: Vec::new(), output: Some(output), quit: false, running: false, fullscreen: false, direct }),
         Condvar::new(),
     ))
 }
@@ -524,6 +570,192 @@ impl Frames for LayerFrames {
         }
         cv.notify_all();
     }
+
+    fn wants_sole(&self) -> bool {
+        if !scanout::asked() {
+            return false;
+        }
+        let st = self.screen.0.lock().unwrap();
+        !st.direct.plane.is_empty() && st.layers.iter().any(|l| l.sheet == self.sheet && l.main)
+    }
+
+    fn sole_window(&mut self, sole: Result<pleamar::SoleWindow, &'static str>) -> bool {
+        let (lock, cv) = &*self.screen;
+        let mut st = lock.lock().unwrap();
+        let name = st.name.clone();
+        let known = sole.ok().and_then(|s| scanout::known(s.buffer));
+        let what = known.as_ref().map(|k| k.2.clone());
+        let screen = scanout::Screen { name: name.clone(), size: st.size, turned: false, copied: false };
+        let mut d = match (sole, direct_here(&st, self.sheet)) {
+            (Err(e), _) => Err(scanout::Why::Scene(e.to_owned())),
+            (Ok(_), Err(w)) => Err(scanout::Why::Scene(w)),
+            (Ok(s), Ok(())) => {
+                let mut b = known.as_ref().map(|k| k.1.clone());
+                if let Some(b) = &mut b {
+                    b.opaque |= s.opaque;
+                }
+                scanout::decide(&screen, Ok(&scanout::Sole { buffer: s.buffer, what: what.clone().unwrap_or_default() }), b.as_ref(), &st.direct.plane)
+            }
+        };
+        // What the card said of that format and layout, if it was tried.
+        let tried = d.as_ref().ok().and_then(|p| st.direct.tested.iter().find(|(k, _)| *k == (p.format, p.modifier)).map(|(_, r)| r.clone()));
+        if let Some(Err(e)) = &tried {
+            d = Err(scanout::Why::Refused(e.clone()));
+        }
+        match d {
+            Ok(p) if tried.is_some() => {
+                if let Some(l) = st.direct.said.line(&name, &Ok(p.clone()), what.as_deref()) {
+                    println!("{l}");
+                }
+                give_back(scanout::LENDING.lock().unwrap().choose(&name, Some(p.buffer)));
+                st.direct.now = Some((p, what.unwrap_or_default()));
+                st.direct.stale = false;
+                st.dirty = true;
+                cv.notify_all();
+                true
+            }
+            Ok(p) => {
+                // Not tried on the card yet: once, by the monitor's thread; meanwhile put together.
+                if st.direct.test.is_none() {
+                    println!("scanout · {name}: {} could go straight to the screen: asking the card first ({}, layout {:#x})", what.as_deref().unwrap_or("a window"), scanout::name(p.format), p.modifier);
+                    st.direct.test = Some(p);
+                    st.dirty = true;
+                    cv.notify_all();
+                }
+                leave_direct(&mut st, &scanout::Why::Scene("waiting for the card's word".to_owned()));
+                false
+            }
+            Err(w) => {
+                leave_direct(&mut st, &w);
+                false
+            }
+        }
+    }
+}
+
+/// Direct scanout, as the monitor sees it: the scene's main surface covers it,
+/// nothing is stacked over that surface, and nobody is copying the monitor.
+fn direct_here(st: &ScreenState, sheet: u32) -> Result<(), String> {
+    let Some(k) = st.layers.iter().position(|l| l.sheet == sheet) else { return Err("the scene's surface is not on it".to_owned()) };
+    let l = &st.layers[k];
+    if !l.main || l.rect != [0, 0, st.size.0 as i32, st.size.1 as i32] {
+        return Err("the scene's surface does not cover the monitor".to_owned());
+    }
+    let order = stacked(st);
+    let Some(at) = order.iter().position(|i| matches!(i, Item::Scene(j) if *j == k)) else { return Err("the scene's surface is not shown".to_owned()) };
+    for item in &order[at + 1..] {
+        match item {
+            Item::Scene(j) if st.layers[*j].latest.is_some() => return Err("another surface of the scene is over it".to_owned()),
+            Item::Client(c) if st.clients[*c].drawn && !st.clients[*c].pieces.is_empty() => return Err("a program's surface is over it (a bar, a notification)".to_owned()),
+            _ => {}
+        }
+    }
+    if !st.captures.is_empty() || !st.reads.is_empty() {
+        return Err(scanout::Why::Copied.to_string());
+    }
+    Ok(())
+}
+
+/// What a monitor's thread does next about direct scanout.
+#[derive(Debug, PartialEq)]
+enum DirectStep {
+    /// Ask the card about that format and layout (`TEST_ONLY`).
+    Test(scanout::Plan),
+    /// Flip to that program's buffer.
+    Flip(scanout::Plan, String),
+    /// Nothing to put together now (the buffer is on screen, or the scene has
+    /// not painted since leaving); `repaint`: the render has to paint again.
+    Wait { repaint: bool },
+    /// Put the frame together, as always.
+    Compose,
+}
+
+/// The next step, with what changed noted: leaving because of something only
+/// the monitor sees (stacked over it, a capture, given back by another TTY).
+fn direct_step(st: &mut ScreenState) -> DirectStep {
+    // Seen: what follows waits for the next change, not for this one again.
+    st.dirty = false;
+    if let Some(p) = st.direct.test.take() {
+        return DirectStep::Test(p);
+    }
+    let sheet = st.layers.iter().find(|l| l.main).map(|l| l.sheet);
+    if let Some((p, what)) = st.direct.now.clone() {
+        let here = sheet.map_or(Err("the scene's surface is not on it".to_owned()), |k| direct_here(st, k)).and_then(|_| if st.anew { Err("the monitor was given back".to_owned()) } else { Ok(()) });
+        if let Err(why) = here {
+            leave_direct(st, &scanout::Why::Scene(why));
+            st.direct.stale = true;
+            return DirectStep::Wait { repaint: true };
+        }
+        if st.direct.shown != Some(p.buffer) {
+            return DirectStep::Flip(p, what);
+        }
+        return DirectStep::Wait { repaint: false };
+    }
+    // Left from the monitor's side: what the scene last presented is older than
+    // what was on screen, so nothing is put together until it presents again.
+    if st.direct.stale {
+        if !sheet.is_some_and(|k| st.fresh.contains(&k)) {
+            return DirectStep::Wait { repaint: false };
+        }
+        st.direct.stale = false;
+    }
+    st.direct.shown = None;
+    DirectStep::Compose
+}
+
+/// What the card said of a format and layout, kept for the rest of the session.
+fn after_test(st: &mut ScreenState, p: &scanout::Plan, r: Result<(), String>) {
+    match &r {
+        Ok(()) => println!("scanout · {}: the card takes {} with layout {:#x} on its plane", st.name, scanout::name(p.format), p.modifier),
+        Err(e) => eprintln!("scanout · {}: off — the card refused {} with layout {:#x}: {e}", st.name, scanout::name(p.format), p.modifier),
+    }
+    st.direct.tested.push(((p.format, p.modifier), r));
+}
+
+/// After a flip to a program's buffer: on its way (the render hears when it
+/// lands), not yet (one still on its way), or refused (put together again, and
+/// that format not tried again). Whether the render has to paint again.
+fn after_flip(st: &mut ScreenState, p: &scanout::Plan, what: &str, r: Result<bool, String>) -> bool {
+    match r {
+        Ok(true) => {
+            st.idle = false;
+            st.direct.shown = Some(p.buffer);
+            let sheet = st.layers.iter().find(|l| l.main).map(|l| l.sheet);
+            st.on_flip.extend(sheet);
+            false
+        }
+        Ok(false) => {
+            st.dirty = true;
+            false
+        }
+        Err(e) => {
+            eprintln!("scanout · {}: the flip to {what} failed: {e}", st.name);
+            st.direct.tested.retain(|(k, _)| *k != (p.format, p.modifier));
+            st.direct.tested.push(((p.format, p.modifier), Err(e.clone())));
+            leave_direct(st, &scanout::Why::Refused(e));
+            st.direct.stale = true;
+            true
+        }
+    }
+}
+
+/// What the monitors no longer read goes back to its programs.
+fn give_back(numbers: Vec<u64>) {
+    if !numbers.is_empty() {
+        layers::tell(ToLayers::Released(numbers));
+    }
+}
+
+/// It stops showing a program's buffer itself: the next frame is put together whole.
+fn leave_direct(st: &mut ScreenState, why: &scanout::Why) {
+    let name = st.name.clone();
+    if let Some(l) = st.direct.said.line(&name, &Err(why.clone()), None) {
+        println!("{l}");
+    }
+    if st.direct.now.take().is_some() {
+        st.changed_all = true;
+        give_back(scanout::LENDING.lock().unwrap().choose(&name, None));
+    }
 }
 
 /// A surface's sheet as the render sees it: its zones are where it takes the
@@ -759,6 +991,48 @@ fn compose_loop(screen: Screen, mut output: Box<dyn Output>, device: wgpu::Devic
             }
             if st.quit {
                 return;
+            }
+            // Direct scanout (`scanout.rs`): only a monitor whose plane was asked
+            // about, which is only with it on. Off, this is never entered.
+            if !st.direct.plane.is_empty() {
+                let mut skip = false;
+                loop {
+                    match direct_step(&mut st) {
+                        DirectStep::Test(p) => {
+                            drop(st);
+                            let r = match scanout::known(p.buffer) {
+                                Some((d, _, _)) => output.test_direct(p.buffer, &d, p.format),
+                                None => Err("its program let the buffer go".to_owned()),
+                            };
+                            st = lock.lock().unwrap();
+                            after_test(&mut st, &p, r);
+                        }
+                        DirectStep::Flip(p, what) => {
+                            drop(st);
+                            let r = match scanout::known(p.buffer) {
+                                Some((d, _, _)) => output.show_direct(p.buffer, &d, p.format),
+                                None => Err("its program let the buffer go".to_owned()),
+                            };
+                            st = lock.lock().unwrap();
+                            if after_flip(&mut st, &p, &what, r) {
+                                let _ = to_render.send(ToRender::Repaint);
+                            }
+                            skip = true;
+                            break;
+                        }
+                        DirectStep::Wait { repaint } => {
+                            if repaint {
+                                let _ = to_render.send(ToRender::Repaint);
+                            }
+                            skip = true;
+                            break;
+                        }
+                        DirectStep::Compose => break,
+                    }
+                }
+                if skip {
+                    continue;
+                }
             }
             if capture_debug() {
                 eprintln!("capture · {:.1} {} composing ({} pictures asked)", wall_ms(), st.name, st.captures.len());
@@ -1875,5 +2149,148 @@ mod below_owner_tests {
         // grim, with nothing on the monitor, and the scene itself: all of it.
         assert_eq!(below_owner(&owners, 5), (5, 0));
         assert_eq!(below_owner(&owners, 0), (5, 0));
+    }
+}
+
+/// Direct scanout as the monitor decides it, without a card: what the render says,
+/// what is stacked on the monitor, and what the card answered.
+#[cfg(test)]
+mod direct_tests {
+    use super::*;
+    use pleamar::SoleWindow;
+
+    struct Nowhere;
+    impl Output for Nowhere {
+        fn buffer(&mut self, _: &wgpu::Device, _: &[u64]) -> Option<(usize, wgpu::Texture)> {
+            None
+        }
+        fn show(&mut self, _: usize, _: pleamar::Sent, _: &wgpu::Device, _: &wgpu::Queue, _: bool) -> bool {
+            false
+        }
+    }
+
+    /// A monitor of 1920×1080 with the scene's main surface over all of it, and a
+    /// program's buffer of that size known as `number`.
+    fn monitor(name: &str, number: u64) -> (Screen, LayerFrames) {
+        use smithay::backend::allocator::{dmabuf::DmabufFlags, Fourcc, Modifier};
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sc = screen(name.into(), (1920, 1080), Box::new(Nowhere));
+        {
+            let mut st = sc.0.lock().unwrap();
+            st.direct.plane = vec![(scanout::XRGB8888, 0)];
+            // Its first frame was put together (that gives the monitor its mode).
+            st.anew = false;
+            let mut l = layer(1, 0, &Surface::default(), (1920, 1080), 1.0);
+            l.main = true;
+            l.rect = [0, 0, 1920, 1080];
+            st.layers.push(l);
+        }
+        let fd: std::os::fd::OwnedFd = std::fs::File::open("/dev/null").unwrap().into();
+        let mut b = Dmabuf::builder((1920, 1080), Fourcc::Xrgb8888, Modifier::Linear, DmabufFlags::empty());
+        b.add_plane(fd, 0, 0, 1920 * 4);
+        let buffer = scanout::Buffer { size: (1920, 1080), format: scanout::XRGB8888, modifier: 0, planes: 1, opaque: true };
+        scanout::note(number, scanout::Known { dmabuf: b.build().unwrap(), buffer, what: "window 1 (mpv)".into() });
+        (sc.clone(), LayerFrames::new(sc, 1, (1920, 1080), tx))
+    }
+    fn alone(buffer: u64) -> Result<SoleWindow, &'static str> {
+        Ok(SoleWindow { buffer, opaque: true })
+    }
+    fn card_says(sc: &Screen, yes: bool) {
+        let mut st = sc.0.lock().unwrap();
+        let p = st.direct.test.take().expect("the card was to be asked");
+        st.direct.tested.push(((p.format, p.modifier), if yes { Ok(()) } else { Err("EINVAL".into()) }));
+    }
+
+    #[test]
+    fn a_window_alone_goes_straight_once_the_card_said_yes_and_leaving_puts_it_all_together() {
+        let (sc, mut lf) = monitor("TEST-1", 9101);
+        assert!(!lf.sole_window(alone(9101)), "first the card is asked; meanwhile it is put together");
+        card_says(&sc, true);
+        assert!(lf.sole_window(alone(9101)));
+        assert_eq!(sc.0.lock().unwrap().direct.now.as_ref().map(|n| n.0.buffer), Some(9101));
+        // The card is not asked again for the same format and layout.
+        assert!(lf.sole_window(alone(9101)));
+        assert!(sc.0.lock().unwrap().direct.test.is_none());
+        // Something of the scene over it: put together again, all of it.
+        sc.0.lock().unwrap().changed_all = false;
+        assert!(!lf.sole_window(Err("the scene draws over the window")));
+        let st = sc.0.lock().unwrap();
+        assert!(st.direct.now.is_none() && st.changed_all);
+    }
+
+    #[test]
+    fn a_refusal_a_capture_or_a_programs_surface_over_it_keep_it_put_together() {
+        let (sc, mut lf) = monitor("TEST-2", 9201);
+        assert!(!lf.sole_window(alone(9201)));
+        card_says(&sc, false);
+        assert!(!lf.sole_window(alone(9201)), "the card said no: never again for that format");
+        assert!(sc.0.lock().unwrap().direct.test.is_none());
+
+        let (sc, mut lf) = monitor("TEST-3", 9301);
+        lf.sole_window(alone(9301));
+        card_says(&sc, true);
+        sc.0.lock().unwrap().captures.push((1, [0, 0, 10, 10], false, 5));
+        assert!(!lf.sole_window(alone(9301)), "somebody is copying the monitor");
+        sc.0.lock().unwrap().captures.clear();
+        assert!(lf.sole_window(alone(9301)));
+        // A buffer it does not know (shared memory) or of another size.
+        assert!(!lf.sole_window(alone(424242)));
+        // The scene's surface not covering the monitor.
+        sc.0.lock().unwrap().layers[0].rect = [0, 0, 1920, 1000];
+        assert!(!lf.sole_window(alone(9301)));
+    }
+
+    #[test]
+    fn the_monitors_thread_flips_waits_and_puts_it_together_again_whole() {
+        let (sc, mut lf) = monitor("TEST-4", 9401);
+        lf.sole_window(alone(9401));
+        let mut st = sc.0.lock().unwrap();
+        let p = match direct_step(&mut st) {
+            DirectStep::Test(p) => p,
+            other => panic!("the card first: {other:?}"),
+        };
+        after_test(&mut st, &p, Ok(()));
+        assert_eq!(direct_step(&mut st), DirectStep::Compose, "this frame was painted: put together");
+        drop(st);
+        assert!(lf.sole_window(alone(9401)));
+        let mut st = sc.0.lock().unwrap();
+        let DirectStep::Flip(p, _) = direct_step(&mut st) else { panic!("a flip to it") };
+        assert!(!after_flip(&mut st, &p, "window 1", Ok(true)));
+        assert!(!st.idle && st.on_flip == vec![1]);
+        // Already on screen: nothing to do until something changes.
+        assert_eq!(direct_step(&mut st), DirectStep::Wait { repaint: false });
+        // A notification over it (only the monitor sees it): left, and the render paints again.
+        st.changed_all = false;
+        st.captures.push((1, [0, 0, 1, 1], false, 5));
+        assert_eq!(direct_step(&mut st), DirectStep::Wait { repaint: true });
+        assert!(st.direct.now.is_none() && st.changed_all);
+        // Until the scene presents a fresh frame, the old one is not put together.
+        assert_eq!(direct_step(&mut st), DirectStep::Wait { repaint: false });
+        st.fresh.push(1);
+        assert_eq!(direct_step(&mut st), DirectStep::Compose);
+        assert_eq!(st.direct.shown, None);
+    }
+
+    #[test]
+    fn a_refused_flip_leaves_and_is_not_tried_again() {
+        let (sc, mut lf) = monitor("TEST-5", 9501);
+        lf.sole_window(alone(9501));
+        card_says(&sc, true);
+        assert!(lf.sole_window(alone(9501)));
+        let mut st = sc.0.lock().unwrap();
+        let DirectStep::Flip(p, _) = direct_step(&mut st) else { panic!("a flip to it") };
+        st.changed_all = false;
+        assert!(after_flip(&mut st, &p, "window 1", Err("EINVAL".into())), "the render paints again");
+        assert!(st.direct.now.is_none() && st.changed_all && st.direct.stale);
+        drop(st);
+        assert!(!lf.sole_window(alone(9501)), "that format is refused now");
+        // Given back by another TTY while it went straight: left.
+        let (sc, mut lf) = monitor("TEST-6", 9601);
+        lf.sole_window(alone(9601));
+        card_says(&sc, true);
+        assert!(lf.sole_window(alone(9601)));
+        let mut st = sc.0.lock().unwrap();
+        st.anew = true;
+        assert_eq!(direct_step(&mut st), DirectStep::Wait { repaint: true });
     }
 }

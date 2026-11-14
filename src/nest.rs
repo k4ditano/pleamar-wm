@@ -2325,6 +2325,8 @@ impl State {
     }
 
     fn release(&mut self, numbers: Vec<u64>) {
+        // With direct scanout, one a monitor still reads goes back once it no longer does.
+        let numbers = if crate::scanout::asked() { crate::scanout::LENDING.lock().unwrap().give_back(numbers) } else { numbers };
         for n in numbers {
             if let Some(b) = self.lent.remove(&n) {
                 if b.told {
@@ -3597,6 +3599,22 @@ fn panel_pieces(root: &WlSurface, at: (i32, i32), sent: &[u64], scale: f64, out:
     );
 }
 
+/// Whether the program says all of its surface is opaque (its opaque region
+/// covers a buffer of `px` pixels at its scale): an ARGB window can then be shown
+/// as its XRGB twin (direct scanout).
+fn covers_opaque(surface: &WlSurface, px: (usize, usize)) -> bool {
+    use smithay::wayland::compositor::{RectangleKind, SurfaceAttributes};
+    with_states(surface, |s| {
+        let mut attrs = s.cached_state.get::<SurfaceAttributes>();
+        let a = attrs.current();
+        let scale = a.buffer_scale.max(1);
+        let (w, h) = (px.0 as i32 / scale, px.1 as i32 / scale);
+        let Some(region) = &a.opaque_region else { return false };
+        !region.rects.iter().any(|(k, _)| matches!(k, RectangleKind::Subtract))
+            && region.rects.iter().any(|(k, r)| matches!(k, RectangleKind::Add) && r.loc.x <= 0 && r.loc.y <= 0 && r.loc.x + r.size.w >= w && r.loc.y + r.size.h >= h)
+    })
+}
+
 /// What the render needs to read a program's buffer on the card: its own copy
 /// of the handle, and the layout.
 fn dmabuf_piece(number: u64, d: &Dmabuf) -> Option<DmabufPiece> {
@@ -3857,6 +3875,12 @@ impl CompositorHandler for State {
                         };
                         // With explicit sync, where to say it is no longer read.
                         let release = with_states(surface, |s| s.cached_state.get::<DrmSyncobjCachedState>().current().release_point.take());
+                        // What it is, for a monitor that may show it itself (direct scanout).
+                        if crate::scanout::asked() {
+                            let opaque = pleamar::dmabuf::opaque(d.format().code as u32) || covers_opaque(surface, size);
+                            let buffer = crate::scanout::Buffer { size: (size.0 as u32, size.1 as u32), format: d.format().code as u32, modifier: d.format().modifier.into(), planes: d.num_planes(), opaque };
+                            crate::scanout::note(number, crate::scanout::Known { dmabuf: d.clone(), buffer, what: what.clone() });
+                        }
                         // The same buffer again while still lent is the program's
                         // mistake; its earlier point is signalled so nobody waits for ever.
                         if let Some(old) = self.lent.insert(number, Lent { buffer: b, release, since: std::time::Instant::now(), told: false, what, surface: surface.clone() }) {
@@ -3992,6 +4016,9 @@ impl BufferHandler for State {
     /// A program's buffer is gone: what the render kept of it goes too.
     fn buffer_destroyed(&mut self, buffer: &WlBuffer) {
         if let Some(n) = self.buffers.remove(&buffer.id()) {
+            if crate::scanout::asked() {
+                crate::scanout::forget(n);
+            }
             // Gone, it cannot be released; its sync point is signalled all the same.
             if let Some(p) = self.lent.remove(&n).and_then(|l| l.release) {
                 let _ = p.signal();
