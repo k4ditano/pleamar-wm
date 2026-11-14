@@ -2811,8 +2811,14 @@ impl State {
     }
 
     fn dismiss_popups_not_under(&mut self, root: &WlSurface) {
-        let root = root.clone();
         let focused = self.pointer.current_focus();
+        self.dismiss_popups_not_focused(root, focused);
+    }
+
+    /// The same, with the surface the pointer that pressed is over: an agent's hands
+    /// are a pointer of their own, and their press closes the menus they are not in too.
+    pub(crate) fn dismiss_popups_not_focused(&mut self, root: &WlSurface, focused: Option<WlSurface>) {
+        let root = root.clone();
         for (popup, _) in PopupManager::popups_for_surface(&root) {
             let inside = focused.as_ref().is_some_and(|f| {
                 let mut s = f.clone();
@@ -3286,6 +3292,16 @@ impl State {
         let roots: Vec<WlSurface> = self.slots.iter().flatten().map(|w| w.surface.clone()).collect();
         for root in roots {
             self.dismiss_popups_not_under(&root);
+        }
+    }
+
+    /// An agent's press: every window's and panel's menus close unless that pointer
+    /// is in them, as the person's press closes them (`ToNest::Button`).
+    pub(crate) fn dismiss_popups_for_press(&mut self, focused: Option<WlSurface>) {
+        let mut roots: Vec<WlSurface> = self.slots.iter().flatten().map(|w| w.surface.clone()).collect();
+        roots.extend(self.panels.iter().map(|p| p.shell.wl_surface().clone()));
+        for root in roots {
+            self.dismiss_popups_not_focused(&root, focused.clone());
         }
     }
 
