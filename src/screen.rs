@@ -2103,7 +2103,9 @@ fn client_texture(device: &wgpu::Device, (w, h): (u32, u32)) -> wgpu::Texture {
 
 /// A flip has landed on this monitor: the sheets whose frame it carried may
 /// paint the next one, and the monitor can be put together again.
-pub fn landed(screen: &Screen, to_render: &Sender<ToRender>) {
+/// `at`: when the screen began to show it, on the monotonic clock, and whether
+/// that is the card's own time for it (a flip) or a monitor's beat (no screen).
+pub fn landed(screen: &Screen, to_render: &Sender<ToRender>, at: Option<(Duration, bool)>) {
     let (lock, cv) = &**screen;
     let mut st = lock.lock().unwrap();
     st.idle = true;
@@ -2113,7 +2115,15 @@ pub fn landed(screen: &Screen, to_render: &Sender<ToRender>) {
     let name = st.name.clone();
     cv.notify_all();
     drop(st);
-    layers::tell(ToLayers::Landed(name));
+    layers::tell(ToLayers::Landed(name, at));
+}
+
+/// Now on the monotonic clock (the one wp_presentation tells times on).
+pub fn monotonic_now() -> Duration {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: a valid timespec for the call to fill.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
 
 fn as_bytes<const N: usize>(v: &[f32; N]) -> &[u8] {

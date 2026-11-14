@@ -66,8 +66,9 @@ pub enum ToLayers {
     /// had drawn: they may draw again.
     FrameDone(String),
     /// A monitor's frame (by its name) reached the screen: its flip landed,
-    /// on a refresh. The windows on it may draw the next one.
-    Landed(String),
+    /// on a refresh. The windows on it may draw the next one. With when it
+    /// was shown (monotonic clock), and whether that is the card's own time.
+    Landed(String, Option<(std::time::Duration, bool)>),
     /// Buffers a monitor no longer reads.
     Released(Vec<u64>),
     /// The monitors changed (one was plugged in or out): see `monitors()`.

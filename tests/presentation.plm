@@ -1,0 +1,8 @@
+language 0.1
+// What the presentation-feedback test (tests/presentation_feedback.rs) runs: a plain desk that
+// shows a program's window, which draws without rest.
+scene PresentationDesk {
+    surface { size: 1280, 720 }
+    windows win max 2
+    box { from: 0, 0; size: 1280, 720; color: #101418 }
+}

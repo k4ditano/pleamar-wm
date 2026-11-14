@@ -1804,7 +1804,8 @@ impl State {
                             crate::layers::tell(crate::layers::ToLayers::Released(free));
                         }
                     }
-                    screen::landed(&m.screen, &self.to_render);
+                    // The card's own time for it: when the screen began to show it.
+                    screen::landed(&m.screen, &self.to_render, Some((e.duration, true)));
                 }
             }
         }
