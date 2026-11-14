@@ -3376,11 +3376,33 @@ impl State {
 /// window is on (menus are drawn over everything there); nested, the window
 /// itself (they are drawn inside it).
 fn unconstrained(state: &State, popup: &PopupSurface, positioner: PositionerState) -> smithay::utils::Rectangle<i32, Logical> {
-    let kind = PopupKind::Xdg(popup.clone());
-    let Ok(root) = smithay::desktop::find_popup_root_surface(&kind) else { return positioner.get_geometry() };
+    fit(state, &PopupKind::Xdg(popup.clone()), positioner)
+}
+
+/// Where an input method's candidates go: under the text being written,
+/// starting where it starts, or over it when there is no room below (and
+/// slid sideways to fit). Smithay puts them at the top of that text, over it.
+fn place_candidates(state: &State, popup: &ImePopup) {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_positioner::{Anchor, ConstraintAdjustment, Gravity};
+    let rect = popup.text_input_rectangle();
+    let size = with_states(popup.wl_surface(), |s| s.data_map.get::<Mutex<Content>>().map(|c| c.lock().unwrap().size)).unwrap_or((0, 0));
+    let positioner = PositionerState {
+        rect_size: (size.0.max(1) as i32, size.1.max(1) as i32).into(),
+        anchor_rect: smithay::utils::Rectangle::new(rect.loc, (rect.size.w.max(1), rect.size.h.max(1)).into()),
+        anchor_edges: Anchor::BottomLeft,
+        gravity: Gravity::BottomRight,
+        constraint_adjustment: ConstraintAdjustment::FlipY | ConstraintAdjustment::SlideX,
+        ..Default::default()
+    };
+    popup.set_location(fit(state, &PopupKind::from(popup.clone()), positioner).loc);
+}
+
+/// A popup's place, made to fit (see `unconstrained`).
+fn fit(state: &State, kind: &PopupKind, positioner: PositionerState) -> smithay::utils::Rectangle<i32, Logical> {
+    let Ok(root) = smithay::desktop::find_popup_root_surface(kind) else { return positioner.get_geometry() };
     let window = with_states(&root, |s| s.cached_state.get::<SurfaceCachedState>().current().geometry);
     // In the coordinates of the popup's parent.
-    let parent = smithay::desktop::get_popup_toplevel_coords(&kind);
+    let parent = smithay::desktop::get_popup_toplevel_coords(kind);
     if state.menus_apart() {
         let monitors = layers::monitors();
         let shown = state.window_of(&root).and_then(|s| state.slots[s].as_ref()).and_then(|w| w.shown.clone());
@@ -3989,6 +4011,11 @@ impl CompositorHandler for State {
                 if !p.is_initial_configure_sent() {
                     let _ = p.send_configure();
                 }
+            }
+            // Candidates that grew (or have a size now): over the text, if
+            // under it they no longer fit.
+            if let PopupKind::InputMethod(p) = &popup {
+                place_candidates(self, p);
             }
             // A menu (or an input method's candidates) is drawn inside its
             // window: that window's image changes.
@@ -5015,6 +5042,7 @@ impl IdleInhibitHandler for State {
 /// An input method's candidates (fcitx5): a menu of the window being typed in.
 impl InputMethodHandler for State {
     fn new_popup(&mut self, surface: ImePopup) {
+        place_candidates(self, &surface);
         if let Err(e) = self.popups.track_popup(PopupKind::from(surface)) {
             eprintln!("windows · an input method's popup could not be tracked: {e:?}");
         }
@@ -5026,7 +5054,9 @@ impl InputMethodHandler for State {
         }
     }
 
-    fn popup_repositioned(&mut self, _: ImePopup) {}
+    fn popup_repositioned(&mut self, surface: ImePopup) {
+        place_candidates(self, &surface);
+    }
 
     fn parent_geometry(&self, parent: &WlSurface) -> smithay::utils::Rectangle<i32, Logical> {
         with_states(parent, |s| s.cached_state.get::<SurfaceCachedState>().current().geometry).unwrap_or_default()
