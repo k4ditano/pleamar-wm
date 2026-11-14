@@ -8,7 +8,8 @@ use std::os::fd::OwnedFd;
 
 pub fn run() -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN, ..wgpu::InstanceDescriptor::new_without_display_handle() });
-    let gpu = pleamar::gpu::Gpu::new(&instance, None);
+    // pleamar main hands the card back; pleamar exp2 may say «not yet» (a compositor not ready): both work.
+    let gpu = Card::card(pleamar::gpu::Gpu::new(&instance, None))?;
     let modifiers = gpu.render_modifiers().to_vec();
     println!("probe · the card paints BGRA in {} layouts: {:x?}", modifiers.len(), modifiers);
     // gbm on the card wgpu paints on: on a machine with two, the other card's
@@ -64,4 +65,19 @@ pub fn run() -> Result<(), String> {
     let pixel = out.slice(..4).get_mapped_range().map_err(|e| format!("{e:?}"))?.to_vec();
     println!("probe · a pixel of the buffer, read apart (B, G, R, X): {pixel:?} — expected about [255, 127/128, 0, 255]");
     Ok(())
+}
+
+/// What `Gpu::new` gives, whichever pleamar this is built on: the card itself, or a `Result` with it.
+trait Card {
+    fn card(self) -> Result<pleamar::gpu::Gpu, String>;
+}
+impl Card for pleamar::gpu::Gpu {
+    fn card(self) -> Result<pleamar::gpu::Gpu, String> {
+        Ok(self)
+    }
+}
+impl<E: std::fmt::Debug> Card for Result<pleamar::gpu::Gpu, E> {
+    fn card(self) -> Result<pleamar::gpu::Gpu, String> {
+        self.map_err(|e| format!("no card to paint with yet: {e:?}"))
+    }
 }
