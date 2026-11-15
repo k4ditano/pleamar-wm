@@ -1,5 +1,5 @@
-// bahia widget
 // For tools/bench-widgets.sh: a widget that moves at every frame (it reads `time`, so it never rests).
+// The script puts the shell's own first line before it, if it needs one (WIDGET_MARK).
 language 0.1
 scene Anim {
     surface { size: 164, 164; anchor: top_left; level: bottom; margin: pwy, 0, 0, pwx }
