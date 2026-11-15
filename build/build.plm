@@ -14,6 +14,7 @@ language 0.1
 // and does. Signing in and the model are chosen in pleamar-wm's control
 // centre (`pleamar-wm control` › Build).
 import "lang/es.plm"
+import "theme.plm"
 
 scene Build {
     permissions {
@@ -21,13 +22,12 @@ scene Build {
         run: "pleamar", "pleamar-wm", "grim", "magick", "sh", "curl", "xdg-user-dir", "xdg-open", "mkdir", "rm", "hyprctl"
     }
 
-    let ink = #eef4f1
-    let dim = #8b9894
-    let mint = #7fe0c4
-    let amber = #e8c26a
-    let coral = #ef7a66
-    let coal = #0e1413
-    let glass = #142120
+
+    // ── how it looks: theme.plm's colours, and build-theme.conf ────
+    //  (read by its logic: the font, a factor for every corner, glass)
+    text ui.font = ""                // empty: the default family (a named "sans-serif" set bold words in another face)
+    fact ui.r = 1
+    fact ui.glass = false
 
     // ── the mode ─────────────────────────────────────────────────
     fact on = false                    // build mode
@@ -37,6 +37,15 @@ scene Build {
     //  What the pointer does on the desktop: nothing of ours (hand: the
     //  desktop as ever), draw freely (pen), or draw a box.
     fact tool: hand | pen | box = pen
+    //  «Panel first» (`start = panel` in build-theme.conf or build.conf,
+    //  or `pleamar-wm build ask`): what to build is asked first, in the
+    //  middle, as a search is; drawing where it goes is a press away.
+    fact asking = false
+    fact ask_screen = 0
+    text ask.input = ""
+    event ask ->                       // `pleamar-wm build ask`
+    event ask_send ->
+    event ask_draw ->
     on change on while on { tool = pen }
     prop shown = 0 ~420ms
     follow shown = if(on, 1, 0)
@@ -105,12 +114,12 @@ scene Build {
 
         //  The edge: you are building, on every monitor, until you leave.
         let edge = 0.55 + 0.25 * sin(t * 360)
-        box { from: 2, 2; size: W - 4, H - 4; corner: 14; stroke: 3; color: mint; opacity: edge * shown }
-        box { from: 6, 6; size: W - 12, H - 12; corner: 12; stroke: 1; color: mint; opacity: 25% * shown }
+        box { from: 2, 2; size: W - 4, H - 4; corner: 14 * ui.r; stroke: 3; color: mint; opacity: edge * shown }
+        box { from: 6, 6; size: W - 12, H - 12; corner: 12 * ui.r; stroke: 1; color: mint; opacity: 25% * shown }
 
         //  The canvas: it takes the desktop only while drawing is chosen.
         //  Not while What you built is open: its panel is what you use then.
-        zone box canvas { from: 0, 0; size: W, H; cursor: crosshair; active: on and view != list and (shooting or (tool != hand and not building)) }
+        zone box canvas { from: 0, 0; size: W, H; cursor: crosshair; active: on and view != list and (shooting or (tool != hand and not building and not asking)) }
         on press canvas while shooting { shot_screen = screen.index; sx0 = local.x; sy0 = local.y; sx1 = local.x; sy1 = local.y }
         on drag canvas while shooting { sx1 = local.x; sy1 = local.y }
         on release canvas while shooting { emit shot_end }
@@ -131,18 +140,18 @@ scene Build {
             let qy = min(sy0, sy1)
             let qw = abs(sx1 - sx0)
             let qh = abs(sy1 - sy0)
-            box { from: 0, 0; size: W, H; color: #04100d; opacity: 30% }
+            box { from: 0, 0; size: W, H; color: veil; opacity: 30% }
             group {
                 show: shot_screen == screen.index and qw > 2 and qh > 2
-                box { from: qx, qy; size: qw, qh; corner: 4; color: mint; opacity: 8% }
-                box { from: qx, qy; size: qw, qh; corner: 4; stroke: 2; color: mint; opacity: 90% }
+                box { from: qx, qy; size: qw, qh; corner: 4 * ui.r; color: mint; opacity: 8% }
+                box { from: qx, qy; size: qw, qh; corner: 4 * ui.r; stroke: 2; color: mint; opacity: 90% }
             }
-            box { at: W / 2, 96; size: 470, 34; corner: 17; color: coal; opacity: 92% }
-            text "Drag over what you want as a reference · Esc to cancel" { at: W / 2, 96; anchor: center; size: 12.5; weight: 650; color: mint }
+            box { at: W / 2, 96; size: 470, 34; corner: 17 * ui.r; color: coal; opacity: 92% }
+            text "Drag over what you want as a reference · Esc to cancel" { family: ui.font; at: W / 2, 96; anchor: center; size: 12.5; weight: 650; color: mint }
         }
 
         //  A dim while drawing, so the strokes read.
-        box { from: 0, 0; size: W, H; color: #04100d; opacity: if(tool != hand and not building, 22%, 0%) * shown }
+        box { from: 0, 0; size: W, H; color: veil; opacity: if(tool != hand and not building and not asking, 22%, 0%) * shown }
 
         //  What you built before: its outline, and its name to open it again
         //  (only the name: inside the outline is still for drawing, so
@@ -150,18 +159,18 @@ scene Build {
         component Old(r: record) {
             prop lit = 0 ~140ms
             let ly = if(r.y >= 30, r.y - 26, r.y + 6)
-            let here = r.s == screen.index and tool != hand and not building and view != list
+            let here = r.s == screen.index and tool != hand and not building and view != list and not asking
             group {
                 show: here
-                box { from: r.x, r.y; size: r.w, r.h; corner: 10; color: mint; opacity: 4% + 10% * lit }
-                box { from: r.x, r.y; size: r.w, r.h; corner: 10; stroke: 1.5; color: mint; opacity: 40% + 50% * lit }
-                box { from: r.x, ly; size: 180, 22; corner: 7; color: mix(coal, #24413a, lit); opacity: 92% }
-                box { from: r.x, ly; size: 180, 22; corner: 7; stroke: 1; color: mint; opacity: 30% + 50% * lit }
+                box { from: r.x, r.y; size: r.w, r.h; corner: 10 * ui.r; color: mint; opacity: 4% + 10% * lit }
+                box { from: r.x, r.y; size: r.w, r.h; corner: 10 * ui.r; stroke: 1.5; color: mint; opacity: 40% + 50% * lit }
+                box { from: r.x, ly; size: 180, 22; corner: 7 * ui.r; color: mix(coal, btn_go, lit); opacity: 92% }
+                box { from: r.x, ly; size: 180, 22; corner: 7 * ui.r; stroke: 1; color: mint; opacity: 30% + 50% * lit }
                 path { at: r.x + 9, ly + 4; color: mint; stroke: 1.3
                        move 1, 13; line 10, 4; line 12, 6; line 3, 15; line 0, 16; close }
-                text r.name { at: r.x + 28, ly + 11; anchor: left center; size: 11; weight: 700; color: mint; width: 144; lines: 1 }
+                text r.name { family: ui.font; at: r.x + 28, ly + 11; anchor: left center; size: 11; weight: 700; color: mint; width: 144; lines: 1 }
             }
-            zone box old_zone { from: r.x, ly; size: 180, 22; corner: 7; cursor: pointer; active: here and not drawing; label: "Open it again" }
+            zone box old_zone { from: r.x, ly; size: 180, 22; corner: 7 * ui.r; cursor: pointer; active: here and not drawing; label: "Open it again" }
             on enter old_zone { lit: 1 }
             on leave old_zone { lit: 0 }
             on press old_zone { emit open_old(r.index) }
@@ -189,9 +198,9 @@ scene Build {
         group {
             show: here and (tool == box and drawing or boxed) and bw > 4 and bh > 4 and sk > 0.01
             opacity: sk * if(sketch, 60% + 40% * (0.5 + 0.5 * sin(t * 300)), 100%)
-            box { from: bl, bt; size: bw, bh; corner: 12; color: mint; opacity: 12% }
-            box { from: bl, bt; size: bw, bh; corner: 12; stroke: 2.5; color: mint; opacity: 85% }
-            text "{bw, 0} × {bh, 0}" { at: bl + bw / 2, bt + bh / 2; anchor: center; size: 12; color: ink; opacity: 80% }
+            box { from: bl, bt; size: bw, bh; corner: 12 * ui.r; color: mint; opacity: 12% }
+            box { from: bl, bt; size: bw, bh; corner: 12 * ui.r; stroke: 2.5; color: mint; opacity: 85% }
+            text "{bw, 0} × {bh, 0}" { family: ui.font; at: bl + bw / 2, bt + bh / 2; anchor: center; size: 12; color: ink; opacity: 80% }
         }
 
         //  ── being built: its place ──
@@ -210,14 +219,14 @@ scene Build {
             let gy = reg.y - 8
             let gw = reg.w + 16
             let gh = reg.h + 16
-            box { from: gx, gy; size: cl, 2.5; corner: 1.2; color: mint }
-            box { from: gx, gy; size: 2.5, cl; corner: 1.2; color: mint }
-            box { from: gx + gw - cl, gy; size: cl, 2.5; corner: 1.2; color: mint }
-            box { from: gx + gw - 2.5, gy; size: 2.5, cl; corner: 1.2; color: mint }
-            box { from: gx, gy + gh - 2.5; size: cl, 2.5; corner: 1.2; color: mint }
-            box { from: gx, gy + gh - cl; size: 2.5, cl; corner: 1.2; color: mint }
-            box { from: gx + gw - cl, gy + gh - 2.5; size: cl, 2.5; corner: 1.2; color: mint }
-            box { from: gx + gw - 2.5, gy + gh - cl; size: 2.5, cl; corner: 1.2; color: mint }
+            box { from: gx, gy; size: cl, 2.5; corner: 1.2 * ui.r; color: mint }
+            box { from: gx, gy; size: 2.5, cl; corner: 1.2 * ui.r; color: mint }
+            box { from: gx + gw - cl, gy; size: cl, 2.5; corner: 1.2 * ui.r; color: mint }
+            box { from: gx + gw - 2.5, gy; size: 2.5, cl; corner: 1.2 * ui.r; color: mint }
+            box { from: gx, gy + gh - 2.5; size: cl, 2.5; corner: 1.2 * ui.r; color: mint }
+            box { from: gx, gy + gh - cl; size: 2.5, cl; corner: 1.2 * ui.r; color: mint }
+            box { from: gx + gw - cl, gy + gh - 2.5; size: cl, 2.5; corner: 1.2 * ui.r; color: mint }
+            box { from: gx + gw - 2.5, gy + gh - cl; size: 2.5, cl; corner: 1.2 * ui.r; color: mint }
         }
         //  The scan: on what is already there, while it is being changed.
         group {
@@ -225,17 +234,50 @@ scene Build {
             opacity: work * placed
             let sy = reg.y + reg.h * fract(t * 0.45)
             box { from: reg.x, sy - 18; size: reg.w, 18; color: mint; opacity: 10% }
-            box { from: reg.x, sy - 1; size: reg.w, 2; corner: 1; color: mint; opacity: 70% }
+            box { from: reg.x, sy - 1; size: reg.w, 2; corner: 1 * ui.r; color: mint; opacity: 70% }
         }
         //  Its words while it is still only the sketch.
-        text "Building it…" { at: reg.x + reg.w / 2, reg.y + reg.h + 26; anchor: center; size: 12; weight: 650; color: mint; opacity: placed * sk * (55% + 45% * work); show: placed > 0.01 and sketch }
+        text "Building it…" { family: ui.font; at: reg.x + reg.w / 2, reg.y + reg.h + 26; anchor: center; size: 12; weight: 650; color: mint; opacity: placed * sk * (55% + 45% * work); show: placed > 0.01 and sketch }
 
         //  What to do, the first time, in the middle.
         group {
-            show: tool != hand and not building and strokes < 1 and not boxed and not drawing and view != list
-            text "Draw the shape of what you want, where you want it" { at: W / 2, H / 2 - 12; anchor: center; size: 20; weight: 600; color: ink; opacity: 85% * shown }
-            text "A bar along the top, a dock, a clock in a corner, a window… then Done" { at: W / 2, H / 2 + 18; anchor: center; size: 13; color: ink; opacity: 60% * shown }
+            show: tool != hand and not building and strokes < 1 and not boxed and not drawing and view != list and not asking
+            text "Draw the shape of what you want, where you want it" { family: ui.font; at: W / 2, H / 2 - 12; anchor: center; size: 20; weight: 600; color: ink; opacity: 85% * shown }
+            text "A bar along the top, a dock, a clock in a corner, a window… then Done" { family: ui.font; at: W / 2, H / 2 + 18; anchor: center; size: 13; color: ink; opacity: 60% * shown }
         }
+
+        //  ── «panel first»: what to build, asked in the middle ──
+        prop ask.glow = 0 ~120ms
+        group {
+            show: asking and screen.index == ask_screen and view != list
+            opacity: shown
+            let aw = 640
+            let ax = W / 2 - aw / 2
+            let ay = H * 0.3
+            box { from: 0, 0; size: W, H; color: veil; opacity: 30% }
+            group {
+                show: ui.glass
+                body { color: coal; glass: 100%; refraction: 50%; frost: auto; smoke: 25%; shadow: 0, 10, 30, 28%
+                       box { from: ax, ay - 32; size: aw, 64; corner: 20 * ui.r } }
+            }
+            box { from: ax, ay - 32; size: aw, 64; corner: 20 * ui.r; color: coal; opacity: if(ui.glass, 50%, 96%) }
+            box { from: ax, ay - 32; size: aw, 64; corner: 20 * ui.r; stroke: 1.2; color: mint; opacity: 45% }
+            input ask.input { family: ui.font; at: ax + 26, ay - 12; width: aw - 170; size: 18; color: ink; placeholder: "What do you want to build?" }
+            box { at: ax + aw - 72, ay; size: 112, 38; corner: 13 * ui.r; color: mix(btn, btn_lit, ask.glow) }
+            path { at: ax + aw - 118, ay - 9; color: ink; stroke: 1.6
+                   move 2, 16; line 12, 4; line 15, 7; line 5, 18; line 1, 19; close }
+            text "Draw it" { family: ui.font; at: ax + aw - 62, ay; anchor: center; size: 12.5; weight: 700; color: ink }
+            zone box ask_draw_btn { at: ax + aw - 72, ay; size: 112, 38; corner: 13 * ui.r; cursor: pointer; label: "Draw where it goes" }
+            text "A bar, a dock, a clock, a widget… Enter and it is built here; or draw where it goes" { family: ui.font; at: W / 2, ay + 56; anchor: center; size: 12.5; color: ink; opacity: 60% }
+        }
+        on enter ask_draw_btn { ask.glow: 1 }
+        on leave ask_draw_btn { ask.glow: 0 }
+        on press ask_draw_btn { emit ask_draw }
+        on submit ask.input { emit ask_send }
+        //  Asked for from a key, nobody clicked it: the field takes the keyboard, as a launcher does.
+        on change asking while asking and screen.index == ask_screen { focus ask.input }
+        on change asking while not asking { blur }
+        on key Escape while asking { emit ask_draw }
 
         //  ── the bar ──
         let bw0 = 680
@@ -250,46 +292,52 @@ scene Build {
         group {
             opacity: shown
             move: 0, (1 - shown) * -20
-            box { from: bx, 12; size: bw0, 48; corner: 24; color: coal; opacity: 92% }
-            box { from: bx, 12; size: bw0, 48; corner: 24; stroke: 1.2; color: mint; opacity: 40% }
+            //  Glass (build-theme.conf): the plate lets the desktop through, tinted.
+            group {
+                show: ui.glass
+                body { color: coal; glass: 100%; refraction: 50%; frost: auto; smoke: 25%; shadow: 0, 6, 22, 22%
+                       box { from: bx, 12; size: bw0, 48; corner: 24 * ui.r } }
+            }
+            box { from: bx, 12; size: bw0, 48; corner: 24 * ui.r; color: coal; opacity: if(ui.glass, 45%, 92%) }
+            box { from: bx, 12; size: bw0, 48; corner: 24 * ui.r; stroke: 1.2; color: mint; opacity: 40% }
             ellipse { at: bx + 26, 36; radius: 5; color: amber; opacity: 60% + 40% * sin(t * 720) }
-            text "BUILDING" { at: bx + 40, 36; anchor: left center; size: 11; weight: 800; color: amber }
-            text build.name { at: bx + 138, 36; anchor: left center; size: 12.5; weight: 700; color: ink; width: 170; lines: 1; show: building }
+            text "BUILDING" { family: ui.font; at: bx + 40, 36; anchor: left center; size: 11; weight: 800; color: amber }
+            text build.name { family: ui.font; at: bx + 138, 36; anchor: left center; size: 12.5; weight: 700; color: ink; width: 170; lines: 1; show: building }
             //  The tools (not while one is being built: its panel is where you talk).
             group {
                 show: not building
-                box { at: bx + 172, 36; size: 34, 34; corner: 11; color: mix(#1d2a28, #2c4b44, max(hand.glow, tool == hand)) }
+                box { at: bx + 172, 36; size: 34, 34; corner: 11 * ui.r; color: mix(btn, btn_lit, max(hand.glow, tool == hand)) }
                 path { at: bx + 165, 28; color: ink; stroke: 1.6
                        move 3, 16; line 3, 6; curve 7, 6 via 5, 2; line 7, 14; line 7, 3; curve 11, 3 via 9, -1; line 11, 14; line 11, 5; curve 15, 6 via 13, 2; line 15, 18; curve 9, 22 via 15, 22 }
-                box { at: bx + 214, 36; size: 34, 34; corner: 11; color: mix(#1d2a28, #2c4b44, max(pen.glow, tool == pen)) }
+                box { at: bx + 214, 36; size: 34, 34; corner: 11 * ui.r; color: mix(btn, btn_lit, max(pen.glow, tool == pen)) }
                 path { at: bx + 206, 28; color: ink; stroke: 1.8
                        move 2, 16; line 12, 4; line 15, 7; line 5, 18; line 1, 19; close }
-                box { at: bx + 256, 36; size: 34, 34; corner: 11; color: mix(#1d2a28, #2c4b44, max(boxt.glow, tool == box)) }
-                box { at: bx + 256, 36; size: 17, 13; corner: 3; stroke: 1.8; color: ink }
-                box { at: bx + 298, 36; size: 34, 34; corner: 11; color: mix(#1d2a28, #4a2c2a, clear.glow); opacity: if(strokes > 0 or boxed, 100%, 40%) }
+                box { at: bx + 256, 36; size: 34, 34; corner: 11 * ui.r; color: mix(btn, btn_lit, max(boxt.glow, tool == box)) }
+                box { at: bx + 256, 36; size: 17, 13; corner: 3 * ui.r; stroke: 1.8; color: ink }
+                box { at: bx + 298, 36; size: 34, 34; corner: 11 * ui.r; color: mix(btn, btn_warn, clear.glow); opacity: if(strokes > 0 or boxed, 100%, 40%) }
                 line { from: bx + 291, 29; to: bx + 305, 43; width: 1.8; color: ink }
                 line { from: bx + 305, 29; to: bx + 291, 43; width: 1.8; color: ink }
-                box { at: bx + 372, 36; size: 92, 34; corner: 12; color: mix(#24413a, mint, done.glow); opacity: if(strokes > 0 or boxed, 100%, 35%) }
-                text "Done" { at: bx + 372, 36; anchor: center; size: 12.5; weight: 800; color: mix(ink, coal, done.glow) }
-                zone box hand_btn { at: bx + 172, 36; size: 34, 34; corner: 11; cursor: pointer; label: "Use the desktop" }
-                zone box pen_btn { at: bx + 214, 36; size: 34, 34; corner: 11; cursor: pointer; label: "Draw freely" }
-                zone box boxt_btn { at: bx + 256, 36; size: 34, 34; corner: 11; cursor: pointer; label: "Draw a box" }
-                zone box clear_btn { at: bx + 298, 36; size: 34, 34; corner: 11; cursor: pointer; label: "Clear the drawing"; active: strokes > 0 or boxed }
-                zone box done_btn { at: bx + 372, 36; size: 92, 34; corner: 12; cursor: pointer; label: "Build what is drawn"; active: strokes > 0 or boxed }
+                box { at: bx + 372, 36; size: 92, 34; corner: 12 * ui.r; color: mix(btn_go, mint, done.glow); opacity: if(strokes > 0 or boxed, 100%, 35%) }
+                text "Done" { family: ui.font; at: bx + 372, 36; anchor: center; size: 12.5; weight: 800; color: mix(ink, onaccent, done.glow) }
+                zone box hand_btn { at: bx + 172, 36; size: 34, 34; corner: 11 * ui.r; cursor: pointer; label: "Use the desktop" }
+                zone box pen_btn { at: bx + 214, 36; size: 34, 34; corner: 11 * ui.r; cursor: pointer; label: "Draw freely" }
+                zone box boxt_btn { at: bx + 256, 36; size: 34, 34; corner: 11 * ui.r; cursor: pointer; label: "Draw a box" }
+                zone box clear_btn { at: bx + 298, 36; size: 34, 34; corner: 11 * ui.r; cursor: pointer; label: "Clear the drawing"; active: strokes > 0 or boxed }
+                zone box done_btn { at: bx + 372, 36; size: 92, 34; corner: 12 * ui.r; cursor: pointer; label: "Build what is drawn"; active: strokes > 0 or boxed }
             }
             //  Building one: back to the drawing when you are done with it.
             group {
                 show: building
-                box { at: bx + 402, 36; size: 120, 34; corner: 12; color: mix(#1d2a28, #2c4b44, done.glow) }
-                text "Draw another" { at: bx + 402, 36; anchor: center; size: 12; weight: 700; color: ink }
-                zone box finish_btn { at: bx + 402, 36; size: 120, 34; corner: 12; cursor: pointer; label: "Leave this one and draw another" }
+                box { at: bx + 402, 36; size: 120, 34; corner: 12 * ui.r; color: mix(btn, btn_lit, done.glow) }
+                text "Draw another" { family: ui.font; at: bx + 402, 36; anchor: center; size: 12; weight: 700; color: ink }
+                zone box finish_btn { at: bx + 402, 36; size: 120, 34; corner: 12 * ui.r; cursor: pointer; label: "Leave this one and draw another" }
             }
-            box { at: bx + 516, 36; size: 112, 34; corner: 12; color: mix(#1d2a28, #2c4b44, list.glow) }
-            text "My creations" { at: bx + 516, 36; anchor: center; size: 12; weight: 600; color: ink }
-            box { at: bx + 626, 36; size: 50, 34; corner: 12; color: mix(#1d2a28, #4a2c2a, out.glow) }
-            text "Exit" { at: bx + 626, 36; anchor: center; size: 12; weight: 700; color: ink }
-            zone box list_btn { at: bx + 516, 36; size: 112, 34; corner: 12; cursor: pointer; label: "What you built" }
-            zone box out_btn { at: bx + 626, 36; size: 50, 34; corner: 12; cursor: pointer; label: "Leave build mode (Super+B)" }
+            box { at: bx + 516, 36; size: 112, 34; corner: 12 * ui.r; color: mix(btn, btn_lit, list.glow) }
+            text "My creations" { family: ui.font; at: bx + 516, 36; anchor: center; size: 12; weight: 600; color: ink }
+            box { at: bx + 626, 36; size: 50, 34; corner: 12 * ui.r; color: mix(btn, btn_warn, out.glow) }
+            text "Exit" { family: ui.font; at: bx + 626, 36; anchor: center; size: 12; weight: 700; color: ink }
+            zone box list_btn { at: bx + 516, 36; size: 112, 34; corner: 12 * ui.r; cursor: pointer; label: "What you built" }
+            zone box out_btn { at: bx + 626, 36; size: 50, 34; corner: 12 * ui.r; cursor: pointer; label: "Leave build mode (Super+B)" }
         }
         on enter hand_btn { hand.glow: 1 }
         on leave hand_btn { hand.glow: 0 }
@@ -307,9 +355,9 @@ scene Build {
         on leave list_btn { list.glow: 0 }
         on enter out_btn { out.glow: 1 }
         on leave out_btn { out.glow: 0 }
-        on press hand_btn { tool = hand }
-        on press pen_btn { tool = pen }
-        on press boxt_btn { tool = box }
+        on press hand_btn { tool = hand; asking = false }
+        on press pen_btn { tool = pen; asking = false }
+        on press boxt_btn { tool = box; asking = false }
         on press clear_btn { emit clear }
         on press done_btn { emit done }
         on press finish_btn { emit finish }

@@ -450,6 +450,8 @@ never writes over what is there:
   autostart        what starts with the desktop, one command a line
   wm/session.plm   your own window manager, instead of the one that comes with it
   shells/          your scenes: bars, widgets, apps
+  build.conf       Build's model (the control centre writes it)
+  build-theme.conf, build-theme/   Build's look and how it starts: docs/build-theme.md
 ```
 
 `keys.conf` binds keys to the window manager's actions —the events its scene

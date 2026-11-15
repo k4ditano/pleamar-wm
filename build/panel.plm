@@ -79,11 +79,11 @@ part Panel {
             //  1 · yours
             group {
                 show: r.kind == 1
-                box { from: 420 - said.width - 26, 0; size: said.width + 26, said.height + 14; corner: 14; color: #1d2b27 }
-                text r.text { at: 420 - 13, 7; anchor: right top; width: 330; size: 13; color: ink; align: right; measure: said; selectable: true }
+                box { from: 420 - said.width - 26, 0; size: said.width + 26, said.height + 14; corner: 14 * ui.r; color: mine }
+                text r.text { family: ui.font; at: 420 - 13, 7; anchor: right top; width: 330; size: 13; color: ink; align: right; measure: said; selectable: true }
             }
             //  2 · the builder's, its letters rising as they come
-            text r.text { at: 2, 2; anchor: left top; width: 410; size: 13.5; line_height: 1.4; color: ink; measure: hers; show: r.kind == 2; markdown: true
+            text r.text { family: ui.font; at: 2, 2; anchor: left top; width: 410; size: 13.5; line_height: 1.4; color: ink; measure: hers; show: r.kind == 2; markdown: true
                           selectable: true
                           letter_opacity: if(arriving, clamp((c.reveal - letter) / 12, 0, 1), 1)
                           letter_move: 0, if(arriving, (1 - clamp((c.reveal - letter) / 12, 0, 1)) * 7, 0) }
@@ -93,29 +93,29 @@ part Panel {
                 ellipse { at: 10, 13; radius: 5.5; stroke: 1.4; color: mix(mix(mint, coral, r.state == 2), dim, r.state == 3) }
                 arc { at: 10, 13; radius: 5.5; span: 110deg; width: 1.6; rotate: t * 1440deg; color: mint; show: r.state == 0 }
                 ellipse { at: 10, 13; radius: 3; color: mint; show: r.state == 1 }
-                text r.text { at: 24, 13; anchor: left center; size: 11.5; color: #b9c2bf; width: 260; lines: 1 }
-                text r.detail { at: 418, 13; anchor: right center; size: 10.5; color: dim; width: 120; lines: 1; align: right }
+                text r.text { family: ui.font; at: 24, 13; anchor: left center; size: 11.5; color: soft; width: 260; lines: 1 }
+                text r.detail { family: ui.font; at: 418, 13; anchor: right center; size: 10.5; color: dim; width: 120; lines: 1; align: right }
             }
             //  4 · it asks you
             group {
                 show: r.kind == 4
-                box { from: 0, 0; size: 420, asked.height + 66; corner: 14; color: #24211a }
-                box { from: 0, 0; size: 420, asked.height + 66; corner: 14; stroke: 1.4; color: amber; opacity: if(r.state == 0, 50% + 35% * sin(t * 720), 25%) }
-                text r.detail { at: 16, 16; anchor: left center; size: 9.5; weight: 700; color: amber; width: 380; lines: 1 }
-                text r.text { at: 16, 30; anchor: left top; width: 390; size: 12.5; color: ink; measure: asked; selectable: true }
+                box { from: 0, 0; size: 420, asked.height + 66; corner: 14 * ui.r; color: card }
+                box { from: 0, 0; size: 420, asked.height + 66; corner: 14 * ui.r; stroke: 1.4; color: amber; opacity: if(r.state == 0, 50% + 35% * sin(t * 720), 25%) }
+                text r.detail { family: ui.font; at: 16, 16; anchor: left center; size: 9.5; weight: 700; color: amber; width: 380; lines: 1 }
+                text r.text { family: ui.font; at: 16, 30; anchor: left top; width: 390; size: 12.5; color: ink; measure: asked; selectable: true }
                 group {
                     show: r.state == 0
-                    box { from: 196, asked.height + 34; size: 104, 28; corner: 9; color: #2a2b2c; opacity: 80% + 20% * deny.glow }
-                    text "Not this" { at: 248, asked.height + 48; anchor: center; size: 11.5; weight: 600; color: ink }
-                    box { from: 306, asked.height + 34; size: 104, 28; corner: 9; color: amber; opacity: 85% + 15% * allow.glow }
-                    text "Allow" { at: 358, asked.height + 48; anchor: center; size: 11.5; weight: 700; color: coal }
-                    zone box deny_zone { from: 196, asked.height + 34; size: 104, 28; corner: 9; cursor: pointer }
-                    zone box allow_zone { from: 306, asked.height + 34; size: 104, 28; corner: 9; cursor: pointer }
+                    box { from: 196, asked.height + 34; size: 104, 28; corner: 9 * ui.r; color: deny_btn; opacity: 80% + 20% * deny.glow }
+                    text "Not this" { family: ui.font; at: 248, asked.height + 48; anchor: center; size: 11.5; weight: 600; color: ink }
+                    box { from: 306, asked.height + 34; size: 104, 28; corner: 9 * ui.r; color: amber; opacity: 85% + 15% * allow.glow }
+                    text "Allow" { family: ui.font; at: 358, asked.height + 48; anchor: center; size: 11.5; weight: 700; color: onaccent }
+                    zone box deny_zone { from: 196, asked.height + 34; size: 104, 28; corner: 9 * ui.r; cursor: pointer }
+                    zone box allow_zone { from: 306, asked.height + 34; size: 104, 28; corner: 9 * ui.r; cursor: pointer }
                 }
-                text pick(r.state == 3, "Not allowed", "Allowed") { at: 404, asked.height + 48; anchor: right center; size: 11; color: dim; show: r.state != 0 }
+                text pick(r.state == 3, "Not allowed", "Allowed") { family: ui.font; at: 404, asked.height + 48; anchor: right center; size: 11; color: dim; show: r.state != 0 }
             }
             //  5 · a note
-            text r.text { at: 2, 13; anchor: left center; size: 11.5; color: coral; width: 410; lines: 3; show: r.kind == 5; selectable: true }
+            text r.text { family: ui.font; at: 2, 13; anchor: left center; size: 11.5; color: coral; width: 410; lines: 3; show: r.kind == 5; selectable: true }
             on enter allow_zone { allow.glow: 1 }
             on leave allow_zone { allow.glow: 0 }
             on enter deny_zone { deny.glow: 1 }
@@ -128,10 +128,10 @@ part Panel {
             size: 32, 32
             prop gone.glow = 0 ~140ms
             image r.pic { at: 1, 1; size: 30, 30 }
-            box { at: 16, 16; size: 30, 30; corner: 7; stroke: 1; color: mint; opacity: 35% + 40% * gone.glow }
-            box { at: 16, 16; size: 30, 30; corner: 7; color: coal; opacity: 55% * gone.glow }
-            text "×" { at: 16, 15; anchor: center; size: 16; weight: 700; color: ink; opacity: gone.glow }
-            zone box chip { at: 16, 16; size: 32, 32; corner: 7; cursor: pointer }
+            box { at: 16, 16; size: 30, 30; corner: 7 * ui.r; stroke: 1; color: mint; opacity: 35% + 40% * gone.glow }
+            box { at: 16, 16; size: 30, 30; corner: 7 * ui.r; color: coal; opacity: 55% * gone.glow }
+            text "×" { family: ui.font; at: 16, 15; anchor: center; size: 16; weight: 700; color: ink; opacity: gone.glow }
+            zone box chip { at: 16, 16; size: 32, 32; corner: 7 * ui.r; cursor: pointer }
             on enter chip { gone.glow: 1 }
             on leave chip { gone.glow: 0 }
             on press chip { emit ref_remove(r.index) }
@@ -145,27 +145,27 @@ part Panel {
             prop gone.glow = 0 ~140ms
             prop sw = 0 ~calm
             follow sw = r.on
-            box { from: 0, 0; size: 420, 58; corner: 14; color: mix(#18221f, #1f2c29, glow) }
+            box { from: 0, 0; size: 420, 58; corner: 14 * ui.r; color: mix(row_bg, row_lit, glow) }
             //  On or off (one kept): a switch; else the dot of kept or not.
             ellipse { at: 18, 29; radius: 4; color: mix(dim, mint, r.kept); show: r.can < 0.5 }
             group {
                 show: r.can > 0.5
-                box { at: 26, 29; size: 34, 20; corner: 10; color: mix(#2a302e, #2f6b5a, sw) }
+                box { at: 26, 29; size: 34, 20; corner: 10 * ui.r; color: mix(sw_off, sw_on, sw) }
                 ellipse { at: 18 + 16 * sw, 29; radius: 7; color: mix(dim, ink, sw) }
-                zone box switch_zone { at: 26, 29; size: 38, 24; corner: 10; cursor: pointer; label: "On or off" }
+                zone box switch_zone { at: 26, 29; size: 38, 24; corner: 10 * ui.r; cursor: pointer; label: "On or off" }
                 on press switch_zone { emit l_toggle(r.index) }
             }
-            text r.name { at: 50, 21; anchor: left center; size: 13.5; weight: 700; color: mix(dim, ink, max(sw, 1 - r.can)); width: 185; lines: 1 }
-            text r.what { at: 50, 40; anchor: left center; size: 10.5; color: dim; width: 185; lines: 1 }
-            box { at: 270, 29; size: 58, 28; corner: 9; color: mix(#24302d, #2c4b44, open.glow) }
-            text "Open" { at: 270, 29; anchor: center; size: 11; weight: 600; color: ink }
-            box { at: 334, 29; size: 58, 28; corner: 9; color: mix(#24302d, #2f3d4f, share.glow) }
-            text "Share" { at: 334, 29; anchor: center; size: 11; weight: 600; color: ink }
-            box { at: 392, 29; size: 36, 28; corner: 9; color: mix(#24302d, #5a2f2a, max(gone.glow, r.sure)) }
-            text "×" { at: 392, 28; anchor: center; size: 15; weight: 700; color: mix(ink, coral, r.sure) }
-            zone box open_zone { at: 270, 29; size: 58, 28; corner: 9; cursor: pointer }
-            zone box share_zone { at: 334, 29; size: 58, 28; corner: 9; cursor: pointer }
-            zone box gone_zone { at: 392, 29; size: 36, 28; corner: 9; cursor: pointer; label: "Delete it (press twice)" }
+            text r.name { family: ui.font; at: 50, 21; anchor: left center; size: 13.5; weight: 700; color: mix(dim, ink, max(sw, 1 - r.can)); width: 185; lines: 1 }
+            text r.what { family: ui.font; at: 50, 40; anchor: left center; size: 10.5; color: dim; width: 185; lines: 1 }
+            box { at: 270, 29; size: 58, 28; corner: 9 * ui.r; color: mix(tool_btn, btn_lit, open.glow) }
+            text "Open" { family: ui.font; at: 270, 29; anchor: center; size: 11; weight: 600; color: ink }
+            box { at: 334, 29; size: 58, 28; corner: 9 * ui.r; color: mix(tool_btn, share_lit, share.glow) }
+            text "Share" { family: ui.font; at: 334, 29; anchor: center; size: 11; weight: 600; color: ink }
+            box { at: 392, 29; size: 36, 28; corner: 9 * ui.r; color: mix(tool_btn, del_lit, max(gone.glow, r.sure)) }
+            text "×" { family: ui.font; at: 392, 28; anchor: center; size: 15; weight: 700; color: mix(ink, coral, r.sure) }
+            zone box open_zone { at: 270, 29; size: 58, 28; corner: 9 * ui.r; cursor: pointer }
+            zone box share_zone { at: 334, 29; size: 58, 28; corner: 9 * ui.r; cursor: pointer }
+            zone box gone_zone { at: 392, 29; size: 36, 28; corner: 9 * ui.r; cursor: pointer; label: "Delete it (press twice)" }
             on enter open_zone { open.glow: 1; glow: 1 }
             on leave open_zone { open.glow: 0; glow: 0 }
             on enter share_zone { share.glow: 1; glow: 1 }
@@ -180,8 +180,13 @@ part Panel {
         group {
             opacity: pane
             move: if(side == right, 1, -1) * (1 - pane) * 40, 0
-            box { from: 0, 0; size: PW, PH; corner: 22; color: coal; opacity: 96% }
-            box { from: 0, 0; size: PW, PH; corner: 22; stroke: 1.2; color: mint; opacity: 22% + 30% * stir }
+            group {
+                show: ui.glass
+                body { color: coal; glass: 100%; refraction: 40%; frost: 100%; smoke: 30%; shadow: 0, 10, 30, 25%
+                       box { from: 0, 0; size: PW, PH; corner: 22 * ui.r } }
+            }
+            box { from: 0, 0; size: PW, PH; corner: 22 * ui.r; color: coal; opacity: if(ui.glass, 55%, 96%) }
+            box { from: 0, 0; size: PW, PH; corner: 22 * ui.r; stroke: 1.2; color: mint; opacity: 22% + 30% * stir }
             //  ── the head ──
             prop undo.glow = 0 ~140ms
             prop throw.glow = 0 ~140ms
@@ -190,35 +195,35 @@ part Panel {
             prop flip.glow = 0 ~140ms
             //  ⇄: the panel to the other side, in either view.
             let fx = if(view == list, 350, 196)
-            box { at: fx, 34; size: 26, 26; corner: 8; color: #1f2a28; opacity: 70% + 30% * flip.glow }
+            box { at: fx, 34; size: 26, 26; corner: 8 * ui.r; color: head_btn; opacity: 70% + 30% * flip.glow }
             path { at: fx - 7, 30; color: ink; stroke: 1.4
                    move 10, -3; line 13, 0; line 10, 3; line 13, 0; line 0, 0 }
             path { at: fx - 7, 38; color: ink; stroke: 1.4
                    move 3, -3; line 0, 0; line 3, 3; line 0, 0; line 13, 0 }
-            zone box flip_btn { at: fx, 34; size: 26, 26; corner: 8; cursor: pointer; label: "The panel to the other side" }
+            zone box flip_btn { at: fx, 34; size: 26, 26; corner: 8 * ui.r; cursor: pointer; label: "The panel to the other side" }
             group {
                 show: view == chat
-                text build.name { at: 20, 26; anchor: left center; size: 15; weight: 800; color: ink; width: 158; lines: 1 }
-                text c.model { at: 20, 46; anchor: left center; size: 10; color: dim; width: 158; lines: 1 }
-                box { at: 248, 34; size: 56, 26; corner: 8; color: #1f2a28; opacity: 80% + 20% * undo.glow }
-                text "Undo" { at: 248, 34; anchor: center; size: 11; weight: 600; color: ink }
-                box { at: 318, 34; size: 72, 26; corner: 8; color: #1f2a28; opacity: 80% + 20% * throw.glow }
-                text "Throw away" { at: 318, 34; anchor: center; size: 11; weight: 600; color: coral }
-                box { at: 400, 34; size: 80, 26; corner: 8; color: mint; opacity: 80% + 20% * keep.glow }
-                text pick(c.kept, "Keep it", "Done") { at: 400, 34; anchor: center; size: 11; weight: 800; color: coal }
-                zone box undo_btn { at: 248, 34; size: 56, 26; corner: 8; cursor: pointer; label: "Undo the last version" }
-                zone box throw_btn { at: 318, 34; size: 72, 26; corner: 8; cursor: pointer; label: "Throw it away" }
-                zone box keep_btn { at: 400, 34; size: 80, 26; corner: 8; cursor: pointer; label: "Keep it" }
+                text build.name { family: ui.font; at: 20, 26; anchor: left center; size: 15; weight: 800; color: ink; width: 158; lines: 1 }
+                text c.model { family: ui.font; at: 20, 46; anchor: left center; size: 10; color: dim; width: 158; lines: 1 }
+                box { at: 248, 34; size: 56, 26; corner: 8 * ui.r; color: head_btn; opacity: 80% + 20% * undo.glow }
+                text "Undo" { family: ui.font; at: 248, 34; anchor: center; size: 11; weight: 600; color: ink }
+                box { at: 318, 34; size: 72, 26; corner: 8 * ui.r; color: head_btn; opacity: 80% + 20% * throw.glow }
+                text "Throw away" { family: ui.font; at: 318, 34; anchor: center; size: 11; weight: 600; color: coral }
+                box { at: 400, 34; size: 80, 26; corner: 8 * ui.r; color: mint; opacity: 80% + 20% * keep.glow }
+                text pick(c.kept, "Keep it", "Done") { family: ui.font; at: 400, 34; anchor: center; size: 11; weight: 800; color: onaccent }
+                zone box undo_btn { at: 248, 34; size: 56, 26; corner: 8 * ui.r; cursor: pointer; label: "Undo the last version" }
+                zone box throw_btn { at: 318, 34; size: 72, 26; corner: 8 * ui.r; cursor: pointer; label: "Throw it away" }
+                zone box keep_btn { at: 400, 34; size: 80, 26; corner: 8 * ui.r; cursor: pointer; label: "Keep it" }
             }
             //  Dropping a shared creation anywhere on the list: under everything,
             //  so its buttons and Close take their presses.
             zone box list_drop { from: 0, 0; size: PW, PH; active: pane > 0.5 and view == list }
             group {
                 show: view == list
-                text "What you built" { at: 20, 30; anchor: left center; size: 15; weight: 800; color: ink }
-                box { at: 412, 30; size: 60, 26; corner: 8; color: #1f2a28; opacity: 80% + 20% * back.glow }
-                text "Close" { at: 412, 30; anchor: center; size: 11; weight: 600; color: ink }
-                zone box back_btn { at: 412, 30; size: 60, 26; corner: 8; cursor: pointer }
+                text "What you built" { family: ui.font; at: 20, 30; anchor: left center; size: 15; weight: 800; color: ink }
+                box { at: 412, 30; size: 60, 26; corner: 8 * ui.r; color: head_btn; opacity: 80% + 20% * back.glow }
+                text "Close" { family: ui.font; at: 412, 30; anchor: center; size: 11; weight: 600; color: ink }
+                zone box back_btn { at: 412, 30; size: 60, 26; corner: 8 * ui.r; cursor: pointer }
             }
             line { from: 20, 62; to: PW - 20, 62; width: 1; color: ink; opacity: 8% }
 
@@ -239,29 +244,29 @@ part Panel {
                 every 150ms while pane > 0.5 and c.stuck and abs(max(0, thread.content - 520) - thread.scroll) > 1 {
                     thread.scroll: max(0, thread.content - 520) ~quick
                 }
-                text c.status { at: 22, 616; anchor: left center; size: 10.5; color: if(c.state == offline, coral, dim); width: 416; lines: 1 }
-                text c.hint { at: 22, 616; anchor: left center; size: 10.5; color: amber; width: 416; lines: 1 }
+                text c.status { family: ui.font; at: 22, 616; anchor: left center; size: 10.5; color: if(c.state == offline, coral, dim); width: 416; lines: 1 }
+                text c.hint { family: ui.font; at: 22, 616; anchor: left center; size: 10.5; color: amber; width: 416; lines: 1 }
                 //  Where you write. It takes pictures too.
-                zone box drop_area { from: 20, 632; size: 420, 64; corner: 14; active: pane > 0.5 }
-                box { from: 20, 632; size: 420, 64; corner: 14; color: #141c1a }
-                box { from: 20, 632; size: 420, 64; corner: 14; stroke: 1 + drag.over; color: mint; opacity: 18% + 50% * drag.over }
+                zone box drop_area { from: 20, 632; size: 420, 64; corner: 14 * ui.r; active: pane > 0.5 }
+                box { from: 20, 632; size: 420, 64; corner: 14 * ui.r; color: field }
+                box { from: 20, 632; size: 420, 64; corner: 14 * ui.r; stroke: 1 + drag.over; color: mint; opacity: 18% + 50% * drag.over }
                 row { at: 28, 640; gap: 4; for r in refs { Chip(r) } }
                 let refs_w = refs.count * 36
-                input c.input { at: 34 + refs_w, 654; width: 300 - refs_w; size: 14; color: ink; placeholder: "What should it be?" }
+                input c.input { family: ui.font; at: 34 + refs_w, 654; width: 300 - refs_w; size: 14; color: ink; placeholder: "What should it be?" }
                 prop shot.glow = 0 ~140ms
                 prop paste.glow = 0 ~140ms
                 prop send.glow = 0 ~140ms
                 let busy = c.state == thinking or c.state == acting or c.state == awaiting or c.state == starting
-                ellipse { at: 356, 664; radius: 13; color: #24302d; opacity: 70% + 30% * paste.glow }
-                box { at: 356, 666; size: 10, 12; corner: 2; stroke: 1.4; color: ink }
-                box { at: 356, 659; size: 5, 3; corner: 1; color: ink }
-                ellipse { at: 386, 664; radius: 13; color: #24302d; opacity: 70% + 30% * shot.glow }
-                box { at: 386, 665; size: 14, 10; corner: 3; stroke: 1.4; color: ink }
+                ellipse { at: 356, 664; radius: 13; color: tool_btn; opacity: 70% + 30% * paste.glow }
+                box { at: 356, 666; size: 10, 12; corner: 2 * ui.r; stroke: 1.4; color: ink }
+                box { at: 356, 659; size: 5, 3; corner: 1 * ui.r; color: ink }
+                ellipse { at: 386, 664; radius: 13; color: tool_btn; opacity: 70% + 30% * shot.glow }
+                box { at: 386, 665; size: 14, 10; corner: 3 * ui.r; stroke: 1.4; color: ink }
                 ellipse { at: 386, 665; radius: 2.6; stroke: 1.3; color: ink }
                 ellipse { at: 418, 664; radius: 15; color: mix(mint, coral, busy); opacity: 80% + 20% * send.glow }
-                path { at: 412, 657; color: coal; stroke: 2; show: not busy; move 6, 13; line 6, 1 }
-                path { at: 412, 657; color: coal; stroke: 2; show: not busy; move 1, 6; line 6, 1; line 11, 6 }
-                box { at: 418, 664; size: 10, 10; corner: 2; color: coal; show: busy }
+                path { at: 412, 657; color: onaccent; stroke: 2; show: not busy; move 6, 13; line 6, 1 }
+                path { at: 412, 657; color: onaccent; stroke: 2; show: not busy; move 1, 6; line 6, 1; line 11, 6 }
+                box { at: 418, 664; size: 10, 10; corner: 2 * ui.r; color: onaccent; show: busy }
                 zone ellipse paste_btn { at: 356, 664; radius: 13; cursor: pointer; label: "Paste a picture" }
                 zone ellipse shot_btn { at: 386, 664; radius: 13; cursor: pointer; label: "A piece of the screen as a reference" }
                 zone ellipse send_btn { at: 418, 664; radius: 16; cursor: pointer }
@@ -287,9 +292,9 @@ part Panel {
                     gap: 6
                     for r in list { Made(r) }
                 }
-                text "Nothing yet: draw something and press Done." { at: 22, 96; anchor: left center; size: 12; color: dim; show: list.count < 1 }
-                text "Drop a .build.tar.gz someone shared on this panel to open it." { at: 22, 662; anchor: left center; size: 10.5; color: dim; width: 416; lines: 1; show: not l.on }
-                text l.shared { at: 22, 662; anchor: left center; size: 10.5; color: mint; width: 416; lines: 2 }
+                text "Nothing yet: draw something and press Done." { family: ui.font; at: 22, 96; anchor: left center; size: 12; color: dim; show: list.count < 1 }
+                text "Drop a .build.tar.gz someone shared on this panel to open it." { family: ui.font; at: 22, 662; anchor: left center; size: 10.5; color: dim; width: 416; lines: 1; show: not l.on }
+                text l.shared { family: ui.font; at: 22, 662; anchor: left center; size: 10.5; color: mint; width: 416; lines: 2 }
             }
         }
         on enter undo_btn { undo.glow: 1 }

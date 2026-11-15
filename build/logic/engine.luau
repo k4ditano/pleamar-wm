@@ -244,7 +244,7 @@ return function(shared)
     end
 
     -- ── what you say ──
-    on("c_send", function()
+    local function send_input()
         local words = tostring(text["c.input"] or "")
         if words:match("^%s*$") then return end
         local state = fact["c.state"]
@@ -260,7 +260,10 @@ return function(shared)
         status(tr("Thinking…"))
         --  What each picture is goes with the words (not on the screen).
         send({ type = "prompt", text = about and (words .. "\n\n" .. about) or words, now = os.date("%Y-%m-%d %H:%M, %A"), images = images })
-    end)
+    end
+    on("c_send", send_input)
+    --  What you asked for first, before the panel (draw.luau's «panel first»).
+    shared.say = function(words) text["c.input"] = words; send_input() end
     local function decide(i, yes)
         local first = math.max(1, #rows - ROWS + 1)
         local row = first + (i or 0)

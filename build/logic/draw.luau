@@ -43,10 +43,43 @@ return function(shared)
         end)
     end
 
+    -- ── how it looks, and how it starts: build-theme.conf (and build.conf) ──
+    --  `key value` or `key = value`, a line each, # for a remark:
+    --    font = Inter        the family of every word (the default one, as ever, if none)
+    --    corners = 1.2       every corner that much rounder (0.5 to 2)
+    --    glass = on          the bar and the panel of glass
+    --    start = panel       Build asks what to build first, as a search; `draw` as ever
+    --  `start` from build.conf has the last word: it is the user's, the theme a desktop's.
+    local start_mode = "draw"
+    local function read_theme(done)
+        local dir = '"${PLEAMAR_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/pleamar}"'
+        run("sh", { "-c", "cat " .. dir .. "/build-theme.conf 2>/dev/null; echo '\n#build.conf'; cat " .. dir .. "/build.conf 2>/dev/null; true" }, function(out)
+            local font, r, glass, mode = "", 1, false, "draw"
+            local own = false
+            for line in tostring(out or ""):gmatch("[^\n]+") do
+                if line:match("^#build%.conf") then own = true end
+                local k, v = line:gsub("#.*$", ""):match("^%s*([%w_]+)%s*[=%s]%s*(.-)%s*$")
+                if k and v and v ~= "" then
+                    v = v:gsub('^"(.*)"$', "%1")
+                    if not own and k == "font" then font = v
+                    elseif not own and k == "corners" then r = math.min(math.max(tonumber(v) or 1, 0.5), 2)
+                    elseif not own and k == "glass" then glass = (v == "on" or v == "yes" or v == "true" or v == "1")
+                    elseif k == "start" then mode = (v == "panel") and "panel" or "draw" end
+                end
+            end
+            text["ui.font"] = font
+            fact["ui.r"] = r
+            fact["ui.glass"] = glass
+            start_mode = mode
+            if done then done() end
+        end)
+    end
+
     -- ── on and off ──
-    local function turn_on()
+    local function turn_on(ask)
         fact.on = true
         fact.tool = "pen"
+        fact.asking = (ask == true or start_mode == "panel") and not fact.building
         creations.prepare()
         show_olds()
     end
@@ -56,6 +89,8 @@ return function(shared)
         fact.sketch = false
         model.olds = {}
         fact.view = "chat"
+        fact.asking = false
+        text["ask.input"] = ""
         fact.on = false
         --  Nothing left to do here: the scene goes (what you kept runs on its own).
         after(700, function()
@@ -67,8 +102,18 @@ return function(shared)
     --  The panel to the other side of the monitor (the ⇄ in its head).
     on("flip_side", function() fact.side = fact.side == "left" and "right" or "left" end)
     on("start", function() if not fact.on then turn_on() end end)
-    --  Started by `pleamar-wm build`: on at once.
-    if (sys.ask("env", "BUILD_ON") or "") == "1" then after(50, turn_on) end
+    on("ask", function()
+        if not fact.on then turn_on(true) elseif not fact.building then fact.asking = true end
+    end)
+    on("ask_draw", function()
+        fact.asking = false
+        text["ask.input"] = ""
+    end)
+    --  Started by `pleamar-wm build` (or `build ask`): on at once, as its theme says.
+    local how = sys.ask("env", "BUILD_ON") or ""
+    read_theme(function()
+        if how == "1" then turn_on() elseif how == "ask" then turn_on(true) end
+    end)
 
     -- ── the pen ──
     on("fact:pt", function(v)
@@ -193,6 +238,32 @@ return function(shared)
                     end, { errors = true })
                 end, { errors = true })
             end)
+        end)
+    end)
+
+    -- ── «panel first»: what was asked for, built in the middle of its monitor ──
+    --  A widget's place, which you can move or redraw later; the words go to
+    --  the builder as your first message, as if written in the panel.
+    on("ask_send", function()
+        local words = tostring(text["ask.input"] or "")
+        if words:match("^%s*$") or fact.building then return end
+        local s = fact.ask_screen or 0
+        monitors(function(list)
+            local m = nil
+            for _, l in ipairs(list) do if l.index == s then m = l end end
+            m = m or list[s + 1] or list[1]
+            if not m then return end
+            local w, h = math.min(420, math.floor(m.w / 3)), math.min(260, math.floor(m.h / 3))
+            local x, y = math.floor((m.w - w) / 2), math.floor((m.h - h) / 2)
+            fact.asking = false
+            text["ask.input"] = ""
+            clear()
+            fact.draw_screen = m.index
+            fact.x0, fact.y0, fact.x1, fact.y1 = x, y, x + w, y + h
+            fact.boxed = true
+            fact.sketch = true
+            creations.from_drawing(m, x, y, w, h, {})
+            if shared.say then shared.say(words) end
         end)
     end)
 

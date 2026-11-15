@@ -2,6 +2,10 @@
 // `locale` (the system's language) chooses.
 library BuildSpanish {
     translations es {
+        "What do you want to build?" = "¿Qué quieres construir?"
+        "Draw it" = "Dibujarlo"
+        "Draw where it goes" = "Dibujar dónde va"
+        "A bar, a dock, a clock, a widget… Enter and it is built here; or draw where it goes" = "Una barra, un dock, un reloj, un widget… Intro y se construye aquí; o dibuja dónde va"
         "On or off" = "Encendida o apagada"
         "off" = "apagada"
         "Drag over what you want as a reference · Esc to cancel" = "Arrastra sobre lo que quieras como referencia · Esc para cancelar"

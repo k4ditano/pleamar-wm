@@ -639,7 +639,7 @@ scene Creation {
         if skill then return end
         run("pleamar", { "--docs", "skill" }, function(out, code) if code == 0 then skill = tostring(out) end end)
         run("pleamar", { "--docs", "desktop" }, function(out, code) if code == 0 then desktop = tostring(out) end end)
-        --  A desktop made with pleamar-wm (Bahía, Calima…) can say how what is
+        --  A desktop made with pleamar-wm can say how what is
         --  built on it should be: its own guide, beside its keys.conf. Without
         --  the file, nothing changes.
         run("sh", { "-c", 'cat "$0" 2>/dev/null', config_dir .. "/build-guide.md" }, function(out, code)

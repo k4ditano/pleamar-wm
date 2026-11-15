@@ -1,0 +1,35 @@
+language 0.1
+// Build's colours: its own, dark with a mint light. A desktop dresses Build
+// as its own with a theme.plm of its own in its config folder
+// (${PLEAMAR_CONFIG:-~/.config/pleamar}/build-theme/theme.plm), a library with
+// the same name and every one of these colours; Build takes it each time it
+// starts, and this one if that one does not load. The font, the corners, glass
+// and how it starts are in build-theme.conf, next to build.conf.
+library BuildTheme {
+    let ink = #eef4f1          // words
+    let dim = #8b9894          // words that say less
+    let soft = #b9c2bf         // what the builder did, in the thread
+    let mint = #7fe0c4         // the light: the edge, the main button, the strokes
+    let amber = #e8c26a        // BUILDING, and a card that asks
+    let coral = #ef7a66        // what went wrong, throwing away
+    let coal = #0e1413         // the bar's and the panel's plate
+    let onaccent = #0e1413     // words and signs on the light (mint) and on amber
+    let glass = #142120
+    let veil = #04100d         // over the desktop while drawing
+    let btn = #1d2a28          // a button on the bar
+    let btn_lit = #2c4b44      // chosen, or under the pointer
+    let btn_go = #24413a       // Done, before the pointer is on it
+    let btn_warn = #4a2c2a     // Clear and Exit under the pointer
+    let head_btn = #1f2a28     // the panel's head
+    let tool_btn = #24302d     // the buttons of a row and where you write
+    let mine = #1d2b27         // what you said
+    let card = #24211a         // a card that asks you
+    let deny_btn = #2a2b2c     // Not this
+    let row_bg = #18221f       // a row of What you built
+    let row_lit = #1f2c29
+    let share_lit = #2f3d4f
+    let del_lit = #5a2f2a
+    let sw_off = #2a302e       // a switch, off and on
+    let sw_on = #2f6b5a
+    let field = #141c1a        // where you write
+}
