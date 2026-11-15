@@ -1,0 +1,23 @@
+language 0.9
+// What tests/keys_each.rs looks at (pleamar #156): a scene of one copy per monitor
+// (`screens: each`), each with a field and an `on key` rule, and before it a named panel that
+// follows a text naming the second monitor. The keys are the copy's whose monitor has them;
+// the panel does not take the copies with it.
+scene KeysEach {
+    text panel_mon = "HEADLESS-2"
+    surface panel { size: 300, 120; anchor: top_right; level: top; screens: panel_mon; keyboard: none
+        box { at: 0, 0; size: 300, 120; color: #3a6ea5 }
+    }
+    surface { size: full, full; screens: each; keyboard: on_demand; level: top }
+    fact hits.0 = 0
+    fact hits.1 = 0
+    fact hits.2 = 0
+    fact hits.3 = 0
+    text q.0 = ""
+    text q.1 = ""
+    text q.2 = ""
+    text q.3 = ""
+    box { at: 0, 0; size: screen.width, screen.height; color: #20242a }
+    input q.$screen { at: 100, 100; width: 600; size: 22; color: #ffffff }
+    on key F5 { hits.$screen = hits.$screen + 1 }
+}
