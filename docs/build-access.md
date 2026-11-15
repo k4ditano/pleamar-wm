@@ -18,6 +18,24 @@ They start Build's own engine for the one question and stop it after: Build
 need not be open. The first time, the engine's packages are fetched (Node.js and
 npm, and bubblewrap for its sandbox, have to be installed), which takes a minute.
 
+## Which pleamar-wm has these
+
+From 0.6.25. `pleamar-wm build --version` answers what its `build` can do:
+
+```json
+{"type":"version","version":"0.6.25","commands":["on","off","ask","status","models","model","login","logout"]}
+```
+
+and a word `build` does not know is a usage error (exit 2, a JSON `usage` line),
+never build mode. **Before 0.6.25 any word after `build` toggled build mode**
+—`pleamar-wm build status` turned it on, and so does `build --version`—, so do
+not ask an unknown pleamar-wm with them: look at the program instead, without
+running it. Only a pleamar-wm that has these carries their error words:
+
+```sh
+grep -qa engine_missing "$(command -v pleamar-wm)" && echo "has build status"
+```
+
 ## What they print
 
 One JSON object a line on stdout, and exit 0. Field names are stable; new

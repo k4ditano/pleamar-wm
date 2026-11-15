@@ -157,13 +157,28 @@ pub fn run(args: &[String]) {
         crate::build_access::run(args);
         return;
     }
+    // What this pleamar-wm's build can do, for a script to know before asking
+    // (docs/build-access.md: «Which pleamar-wm has these»).
+    if args.first().map(String::as_str) == Some("--version") {
+        let mut words: Vec<&str> = vec!["on", "off", "ask"];
+        words.extend_from_slice(crate::build_access::COMMANDS);
+        println!("{}", serde_json::json!({ "type": "version", "version": env!("CARGO_PKG_VERSION"), "commands": words }));
+        return;
+    }
     // Running: told. `pleamar-wm build` toggles; `on` and `off` say which;
     // `ask` is on, asking first what to build (as `start = panel` does).
+    // Any other word is a mistake, said as such: it used to toggle, and a
+    // script asking an older word of a newer one turned Build on.
     let order = match args.first().map(String::as_str) {
         Some("off") => "emit leave",
         Some("on") => "emit start",
         Some("ask") => "emit ask",
-        _ => "emit toggle",
+        None => "emit toggle",
+        Some(other) => {
+            eprintln!("build · '{other}': pleamar-wm build [on | off | ask | status | models | model ID | login PROVIDER | logout PROVIDER | --version]");
+            println!("{}", serde_json::json!({ "type": "error", "error": "usage", "message": format!("'{other}' is not a build command") }));
+            std::process::exit(2);
+        }
     };
     if let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket()) {
         use std::io::Write;

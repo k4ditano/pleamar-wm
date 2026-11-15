@@ -142,3 +142,18 @@ fn an_engine_that_cannot_start_says_why() {
     assert_eq!(code, 2);
     assert_eq!(s(&lines[0], "error"), "usage");
 }
+
+#[test]
+fn a_word_build_does_not_know_is_a_mistake_not_a_toggle() {
+    let c = Case::new("unknown");
+    // Build mode would look for its scene's socket and start it: a usage error
+    // comes back at once instead, and nothing is started (no run folder made).
+    let (lines, code) = c.run(&c.fake(), &["statsu"]);
+    assert_eq!(code, 2);
+    assert_eq!(s(&lines[0], "error"), "usage");
+    assert!(!c.dir.join("data/pleamar-wm/build").exists(), "build mode was started");
+    let (lines, code) = c.run(&c.fake(), &["--version"]);
+    assert_eq!(code, 0);
+    assert_eq!(s(&lines[0], "type"), "version");
+    assert!(lines[0]["commands"].as_array().unwrap().iter().any(|w| w == "status"));
+}
