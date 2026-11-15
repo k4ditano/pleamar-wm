@@ -38,6 +38,13 @@ the open windows without closing anything.
 
 # What's new
 
+- **Build's AI from any shell** (0.6.25): `pleamar-wm build status | models |
+  model PROVIDER/ID | login PROVIDER | logout PROVIDER` sign in, choose the model
+  and tell whether Build can build now —a session that has to be renewed told
+  apart from none—, a JSON object a line, for a shell's own settings or a
+  terminal ([docs/build-access.md](docs/build-access.md)). `pleamar-wm control
+  build` opens the control centre at Build, and Build's panel says a sign-in
+  failure plainly, with **Sign in** beside it.
 - **Build in your desktop's look** (0.6.24): a theme of your own for Build
   (Super+B) —its colours, font, corners, glass— in `~/.config/pleamar/build-theme/`
   and `build-theme.conf`, without touching pleamar-wm; with none, it looks as ever.
