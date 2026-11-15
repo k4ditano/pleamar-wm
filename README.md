@@ -38,6 +38,12 @@ the open windows without closing anything.
 
 # What's new
 
+- **Build in your desktop's look** (0.6.24): a theme of your own for Build
+  (Super+B) —its colours, font, corners, glass— in `~/.config/pleamar/build-theme/`
+  and `build-theme.conf`, without touching pleamar-wm; with none, it looks as ever.
+  `start = panel`, or `pleamar-wm build ask`, asks first what to build, in the
+  middle of the screen as a search does, and drawing where it goes is a press away.
+  [docs/build-theme.md](docs/build-theme.md), and `build/theme-example/` to copy.
 - **Wires: agents that work together** (0.5): on a free monitor, drag the drop at
   the start of a window's title bar to another window and the two are wired
   —a current of water between them; the mouse over its middle names it («tests», «frontend») or cuts it—. Tiled, wires stay: each window says in the gap above it what it is wired to, and the ones wired to the window under the mouse light up. The
