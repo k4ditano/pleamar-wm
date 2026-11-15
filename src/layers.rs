@@ -517,6 +517,10 @@ pub struct ClientLayer {
     /// Put together on the monitor. One that is not is still read and kept,
     /// for its pictures (`read_clients`): the menus of a window not shown.
     pub drawn: bool,
+    /// Drawn by the scene, not here (a widget in a `desk` slot of the scene:
+    /// `windows … desk N`): not put together (`drawn` is false), but under the
+    /// scene's own surface it takes the pointer as a widget on the desktop does.
+    pub ghost: bool,
 }
 
 /// A program's surface on a monitor, read back (`read_clients`): its pixels
@@ -1179,7 +1183,7 @@ pub(crate) mod tests {
 
     fn menu(drawn: bool, content: bool) -> ClientLayer {
         let piece = ClientPiece { key: 1, at: (0, 0), size: (40, 30), px: (40, 30), content: content.then_some(PieceContent::Kept), buffer: None, opaque: false };
-        ClientLayer { id: 3, level: 3, rect: [100, 200, 40, 30], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn }
+        ClientLayer { id: 3, level: 3, rect: [100, 200, 40, 30], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, ghost: false, drawn }
     }
 
     /// What `show` notes on the monitor for one surface going from `old` to
@@ -1227,7 +1231,7 @@ pub(crate) mod tests {
         let _drag = DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
         let info = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0, ..Default::default() };
         register(vec![(info, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere)))]);
-        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn: true });
+        show(0, ClientLayer { id: 7, level: 3, rect: [0, 0, 32, 32], pieces: Vec::new(), region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, ghost: false, drawn: true });
         set_drag_icon(vec![(0, 7)]);
         let (done, finished) = std::sync::mpsc::channel();
         let mover = {

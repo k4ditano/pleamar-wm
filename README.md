@@ -418,6 +418,8 @@ cargo build --release
 ./target/release/pleamar-wm --scene examples/windows.plm   # nested, as a window of your compositor
 ```
 
+For the experimental pleamar (its `exp2` branch, 0.8.0-exp.22 or newer, as `../pleamar`): `cargo build --release --features exp`. It adds the scene's `desk` slots (`windows … desk N`: the programs' widgets on the desktop drawn inside the scene); without the feature, pleamar-wm is pleamar main's. The tests in `tests/keys_each.rs` need pleamar 0.7.31 or newer, and `tests/desk.rs` runs only with the feature.
+
 ### NixOS
 
 pleamar-wm (and `pleamar`, the one inside it) and Marea, with «pleamar-wm» in

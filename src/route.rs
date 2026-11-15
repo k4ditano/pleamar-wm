@@ -62,7 +62,7 @@ impl Route {
         // The one holding it is no longer drawn (a menu whose window went to
         // another workspace): it is let go, as if its buttons were.
         if let Some(id) = self.grab {
-            if on.0.lock().unwrap().clients.iter().any(|c| c.id == id && !c.drawn) {
+            if on.0.lock().unwrap().clients.iter().any(|c| c.id == id && !c.drawn && !c.ghost) {
                 for code in std::mem::take(&mut self.client_held) {
                     layers::tell(ToLayers::Button { code, down: false });
                 }
@@ -404,7 +404,7 @@ mod tests {
 
     fn menu(drawn: bool) -> ClientLayer {
         let piece = layers::ClientPiece { key: 1, at: (0, 0), size: (100, 100), px: (100, 100), content: None, buffer: None, opaque: false };
-        ClientLayer { id: 9, level: 3, rect: [10, 10, 100, 100], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, drawn }
+        ClientLayer { id: 9, level: 3, rect: [10, 10, 100, 100], pieces: vec![piece], region: None, keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner: 0, zoom: 1.0, ghost: false, drawn }
     }
 
     /// A menu pressed on keeps the pointer; once it is no longer drawn (its

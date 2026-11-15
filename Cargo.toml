@@ -15,6 +15,12 @@ repository = "https://github.com/k4ditano/pleamar-wm"
 members = [".", "stream"]
 default-members = ["."]
 
+
+[features]
+# The experimental pleamar's `desk` slots (`windows … desk N`): build with `--features exp`
+# against pleamar 0.8.0-exp.22 or newer beside it (see build.rs). Off, it is pleamar main's.
+exp = []
+
 [dependencies]
 pleamar = { path = "../pleamar" }
 libc = "0.2"
@@ -56,4 +62,6 @@ futures-lite = "2"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # tests/presentation_feedback.rs: xdg-shell and presentation-time, and tests/decoration_mode.rs: xdg-decoration (unstable), also already in the tree through pleamar.
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+# tests/desk.rs reads the session's picture (already in the tree through pleamar).
+png = "0.18"

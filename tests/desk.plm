@@ -1,0 +1,16 @@
+language 0.10
+// What tests/desk.rs looks at (`--features exp`): a scene that draws the programs' widgets on the
+// desktop itself, in its desk slots. It draws them 400 to the right of where they put
+// themselves: so a red seen there is the scene's drawing, not pleamar-wm putting them together.
+// A zone over all of it yields (the widget's own region takes the press) and counts the rest.
+scene DeskTest {
+    surface { size: 1920, 1080 }
+    windows win max 2 desk 2
+    fact lefts = 0
+    box { at: 0, 0; size: 1920, 1080; color: #102030 }
+    repeat s in 2..4 {
+        window win.$s { at: win.$s.x + 400, win.$s.y; size: max(win.$s.width, 1), max(win.$s.height, 1); ask: -1, -1; show: win.$s.open }
+    }
+    zone box desk { from: 0, 0; size: 1920, 1080; yields: true }
+    on press desk { lefts = lefts + 1 }
+}

@@ -448,10 +448,16 @@ pub fn pointer_at(st: &ScreenState, (x, y): (f64, f64)) -> Hit {
                     let over = |b: &[i32; 4]| lx >= b[0] as f64 && ly >= b[1] as f64 && lx < b[2] as f64 && ly < b[3] as f64;
                     let its_own = layers::window_at(&st.name, x, y) || l.region.iter().any(|b| over(b) && !l.yielding.contains(b));
                     if !its_own {
-                        let under = stack[..i].iter().rev().find_map(|it| match it {
-                            Item::Client(c) if st.clients[*c].level == 1 && st.clients[*c].takes(x, y) => Some(&st.clients[*c]),
-                            _ => None,
-                        });
+                        let under = stack[..i]
+                            .iter()
+                            .rev()
+                            .find_map(|it| match it {
+                                Item::Client(c) if st.clients[*c].level == 1 && st.clients[*c].takes(x, y) => Some(&st.clients[*c]),
+                                _ => None,
+                            })
+                            // A widget the scene draws itself (a `desk` slot): not put together here,
+                            // but where the scene yields it takes the press, as one on the desktop does.
+                            .or_else(|| st.clients.iter().rev().find(|c| c.ghost && c.level == 1 && c.takes(x, y)));
                         if let Some(c) = under {
                             return Hit::Client(c.id, c.local(x, y));
                         }
