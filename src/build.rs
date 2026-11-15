@@ -138,6 +138,11 @@ pub fn link_pleamar() -> Option<String> {
     Some(bin)
 }
 
+/// Its files where they run, or why not (`build status` and the others: build_access.rs).
+pub fn ensure_files() -> Result<(), String> {
+    materialize(&dir())
+}
+
 /// Its files where they run, for the control centre too (it signs in with
 /// the same engine).
 pub fn prepare() {
@@ -147,6 +152,11 @@ pub fn prepare() {
 }
 
 pub fn run(args: &[String]) {
+    // Its sign-in and its model, asked or changed from outside (docs/build-access.md).
+    if args.first().is_some_and(|a| crate::build_access::COMMANDS.contains(&a.as_str())) {
+        crate::build_access::run(args);
+        return;
+    }
     // Running: told. `pleamar-wm build` toggles; `on` and `off` say which;
     // `ask` is on, asking first what to build (as `start = panel` does).
     let order = match args.first().map(String::as_str) {

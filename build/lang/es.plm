@@ -2,6 +2,11 @@
 // `locale` (the system's language) chooses.
 library BuildSpanish {
     translations es {
+        "Not signed in: sign in to build with AI" = "Sin sesión: inicia sesión para construir con IA"
+        "The %s session has expired: sign in again" = "La sesión de %s ha caducado: vuelve a iniciar sesión"
+        "%s could not be reached to renew the session: check the network, or sign in again" = "No se pudo contactar con %s para renovar la sesión: revisa la red o vuelve a iniciar sesión"
+        "Sign in" = "Iniciar sesión"
+        "Sign in (the control centre, at Build)" = "Iniciar sesión (centro de control, en Construir)"
         "What do you want to build?" = "¿Qué quieres construir?"
         "Draw it" = "Dibujarlo"
         "Draw where it goes" = "Dibujar dónde va"
@@ -56,7 +61,6 @@ library BuildSpanish {
         "Not allowed" = "No permitido"
         "Not allowed: " = "No permitido: "
         "Not allowed: run «%s», which can %s." = "No permitido: ejecutar «%s», que puede %s."
-        "Not signed in: pleamar-wm's control centre › Build, to sign in" = "Sin sesión: centro de control de pleamar-wm › Construir, para iniciarla"
         "Not this" = "Esto no"
         "Nothing copied is a picture" = "Lo que has copiado no es una imagen"
         "Nothing yet: draw something and press Done." = "Nada todavía: dibuja algo y pulsa Hecho."

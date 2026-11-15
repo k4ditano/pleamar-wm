@@ -21,6 +21,8 @@ part Panel {
     event c_stop ->
     event c_allow ->
     event c_deny ->
+    fact c.signin = false              // the last failure was about signing in: Sign in shows
+    event c_signin ->                  // the control centre, at Build
     //  Pictures to show what you mean: dropped on where you write, a piece
     //  of the screen, or pasted. They go with the next message.
     model refs max 4 { pic: image 30, 30 }
@@ -244,8 +246,19 @@ part Panel {
                 every 150ms while pane > 0.5 and c.stuck and abs(max(0, thread.content - 520) - thread.scroll) > 1 {
                     thread.scroll: max(0, thread.content - 520) ~quick
                 }
-                text c.status { family: ui.font; at: 22, 616; anchor: left center; size: 10.5; color: if(c.state == offline, coral, dim); width: 416; lines: 1 }
+                text c.status { family: ui.font; at: 22, 616; anchor: left center; size: 10.5; color: if(c.state == offline, coral, dim); width: if(c.signin, 300, 416); lines: 1 }
                 text c.hint { family: ui.font; at: 22, 616; anchor: left center; size: 10.5; color: amber; width: 416; lines: 1 }
+                //  Signing in is what is missing: the control centre, at its Build page.
+                prop signin.glow = 0 ~140ms
+                group {
+                    show: c.signin
+                    box { at: 384, 616; size: 108, 24; corner: 8 * ui.r; color: mint; opacity: 85% + 15% * signin.glow }
+                    text "Sign in" { family: ui.font; at: 384, 616; anchor: center; size: 11; weight: 800; color: onaccent }
+                    zone box signin_btn { at: 384, 616; size: 108, 24; corner: 8 * ui.r; cursor: pointer; label: "Sign in (the control centre, at Build)" }
+                }
+                on enter signin_btn { signin.glow: 1 }
+                on leave signin_btn { signin.glow: 0 }
+                on press signin_btn { emit c_signin }
                 //  Where you write. It takes pictures too.
                 zone box drop_area { from: 20, 632; size: 420, 64; corner: 14 * ui.r; active: pane > 0.5 }
                 box { from: 20, 632; size: 420, 64; corner: 14 * ui.r; color: field }

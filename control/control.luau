@@ -247,6 +247,11 @@ end
 open_build = function()
     conf(function() start_engine(); if engine then say({ type = "models" }) end end)
 end
+--  Started at a page (`pleamar-wm control build`).
+do
+    local first = tonumber(sys.ask("env", "CONTROL_PAGE") or "")
+    if first then after(50, function() fact.page = first; if first == 3 then open_build() end end) end
+end
 on("fact:page", function(p)
     if p == 3 then open_build() end
     if p == 4 then dock_look() end
@@ -271,7 +276,7 @@ on("b_pick", function(i)
     chosen = name
     show_models()
     text["b.chosen"] = name
-    run("sh", { "-c", 'd="${PLEAMAR_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/pleamar}"; mkdir -p "$d" && printf "# pleamar-wm build: the model that builds (the control centre writes it)\\nmodel %s\\n" "$0" > "$d/build.conf"', name }, function(_, code)
+    run("pleamar-wm", { "build", "model", name }, function(_, code)
         text.toast = code == 0 and (name .. " builds from now on") or "Not saved"
         fact.toasted = fact.toasted + 1
     end)

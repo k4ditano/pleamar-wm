@@ -4,6 +4,7 @@
 //! pleamar's own.
 
 mod a11y;
+mod build_access;
 mod a11y_tree;
 mod a11y_act;
 mod marks;
@@ -192,6 +193,24 @@ fn main() {
     // `pleamar-wm control`: the control centre, a window to choose how each
     // monitor lays its windows out and to see what each key does.
     if args.first().map(String::as_str) == Some("control") {
+        // `control PAGE` (layouts, keys, about, build, dock, agent): open at that
+        // page —the one already open goes there, if it is—.
+        const PAGES: &[&str] = &["layouts", "keys", "about", "build", "dock", "agent"];
+        let page = args.get(1).map(String::as_str);
+        if let Some(p) = page {
+            let Some(n) = PAGES.iter().position(|x| *x == p) else {
+                eprintln!("control · '{p}': a page is one of {}", PAGES.join(", "));
+                std::process::exit(2);
+            };
+            let sockets = std::env::var("PLEAMAR_SOCKETS").ok().filter(|d| !d.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(&std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into())).join("pleamar"));
+            if let Ok(mut s) = std::os::unix::net::UnixStream::connect(sockets.join("control.sock")) {
+                use std::io::Write;
+                let _ = writeln!(s, "emit go {n}");
+                return;
+            }
+            // SAFETY: one thread still: nothing else reads the environment yet.
+            unsafe { std::env::set_var("CONTROL_PAGE", n.to_string()) };
+        }
         let dir = std::env::var("XDG_CACHE_HOME").ok().filter(|v| !v.is_empty()).or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cache"))).unwrap_or_else(|| "/tmp".into()) + "/pleamar-wm/control";
         let _ = std::fs::create_dir_all(&dir);
         for (name, text) in [("control.plm", include_str!("../control/control.plm")), ("control.luau", include_str!("../control/control.luau"))] {

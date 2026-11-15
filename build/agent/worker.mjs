@@ -9,10 +9,12 @@
 //    {"type":"result","id":"…","ok":true,"text":"…","denied":false,"image":{"path":"/state/…png"}}
 //    {"type":"login","provider":"openai-codex"}   {"type":"login_cancel"}   {"type":"logout","provider":"…"}
 //    {"type":"models"} (what can be used now)   {"type":"cancel"}   {"type":"shutdown"}
+//    {"type":"status"} (each account's sign-in, tried: docs/build-access.md)
 //  Out, one a line on stdout (logs go to stderr, never here):
 //    ready {usable, model, reason, models, signed}   delta {text}   propose {id, tool, args}
 //    tool_start {id, tool}   tool_end {id, ok}   done   cancelled   failed {reason}
 //    login_url {url, code}   login_done {ok, reason}
+//    status {accounts: [{provider, type, state: ok|expired|unreachable|error, reason}], models}
 //
 //  The rule this file keeps: the model PROPOSES. A tool call becomes a
 //  `propose` and waits for the scene's `result`; whether it happened is what
@@ -325,7 +327,46 @@ async function listModels() {
         const signed = [...new Set(available.map((x) => x.provider))];
         send({ type: "models", signed, models });
     } catch (e) {
-        send({ type: "models", signed: [], models: [], reason: String(e?.message || e).slice(0, 300) });
+        send({ type: "models", signed: [], models: [], reason: clean(e?.message || e) });
+    }
+}
+
+//  A reason that may be shown or printed: one line, short, and never what
+//  looks like a token (a long run of letters, digits and -_.=/+).
+function clean(text) {
+    return String(text ?? "").replace(/\s+/g, " ").replace(/[A-Za-z0-9_\-.=/+]{40,}/g, "[…]").slice(0, 300);
+}
+
+//  Each account that has a sign-in, tried as a request would (a token about to
+//  expire is renewed then): ok, expired (the provider said no: sign in again),
+//  unreachable (no answer: the network) or error. With what can be used now.
+async function accountStatus() {
+    try {
+        await ensureRuntime();
+        try {
+            await runtime.refresh({ signal: AbortSignal.timeout(10000) });
+            refreshed = true;
+        } catch (e) {
+            log("worker · the models could not be asked again:", clean(e?.message || e));
+        }
+        const accounts = [];
+        for (const c of await runtime.listCredentials()) {
+            const provider = c.providerId;
+            try {
+                const auth = await runtime.getAuth(provider, { signal: AbortSignal.timeout(20000) });
+                accounts.push({ provider, type: c.type, state: auth ? "ok" : "error", reason: auth ? null : "no credential to use" });
+            } catch (e) {
+                const why = clean([e?.message, e?.cause?.message].filter(Boolean).join(": "));
+                const state = /\b(400|401|403)\b|invalid_grant|unauthori[sz]ed|revoked|expired/i.test(why) ? "expired"
+                    : /timeout|timed out|abort|fetch failed|ENOTFOUND|ECONN|EAI_AGAIN|network/i.test(why) ? "unreachable" : "error";
+                accounts.push({ provider, type: c.type, state, reason: why });
+            }
+        }
+        const available = await runtime.getAvailable();
+        const models = available.filter((x) => x.input?.includes("image")).map((x) => `${x.provider}/${x.id}`);
+        send({ type: "status", accounts, models });
+    } catch (e) {
+        send({ type: "status", accounts: [], models: [], reason: clean(e?.message || e) });
     }
 }
 
@@ -377,7 +418,7 @@ async function signIn(m) {
         session = null;
         if (started) await start(started);
     } catch (e) {
-        send({ type: "login_done", ok: false, reason: signal.aborted ? "cancelled" : String(e?.message || e).slice(0, 300) });
+        send({ type: "login_done", ok: false, reason: signal.aborted ? "cancelled" : clean(e?.message || e) });
     } finally {
         login = null;
     }
@@ -415,12 +456,12 @@ async function prompt(m) {
         //  A model that failed ends the turn without a word: said, not lost.
         const last = [...(session.messages ?? [])].reverse().find((x) => x?.role === "assistant");
         if (!signal.aborted && last?.stopReason === "error") {
-            send({ type: "failed", reason: String(last.errorMessage || "the model failed").slice(0, 300) });
+            send({ type: "failed", reason: clean(last.errorMessage || "the model failed") });
         } else {
             send({ type: signal.aborted ? "cancelled" : "done" });
         }
     } catch (e) {
-        send(signal.aborted ? { type: "cancelled" } : { type: "failed", reason: String(e?.message || e).slice(0, 300) });
+        send(signal.aborted ? { type: "cancelled" } : { type: "failed", reason: clean(e?.message || e) });
     } finally {
         unsubscribe();
         busy = null;
@@ -438,7 +479,7 @@ input.on("line", (line) => {
     }
     switch (m?.type) {
         case "start":
-            start(m).then(refreshModels, (e) => send({ type: "failed", reason: "start: " + String(e?.message || e).slice(0, 300) }));
+            start(m).then(refreshModels, (e) => send({ type: "failed", reason: "start: " + clean(e?.message || e) }));
             break;
         case "prompt":
             prompt(m);
@@ -458,6 +499,9 @@ input.on("line", (line) => {
             break;
         case "models":
             listModels();
+            break;
+        case "status":
+            accountStatus();
             break;
         case "logout":
             signOut(m);
