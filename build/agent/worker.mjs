@@ -123,6 +123,7 @@ function building(b) {
     }
     if (typeof b.skill === "string" && b.skill) out += "\n\n---\npleamar's guide to writing scenes (what you know about the language):\n\n" + b.skill.slice(0, 40000);
     if (typeof b.desktop === "string" && b.desktop) out += "\n\n---\npleamar's guide to the desktop (shells, apps, the window manager):\n\n" + b.desktop.slice(0, 20000);
+    if (typeof b.guide === "string" && b.guide) out += "\n\n---\nThis desktop's own guide for what is built on it (its build-guide.md; follow it where it says how a piece of this desktop must be):\n\n" + b.guide.slice(0, 20000);
     return out;
 }
 

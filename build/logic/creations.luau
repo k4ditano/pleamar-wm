@@ -38,6 +38,7 @@ return function(shared)
     end
     local skill = nil        -- pleamar's guide to writing scenes, read once
     local desktop = nil      -- and its guide to the desktop
+    local guide = nil        -- the desktop's own guide for what is built on it ($PLEAMAR_CONFIG/build-guide.md), if it has one
     local source = ""        -- pleamar's source, where there is one
     local pleamar_path = "pleamar" -- the program by its whole path, for an app's .desktop
     local marea_dir = ""     -- Marea's folder, if she is here (her code is readable)
@@ -503,7 +504,7 @@ scene Creation {
         local code = { ["the user's shells and scenes"] = config_dir .. "/shells" }
         if marea_dir ~= "" then code.Marea = marea_dir end
         if source ~= "" then code["pleamar (its source, docs and examples)"] = source end
-        return { name = current.name, kind = current.kind, region = current.region, files = files, skill = skill, desktop = desktop, code = code, app_id = app_id_of(current.id) }
+        return { name = current.name, kind = current.kind, region = current.region, files = files, skill = skill, desktop = desktop, guide = guide, code = code, app_id = app_id_of(current.id) }
     end
     local review   -- (below): what a creation from someone else asks for, on a card
     local import   -- (below): a .build.tar.gz dropped on her chat
@@ -638,6 +639,16 @@ scene Creation {
         if skill then return end
         run("pleamar", { "--docs", "skill" }, function(out, code) if code == 0 then skill = tostring(out) end end)
         run("pleamar", { "--docs", "desktop" }, function(out, code) if code == 0 then desktop = tostring(out) end end)
+        --  A desktop made with pleamar-wm (Bahía, Calima…) can say how what is
+        --  built on it should be: its own guide, beside its keys.conf. Without
+        --  the file, nothing changes.
+        run("sh", { "-c", 'cat "$0" 2>/dev/null', config_dir .. "/build-guide.md" }, function(out, code)
+            local text = tostring(out or "")
+            if code == 0 and text:match("%S") then
+                guide = text
+                log("build", "the desktop's guide for builders: " .. #text .. " bytes from " .. config_dir .. "/build-guide.md")
+            end
+        end)
         run("sh", { "-c", 'd=$(dirname "$(readlink -f "$(command -v pleamar)")"); for c in "$d/../.." "$HOME/.local/share/pleamar/src/pleamar"; do [ -f "$c/Cargo.toml" ] && { readlink -f "$c"; exit 0; }; done' }, function(out)
             source = tostring(out or ""):gsub("%s+$", "")
         end)
