@@ -2,6 +2,9 @@
 // `locale` (the system's language) chooses.
 library BuildSpanish {
     translations es {
+        "Not signed in" = "Sin sesión"
+        "The %s session has expired" = "La sesión de %s ha caducado"
+        "%s could not be reached" = "No se pudo contactar con %s"
         "Not signed in: sign in to build with AI" = "Sin sesión: inicia sesión para construir con IA"
         "The %s session has expired: sign in again" = "La sesión de %s ha caducado: vuelve a iniciar sesión"
         "%s could not be reached to renew the session: check the network, or sign in again" = "No se pudo contactar con %s para renovar la sesión: revisa la red o vuelve a iniciar sesión"

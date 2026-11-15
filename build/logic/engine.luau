@@ -89,19 +89,20 @@ return function(shared)
     --  (`c.signin`: the panel's button opens the control centre at Build). The
     --  provider's own words stay out of the panel: they may say too much.
     local NAMES = { ["openai-codex"] = "ChatGPT", anthropic = "Claude", ["github-copilot"] = "GitHub Copilot" }
+    --  What to say in the thread, and the short of it beside the button.
     local function access_problem(reason)
         reason = tostring(reason or "")
         if reason == "no_model" or reason == "not_started" or reason == "signed_out" or reason:match("Provider is not configured") then
-            return tr("Not signed in: sign in to build with AI")
+            return tr("Not signed in: sign in to build with AI"), tr("Not signed in")
         end
         local who = reason:match("OAuth refresh failed for ([%w%-%._]+)") or reason:match("OAuth refresh returned a token that expires too soon for ([%w%-%._]+)")
         if not who then return nil end
         local name = NAMES[who] or who
         local low = reason:lower()
         if low:match("%f[%d]40[013]%f[%D]") or low:match("invalid_grant") or low:match("unauthori[sz]ed") or low:match("revoked") or low:match("expires too soon") then
-            return string.format(tr("The %s session has expired: sign in again"), name)
+            return string.format(tr("The %s session has expired: sign in again"), name), string.format(tr("The %s session has expired"), name)
         end
-        return string.format(tr("%s could not be reached to renew the session: check the network, or sign in again"), name)
+        return string.format(tr("%s could not be reached to renew the session: check the network, or sign in again"), name), string.format(tr("%s could not be reached"), name)
     end
     on("c_signin", function()
         run("pleamar-wm", { "control", "build" }, function() end, { errors = true })
@@ -161,7 +162,7 @@ return function(shared)
             else
                 fact["c.state"] = "offline"
                 fact["c.signin"] = m.reason == "signed_out"
-                status(m.reason == "signed_out" and tr("Not signed in: sign in to build with AI") or tr("That model cannot be used: choose another in the control centre › Build"))
+                status(m.reason == "signed_out" and tr("Not signed in") or tr("That model cannot be used: choose another in the control centre › Build"))
             end
             for _, line in ipairs(queue) do write(worker, line) end
             queue = {}
@@ -202,10 +203,10 @@ return function(shared)
             settle("idle")
         elseif kind == "failed" then
             shared.creations.release_cursor()
-            local problem = access_problem(m.reason)
+            local problem, short = access_problem(m.reason)
             if problem then
                 add(5, problem)
-                status(problem)
+                status(short)
                 fact["c.signin"] = true
             else
                 add(5, tr("Something went wrong: ") .. tostring(m.reason or "?"))
