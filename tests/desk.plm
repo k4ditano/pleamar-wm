@@ -7,7 +7,7 @@ scene DeskTest {
     surface { size: 1920, 1080 }
     windows win max 2 desk 2
     fact lefts = 0
-    box { at: 0, 0; size: 1920, 1080; color: #102030 }
+    box { from: 0, 0; size: 1920, 1080; color: #102030 }
     repeat s in 2..4 {
         window win.$s { at: win.$s.x + 400, win.$s.y; size: max(win.$s.width, 1), max(win.$s.height, 1); ask: -1, -1; show: win.$s.open }
     }

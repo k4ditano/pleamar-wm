@@ -2759,6 +2759,23 @@ impl State {
         // What the monitor is given is in its pixels: the program's units, scaled.
         let scale = self.scale_of(self.panels[k].monitor);
         let px = |v: i32| (v as f64 * scale).round() as i32;
+        // A widget the scene draws in a desk slot: its frame for the scene first —what is new in
+        // it is told once, and taken by whoever reads it first: read after the compositor's
+        // pieces, the scene only ever had the widget's first frame—.
+        #[cfg(feature = "exp")]
+        let desk_frame = if c.layer == ShellLayer::Bottom {
+            self.desk_slot(k).map(|slot| {
+                let sent = std::mem::take(&mut self.panels[k].desk_sent);
+                let mut wp = Vec::new();
+                if size.0 > 0 && size.1 > 0 {
+                    pieces_of(&root, (0, 0), &sent, &mut wp);
+                }
+                self.panels[k].desk_sent = wp.iter().map(|p| p.id).collect();
+                (slot, wp)
+            })
+        } else {
+            None
+        };
         let mut pieces = Vec::new();
         if size.0 > 0 && size.1 > 0 {
             panel_pieces(&root, (0, 0), &sent, scale, &mut pieces);
@@ -2830,30 +2847,26 @@ impl State {
         // frames go to the scene, as a window's, in a slot of its desk, and here it stays only as
         // a ghost —not put together, but taking the pointer where the scene yields, as before—.
         #[cfg(feature = "exp")]
-        if level == 1 {
-            if let Some(slot) = self.desk_slot(k) {
-                let sent = std::mem::take(&mut self.panels[k].desk_sent);
-                let mut wp = Vec::new();
-                if visible {
-                    pieces_of(&root, (0, 0), &sent, &mut wp);
-                }
-                self.panels[k].desk_sent = wp.iter().map(|p| p.id).collect();
-                let monitor = self.panels[k].monitor;
-                self.tell(NestEvent::DeskAt { slot, x: x as f32, y: y as f32, screen: monitor, open: visible });
-                if !wp.is_empty() {
-                    self.tell(NestEvent::Frame { slot, geometry: [0, 0, w, h], pieces: wp });
-                }
-                let ghost: Vec<_> = pieces
-                    .into_iter()
-                    .map(|mut p| {
-                        p.content = None;
-                        p.buffer = None;
-                        p
-                    })
-                    .collect();
-                layers::show(monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces: ghost, region, keyboard, blur: Vec::new(), blur_cut: 0.0, owner: owner_of(&root), zoom, ghost: true, drawn: false });
-                return;
+        if let Some((slot, wp)) = desk_frame {
+            let monitor = self.panels[k].monitor;
+            self.tell(NestEvent::DeskAt { slot, x: x as f32, y: y as f32, screen: monitor, open: visible });
+            if std::env::var_os("PLEAMAR_DEBUG_PIECES").is_some() {
+                let what: Vec<String> = wp.iter().map(|p| format!("{} {:?} px {:?} src {:?} {}", p.id, p.size, p.px, p.src, match &p.content { PieceContent::Kept => "kept".to_owned(), PieceContent::Pixels(v) => format!("pixels {}", v.len()), PieceContent::Dmabuf(_) => "dmabuf".to_owned() })).collect();
+                eprintln!("windows · desk slot {slot} at {x},{y} {w}×{h}: {}", what.join(" | "));
             }
+            if !wp.is_empty() {
+                self.tell(NestEvent::Frame { slot, geometry: [0, 0, w, h], pieces: wp });
+            }
+            let ghost: Vec<_> = pieces
+                .into_iter()
+                .map(|mut p| {
+                    p.content = None;
+                    p.buffer = None;
+                    p
+                })
+                .collect();
+            layers::show(monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces: ghost, region, keyboard, blur: Vec::new(), blur_cut: 0.0, owner: owner_of(&root), zoom, ghost: true, drawn: false });
+            return;
         }
         layers::show(self.panels[k].monitor, ClientLayer { id, level, rect: [px(x), px(y), px(zw), px(zh)], pieces, region, keyboard, blur, blur_cut: 0.0, owner: owner_of(&root), zoom, ghost: false, drawn: true });
     }

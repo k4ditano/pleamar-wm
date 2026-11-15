@@ -130,7 +130,8 @@ fn session(dir: &Path, at: &str) -> (std::process::Child, PathBuf, PathBuf) {
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/desk.plm"))
         .args(["--seconds", "90", "--record", "lefts,win.2.open,win.2.x,win.2.y,win.2.width"])
         .stdout(std::fs::File::create(&out).unwrap())
-        .stderr(Stdio::null());
+        // (`DESK_KEEP=1`: its folder and its log stay, to see why.)
+        .stderr(if std::env::var_os("DESK_KEEP").is_some() { Stdio::from(std::fs::File::create(dir.join("session.log")).unwrap()) } else { Stdio::null() });
     (c.spawn().expect("pleamar-wm runs"), run, out)
 }
 
@@ -360,7 +361,9 @@ fn the_scene_draws_the_widget_where_it_says() {
     let shot = dir.join("shot.png");
     let drawn = pixel(&shot, (650, 150));
     let under = pixel(&shot, (250, 150));
-    let _ = std::fs::remove_dir_all(&dir);
+    if std::env::var_os("DESK_KEEP").is_none() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     let Some(took) = (match result {
         Err(e) => std::panic::resume_unwind(e),
         Ok(r) => r,
