@@ -1,0 +1,18 @@
+language 0.9
+// What the click-through test (tests/click_passthrough.rs) looks at: a desk in three columns.
+// The left one is a zone that counts its clicks and wheel, the middle one a zone that yields
+// (`yields: true`) and counts what it is given, the right one has no zone at all.
+// A program's widget on the desktop (layer-shell's bottom level) lies under the whole desk.
+scene ClickThroughDesk {
+    surface { size: 1920, 1080 }
+    windows win max 1
+    fact mine = 0
+    fact yielded = 0
+    fact wheeled = 0
+    zone box own { from: 0, 0; size: 640, 1080 }
+    zone box soft { from: 640, 0; size: 640, 1080; yields: true }
+    on press own { mine = mine + 1 }
+    on press soft { yielded = yielded + 1 }
+    on scroll own { wheeled = wheeled + wheel }
+    text "{mine, 0} own · {yielded, 0} yielded · wheel {wheeled, 0}" { at: 20, 40; size: 20; color: #f5f7f5 }
+}
