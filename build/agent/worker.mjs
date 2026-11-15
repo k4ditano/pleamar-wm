@@ -356,7 +356,7 @@ async function accountStatus() {
                 const auth = await runtime.getAuth(provider, { signal: AbortSignal.timeout(20000) });
                 accounts.push({ provider, type: c.type, state: auth ? "ok" : "error", reason: auth ? null : "no credential to use" });
             } catch (e) {
-                const why = clean([e?.message, e?.cause?.message].filter(Boolean).join(": "));
+                const why = clean(e?.message || e);   // (the SDK's message already carries its cause)
                 const state = /\b(400|401|403)\b|invalid_grant|unauthori[sz]ed|revoked|expired/i.test(why) ? "expired"
                     : /timeout|timed out|abort|fetch failed|ENOTFOUND|ECONN|EAI_AGAIN|network/i.test(why) ? "unreachable" : "error";
                 accounts.push({ provider, type: c.type, state, reason: why });

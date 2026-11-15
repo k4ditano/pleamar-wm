@@ -121,14 +121,20 @@ impl Engine {
             }
         });
         // What it says on the side: the sandbox's own reasons ("build: node is
-        // missing"), the last one kept for a failure.
+        // missing"), or else its last line (bubblewrap's own: "bwrap: …"), kept
+        // for a failure. Only a line: the worker logs no credential, and a
+        // long run that could be one is cut out all the same.
         let said = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let err = child.stderr.take().expect("piped");
         let keep = said.clone();
         std::thread::spawn(move || {
+            let mut own = false;
             for line in BufReader::new(err).lines().map_while(Result::ok) {
                 if let Some(why) = line.strip_prefix("build: ") {
-                    *keep.lock().unwrap() = why.to_owned();
+                    *keep.lock().unwrap() = clean(why);
+                    own = true;
+                } else if !own && !line.trim().is_empty() {
+                    *keep.lock().unwrap() = clean(&line);
                 }
             }
         });
@@ -186,6 +192,31 @@ impl Engine {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// One line, short, and nothing that looks like a token (a run of 40 or more
+/// letters, digits and -_.=/+), as the worker cleans its own.
+fn clean(text: &str) -> String {
+    let mut out = String::new();
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        if run.chars().count() >= 40 {
+            out.push('…');
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || "-_.=/+".contains(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(if c.is_whitespace() { ' ' } else { c });
+        }
+    }
+    flush(&mut run, &mut out);
+    out.trim().chars().take(300).collect()
 }
 
 fn strings(v: &Value, key: &str) -> Vec<String> {
@@ -320,6 +351,13 @@ fn logout(provider: &str) {
 #[cfg(test)]
 mod tests {
     use super::with_model;
+
+
+    #[test]
+    fn what_looks_like_a_token_is_cut_out() {
+        assert_eq!(super::clean("bwrap: Failed to make / slave: Operation not permitted"), "bwrap: Failed to make / slave: Operation not permitted");
+        assert_eq!(super::clean("refresh eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijkl failed\n"), "refresh … failed");
+    }
 
     #[test]
     fn the_model_line_is_said_anew_and_the_rest_kept() {
