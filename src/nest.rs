@@ -314,6 +314,8 @@ struct Window {
     ruled: Option<Option<(i32, i32)>>,
     /// A rule says it draws its own frame (`window … frame=own`).
     own_frame: bool,
+    /// A rule says the scene draws its frame whatever the program asks (`window … frame=ours`).
+    frame_ours: bool,
     /// Put away (minimized): out of the order too, and where it was in it,
     /// to go back there.
     minimized: bool,
@@ -1749,6 +1751,10 @@ impl State {
     }
 
     /// Whether the rules say it draws its own frame (`window … frame=own`).
+    fn frame_ours(&self, surface: &WlSurface) -> bool {
+        self.slots.iter().flatten().find(|w| &w.surface == surface).is_some_and(|w| w.frame_ours)
+    }
+
     fn own_frame(&self, surface: &WlSurface) -> bool {
         self.slots.iter().flatten().find(|w| &w.surface == surface).is_some_and(|w| w.own_frame)
     }
@@ -1759,6 +1765,7 @@ impl State {
         use smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::Mode;
         let Some(Some(w)) = self.slots.get_mut(slot) else { return };
         w.own_frame = !ours;
+        w.frame_ours = ours;
         let surface = w.surface.clone();
         let framed = match &w.toplevel {
             // An X11 program has no say: the scene is its window manager.
@@ -3091,7 +3098,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, minimized: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -4290,7 +4297,26 @@ impl XdgDecorationHandler for State {
             }
         }
     }
-    fn request_mode(&mut self, toplevel: ToplevelSurface, _: DecorationMode) {
+    // The program says who draws its frame. «Client side» is «I do» (an Electron window with no frame,
+    // a Qt one with its own bar): it is believed, so it gets no frame of the scene's over its own bar
+    // —which is what its asking was ignored for, and Discord had two—. «Server side» is as it was:
+    // the scene draws it. A rule that says the scene draws it (`frame=ours`) still wins over both.
+    // (It comes right after the decoration is made and before the window's first configure, so the
+    // window opens as it asked and does not go from one frame to the other.)
+    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
+        if mode == DecorationMode::ClientSide && !self.frame_ours(toplevel.wl_surface()) {
+            toplevel.with_pending_state(|s| s.decoration_mode = Some(DecorationMode::ClientSide));
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
+            }
+            let surface = toplevel.wl_surface().clone();
+            if self.decorated.remove(&surface) {
+                if let Some(slot) = self.window_of(&surface) {
+                    self.tell(NestEvent::Framed(slot, false));
+                }
+            }
+            return;
+        }
         XdgDecorationHandler::new_decoration(self, toplevel);
     }
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
