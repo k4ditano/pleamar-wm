@@ -106,6 +106,7 @@ scene Build {
         open: shown > 0.01 and not looking
         let W = mode.width
         let H = mode.height
+        measure building_word
         let here = draw_screen == screen.index
         //  The drawing shows while drawing, and as the sketch until the
         //  creation is on the screen: then it fades into it.
@@ -301,8 +302,10 @@ scene Build {
             box { from: bx, 12; size: bw0, 48; corner: 24 * ui.r; color: coal; opacity: if(ui.glass, 45%, 92%) }
             box { from: bx, 12; size: bw0, 48; corner: 24 * ui.r; stroke: 1.2; color: mint; opacity: 40% }
             ellipse { at: bx + 26, 36; radius: 5; color: amber; opacity: 60% + 40% * sin(t * 720) }
-            text "BUILDING" { family: ui.font; at: bx + 40, 36; anchor: left center; size: 11; weight: 800; color: amber }
-            text build.name { family: ui.font; at: bx + 138, 36; anchor: left center; size: 12.5; weight: 700; color: ink; width: 170; lines: 1; show: building }
+            //  The name after the word, however long the word is in its language
+            //  (CONSTRUYENDO is longer than BUILDING), up to Draw another.
+            text "BUILDING" { family: ui.font; at: bx + 40, 36; anchor: left center; size: 11; weight: 800; color: amber; measure: building_word }
+            text build.name { family: ui.font; at: bx + 40 + building_word.width + 16, 36; anchor: left center; size: 12.5; weight: 700; color: ink; width: 290 - building_word.width - 16; lines: 1; show: building }
             //  The tools (not while one is being built: its panel is where you talk).
             group {
                 show: not building
