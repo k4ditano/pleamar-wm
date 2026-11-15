@@ -1,0 +1,10 @@
+// bahia widget
+// For tools/bench-widgets.sh: a widget that moves at every frame (it reads `time`, so it never rests).
+language 0.1
+scene Anim {
+    surface { size: 164, 164; anchor: top_left; level: bottom; margin: pwy, 0, 0, pwx }
+    fact wsize = 0
+    include "lib/widget-base.plm"
+    box { at: ww / 2, wh / 2; size: 90, 12; corner: 6; rotate: time * 180deg; color: waccent }
+    ellipse { at: ww / 2 + 50 * sin(time * 240), wh / 2 - 50 * cos(time * 240); radius: 8; color: wink }
+}

@@ -458,6 +458,9 @@ struct Panel {
     /// The size it was last told.
     configured: Option<(i32, i32)>,
     sent: Vec<u64>,
+    /// The scene's desk slot it is drawn in (`windows … desk N`), and the pieces it was sent there.
+    desk: Option<usize>,
+    desk_sent: Vec<u64>,
 }
 
 /// A window's menu in a session of its own: not a piece of the window, which
@@ -601,6 +604,8 @@ struct State {
     autostart: Vec<String>,
     /// One per slot of the scene. A window that finds them all taken waits in `waiting`.
     slots: Vec<Option<Window>>,
+    /// The scene's desk slots (`windows … desk N`): first and how many.
+    desk: Option<(usize, usize)>,
     waiting: Vec<(Toplevel, WlSurface)>,
     /// The order the scene lays them out in: the first is the one that leads.
     order: Vec<usize>,
@@ -945,6 +950,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         toplevel_handles: Vec::new(),
         autostart: Vec::new(),
         slots: (0..max).map(|_| None).collect(),
+        desk: None,
         waiting: Vec::new(),
         order: Vec::new(),
         next_slot: 0,
@@ -1211,6 +1217,13 @@ impl State {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.time();
         match m {
+            ToNest::Desk { first, count } => {
+                println!("windows · the scene draws the desktop's widgets itself: slots {first} to {}", first + count - 1);
+                self.desk = Some((first, count));
+                for k in 0..self.panels.len() {
+                    self.show_panel(k);
+                }
+            }
             ToNest::Size(w, h) => {
                 // Nested, the output is the scene; with monitors of our own, they are.
                 if layers::monitors().is_empty() {
@@ -2763,6 +2776,29 @@ impl State {
         let zoom = phone_zoom(self.monitor_name(self.panels[k].monitor).as_deref(), mw, w);
         let (zw, zh) = ((w as f64 * zoom).round() as i32, (h as f64 * zoom).round() as i32);
         let (x, y) = panel_place(&c, (mw, mh), (zw, zh));
+        // A widget on the desktop, when the scene draws them (`windows … desk N`): to the scene,
+        // as a window's frames, in a slot of its desk; not put together apart (experiment).
+        if c.layer == ShellLayer::Bottom {
+            if let Some((first, count)) = self.desk {
+                let slot = self.panels[k].desk.or_else(|| (first..first + count).find(|s| !self.panels.iter().any(|p| p.desk == Some(*s))));
+                if let Some(slot) = slot {
+                    self.panels[k].desk = Some(slot);
+                    layers::hide(id);
+                    let sent = std::mem::take(&mut self.panels[k].desk_sent);
+                    let mut wp = Vec::new();
+                    if w > 0 && h > 0 {
+                        pieces_of(&root, (0, 0), &sent, &mut wp);
+                    }
+                    self.panels[k].desk_sent = wp.iter().map(|p| p.id).collect();
+                    let monitor = self.panels[k].monitor;
+                    self.tell(NestEvent::DeskAt { slot, x: x as f32, y: y as f32, screen: monitor, open: w > 0 && h > 0 });
+                    if !wp.is_empty() {
+                        self.tell(NestEvent::Frame { slot, geometry: [0, 0, w, h], pieces: wp });
+                    }
+                    return;
+                }
+            }
+        }
         let region = with_states(&root, |s| {
             s.cached_state.get::<SurfaceAttributes>().current().input_region.as_ref().map(|r| {
                 r.rects.iter().map(|(kind, rect)| (matches!(kind, RectangleKind::Add), [px(rect.loc.x), px(rect.loc.y), px(rect.size.w), px(rect.size.h)])).collect()
@@ -3906,6 +3942,8 @@ impl CompositorHandler for State {
         }
         let waits = match self.panels.iter().find(|p| p.shell.wl_surface() == &root) {
             Some(p) if p.hidden => Waits::Hidden(p.id),
+            // (Drawn by the scene: told when the scene paints.)
+            Some(p) if p.desk.is_some() => Waits::Scene,
             Some(p) => Waits::Panel(p.monitor),
             None => match self.slots.iter().flatten().find(|w| w.surface == root) {
                 Some(w) => Waits::Window(w.screen),
@@ -4775,7 +4813,7 @@ impl SessionLockHandler for State {
         surface.send_configure();
         self.next_number += 1;
         self.outputs[monitor].enter(surface.wl_surface());
-        self.panels.push(Panel { shell: Shell::Lock(surface), id: self.next_number, monitor, namespace: "lock".to_owned(), hidden: false, configured: Some((w, h)), sent: Vec::new() });
+        self.panels.push(Panel { shell: Shell::Lock(surface), id: self.next_number, monitor, namespace: "lock".to_owned(), hidden: false, configured: Some((w, h)), sent: Vec::new(), desk: None, desk_sent: Vec::new() });
     }
 }
 
@@ -4998,13 +5036,16 @@ impl WlrLayerShellHandler for State {
         if hidden {
             println!("windows · '{namespace}' stays hidden: a creation of Build took its place (creations.hide)");
         }
-        self.panels.push(Panel { shell: Shell::Layer(surface), id: self.next_number, monitor, namespace, hidden, configured: None, sent: Vec::new() });
+        self.panels.push(Panel { shell: Shell::Layer(surface), id: self.next_number, monitor, namespace, hidden, configured: None, sent: Vec::new(), desk: None, desk_sent: Vec::new() });
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         let Some(k) = self.panels.iter().position(|p| p.shell.wl_surface() == surface.wl_surface()) else { return };
         let p = self.panels.remove(k);
         layers::hide(p.id);
+        if let Some(slot) = p.desk {
+            self.tell(NestEvent::DeskAt { slot, x: 0.0, y: 0.0, screen: p.monitor, open: false });
+        }
         self.tell_reserved();
         if self.panel_pointer == Some(p.id) {
             self.panel_pointer = None;
