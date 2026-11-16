@@ -2061,7 +2061,8 @@ impl State {
         }
         let mut text = String::new();
         for (k, m) in monitors.iter().enumerate() {
-            text.push_str(&format!("monitor {} {} {} {} {} {} {} {}\n", m.name, m.size.0, m.size.1, m.x, m.y, m.mhz, (k == self.on_screen) as u8, m.scale));
+            // The quarter turns last: `hyprctl monitors -j` says the size unturned and the turn apart, as Hyprland does.
+            text.push_str(&format!("monitor {} {} {} {} {} {} {} {} {}\n", m.name, m.size.0, m.size.1, m.x, m.y, m.mhz, (k == self.on_screen) as u8, m.scale, m.turn % 4));
         }
         text.push_str(&format!("locked {}\n", layers::locked() as u8));
         if let Some(w) = self.focus.and_then(|s| self.slots.get(s)).and_then(Option::as_ref) {
