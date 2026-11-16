@@ -38,6 +38,10 @@ the open windows without closing anything.
 
 # What's new
 
+- **A window's title stays in its place** (0.6.26): a title (or an app id) with a
+  line break or another control character can no longer inject lines into the
+  session's desktop file —the one `pleamar-wm hyprctl` and the cursor read—;
+  its control characters are written as spaces.
 - **Build's AI from any shell** (0.6.25): `pleamar-wm build status | models |
   model PROVIDER/ID | login PROVIDER | logout PROVIDER` sign in, choose the model
   and tell whether Build can build now —a session that has to be renewed told
