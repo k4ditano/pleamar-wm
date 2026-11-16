@@ -38,6 +38,11 @@ the open windows without closing anything.
 
 # What's new
 
+- **`pleamar-wm hyprctl -j`** (0.6.27, thanks to @natepayn3): `monitors`,
+  `activewindow` and `locked` in Hyprland's JSON, `-j` before or after the word,
+  for a shell written for Hyprland (`jq '.[] | select(.focused) | .name'`). A
+  monitor's `width` and `height` unturned with its turn in `transform`; without
+  `-j`, the text as before.
 - **A window's title stays in its place** (0.6.26): a title (or an app id) with a
   line break or another control character can no longer inject lines into the
   session's desktop file —the one `pleamar-wm hyprctl` and the cursor read—;
