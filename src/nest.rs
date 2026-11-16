@@ -2067,7 +2067,7 @@ impl State {
         if let Some(w) = self.focus.and_then(|s| self.slots.get(s)).and_then(Option::as_ref) {
             if let Some((name, r)) = &w.shown {
                 let (x, y) = monitors.iter().find(|m| &m.name == name).map_or((0, 0), |m| (m.x, m.y));
-                text.push_str(&format!("window {} {} {} {} {}\t{}\n", r[0] + x, r[1] + y, r[2], r[3], w.app, w.title));
+                text.push_str(&window_line([r[0] + x, r[1] + y, r[2], r[3]], &w.app, &w.title));
             }
         }
         // Asked on every frame a window with the keyboard moves: written only
@@ -5468,9 +5468,44 @@ fn write_control_entry() {
     }
 }
 
+/// The `desktop` file's line for the window with the keyboard: `window X Y W H APP<TAB>TITLE`.
+/// The app and the title are the program's to choose, so whatever they carry that is not
+/// text (a newline, a carriage return, a tab, ESC, any control character) is said as a space:
+/// a title cannot end the line and start another (a `monitor` or `locked` line of its own
+/// making), nor move where the title begins.
+fn window_line(r: [i32; 4], app: &str, title: &str) -> String {
+    let one_line = |s: &str| s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>();
+    format!("window {} {} {} {} {}\t{}\n", r[0], r[1], r[2], r[3], one_line(app), one_line(title))
+}
+
 #[cfg(test)]
 mod tests {
     use super::follow_monitors;
+    use super::window_line;
+
+    /// A title with a newline and a `monitor` line after it stays one `window` line: the
+    /// desktop file has the monitors the session wrote and no other, and the title reads
+    /// back whole, its control characters as spaces.
+    #[test]
+    fn a_title_cannot_write_lines_of_its_own() {
+        let title = "Evil \"q\" \\\nmonitor EVIL 1 1 0 0 60000 1 1\r\nlocked 1\u{1b}[31m\ttab \u{85}🦀";
+        let line = window_line([1, 2, 3, 4], "app\nmonitor X 1 1 0 0 60000 1 1\tz", title);
+        let text = format!("monitor DP-1 2560 1440 0 0 60000 1 1\nlocked 0\n{line}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("monitor ")).count(), 1, "{text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("locked ")).count(), 1, "{text}");
+        assert_eq!(line.matches('\n').count(), 1);
+        assert_eq!(line.matches('\t').count(), 1);
+        let names = line.strip_prefix("window 1 2 3 4 ").unwrap().trim_end_matches('\n');
+        let (app, title) = names.split_once('\t').unwrap();
+        assert_eq!(app, "app monitor X 1 1 0 0 60000 1 1 z");
+        assert_eq!(title, "Evil \"q\" \\ monitor EVIL 1 1 0 0 60000 1 1  locked 1 [31m tab  🦀");
+    }
+
+    /// An ordinary title and app are written exactly as they are.
+    #[test]
+    fn an_ordinary_title_is_written_as_it_is() {
+        assert_eq!(window_line([2726, 795, 1250, 1311], "kitty", "A title — with spaces · ñ 🦀"), "window 2726 795 1250 1311 kitty\tA title — with spaces · ñ 🦀\n");
+    }
 
     /// DP-1 at 0 and DP-2 at 1, then DP-2 moved left of DP-1 and the list
     /// re-sorted: a control made on DP-2 now sets index 0, not DP-1's 1.
