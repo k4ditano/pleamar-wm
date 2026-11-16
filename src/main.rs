@@ -66,11 +66,14 @@ fn main() {
     // `pleamar-wm session scene.plm [options]`: a session of its own, from a
     // TTY, without a compositor underneath. Otherwise, pleamar as ever.
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    // `pleamar-wm hyprctl monitors|activewindow|locked`: the session's desktop, said
-    // the way Hyprland says it, for what used to ask Hyprland (Marea's
-    // screenshots) and now runs here.
+    // `pleamar-wm hyprctl [-j] monitors|activewindow|locked`: the session's desktop,
+    // said the way Hyprland says it, for what used to ask Hyprland (Marea's
+    // screenshots) and now runs here. `-j` (before or after the word, as
+    // hyprctl takes it) says it in Hyprland's JSON.
     if args.first().map(String::as_str) == Some("hyprctl") {
-        std::process::exit(hyprctl(args.get(1).map(String::as_str).unwrap_or("")));
+        let json = args[1..].iter().any(|a| a == "-j" || a == "--json");
+        let what = args[1..].iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+        std::process::exit(hyprctl(what, json));
     }
     // `pleamar-wm output NAME at X,Y|vrr on|off`: a monitor changed while the
     // session runs, answered with what was done or why not (see output.rs).
@@ -297,36 +300,85 @@ fn main() {
     }
 }
 
-fn hyprctl(what: &str) -> i32 {
+fn hyprctl(what: &str, json: bool) -> i32 {
     let Some(Ok(text)) = nest::desktop_file().map(std::fs::read_to_string) else {
         eprintln!("pleamar-wm's session is not running");
         return 1;
     };
     match what {
         "monitors" => {
+            let mut list = Vec::new();
             for (id, line) in text.lines().filter_map(|l| l.strip_prefix("monitor ")).enumerate() {
                 let f: Vec<&str> = line.split(' ').collect();
-                let [name, w, h, x, y, mhz, focused, scale] = f[..] else { continue };
+                // The turn came later: a session from before says none (upright).
+                let (name, w, h, x, y, mhz, focused, scale, turn) = match f[..] {
+                    [name, w, h, x, y, mhz, focused, scale, turn] => (name, w, h, x, y, mhz, focused, scale, turn),
+                    [name, w, h, x, y, mhz, focused, scale] => (name, w, h, x, y, mhz, focused, scale, "0"),
+                    _ => continue,
+                };
                 let hz = mhz.parse::<f64>().unwrap_or(60_000.0) / 1000.0;
                 let scale = scale.parse::<f64>().unwrap_or(1.0);
-                println!("Monitor {name} (ID {id}):\n\t{w}x{h}@{hz:.5} at {x}x{y}\n\tscale: {scale:.2}\n\tfocused: {}\n", if focused == "1" { "yes" } else { "no" });
+                if !json {
+                    println!("Monitor {name} (ID {id}):\n\t{w}x{h}@{hz:.5} at {x}x{y}\n\tscale: {scale:.2}\n\tfocused: {}\n", if focused == "1" { "yes" } else { "no" });
+                    continue;
+                }
+                // Hyprland's width and height are the mode's, the monitor unturned;
+                // `transform` says how it stands (1 and 3 a quarter turn).
+                let (w, h) = (w.parse::<u32>().unwrap_or(0), h.parse::<u32>().unwrap_or(0));
+                let turn = turn.parse::<u8>().unwrap_or(0) % 4;
+                let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
+                list.push(serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "description": name,
+                    "width": w,
+                    "height": h,
+                    "refreshRate": hz,
+                    "x": x.parse::<i32>().unwrap_or(0),
+                    "y": y.parse::<i32>().unwrap_or(0),
+                    "scale": scale,
+                    "transform": turn,
+                    "focused": focused == "1",
+                    "dpmsStatus": true,
+                    "disabled": false,
+                }));
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".into()));
             }
             0
         }
         "activewindow" => {
-            match text.lines().find_map(|l| l.strip_prefix("window ")) {
-                Some(line) => {
-                    let f: Vec<&str> = line.splitn(5, ' ').collect();
-                    let [x, y, w, h, names] = f[..] else { return 1 };
-                    let (app, title) = names.split_once('\t').unwrap_or((names, ""));
-                    println!("Window 0 -> {title}:\n\tat: {x},{y}\n\tsize: {w},{h}\n\tclass: {app}\n\ttitle: {title}\n");
+            let window = text.lines().find_map(|l| l.strip_prefix("window ")).and_then(|line| {
+                let f: Vec<&str> = line.splitn(5, ' ').collect();
+                let [x, y, w, h, names] = f[..] else { return None };
+                let (app, title) = names.split_once('\t').unwrap_or((names, ""));
+                Some((x, y, w, h, app, title))
+            });
+            match (window, json) {
+                (Some((x, y, w, h, app, title)), false) => {
+                    println!("Window 0 -> {title}:\n\tat: {x},{y}\n\tsize: {w},{h}\n\tclass: {app}\n\ttitle: {title}\n")
                 }
-                None => println!("Invalid"),
+                (None, false) => println!("Invalid"),
+                (Some((x, y, w, h, app, title)), true) => {
+                    let n = |s: &str| s.parse::<i32>().unwrap_or(0);
+                    let window = serde_json::json!({
+                        "at": [n(x), n(y)],
+                        "size": [n(w), n(h)],
+                        "class": app,
+                        "title": title,
+                        "initialClass": app,
+                        "initialTitle": title,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&window).unwrap_or_else(|_| "{}".into()));
+                }
+                // Hyprland's answer with no window that has the keyboard.
+                (None, true) => println!("{{}}"),
             }
             0
         }
-        // `true` or `false`, as Hyprland says it: a script that locks and then
-        // suspends waits for `true`. No line is no answer, never `false`.
+        // `true` or `false`, as Hyprland says it (with `-j` too): a script that
+        // locks and then suspends waits for `true`. No line is no answer, never `false`.
         "locked" => match text.lines().find_map(|l| l.strip_prefix("locked ")) {
             Some("1") => {
                 println!("true");
@@ -342,7 +394,7 @@ fn hyprctl(what: &str) -> i32 {
             }
         },
         _ => {
-            eprintln!("pleamar-wm hyprctl monitors | activewindow | locked");
+            eprintln!("pleamar-wm hyprctl [-j] monitors | activewindow | locked");
             1
         }
     }

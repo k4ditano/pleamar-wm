@@ -678,7 +678,9 @@ is said where that is not known (a program's first picture, another piece, the
 pointer drawn into it, or glass on the monitor, which is put together whole).
 `pleamar-wm hyprctl`
 `monitors|activewindow|locked` says the desktop the way Hyprland does, for
-what used to ask it. Where the mouse
+what used to ask it, and with `-j` (before or after the word) in Hyprland's
+JSON: a monitor's `width` and `height` unturned and its quarter turns in
+`transform`, as Hyprland says them. Where the mouse
 is on the whole desktop is said, as it moves, on the `cursor.sock` next to
 the session's other sockets (`PLEAMAR_SOCKETS`): a pleamar scene that reads
 `cursor.x` gets it from there, so Marea's eyes follow the mouse anywhere and
