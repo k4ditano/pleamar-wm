@@ -2061,8 +2061,10 @@ impl State {
         }
         let mut text = String::new();
         for (k, m) in monitors.iter().enumerate() {
-            // The quarter turns last: `hyprctl monitors -j` says the size unturned and the turn apart, as Hyprland does.
-            text.push_str(&format!("monitor {} {} {} {} {} {} {} {} {}\n", m.name, m.size.0, m.size.1, m.x, m.y, m.mhz, (k == self.on_screen) as u8, m.scale, m.turn % 4));
+            text.push_str(&monitor_line(&m.name, m.size, m.x, m.y, m.mhz, k == self.on_screen, m.scale));
+        }
+        for m in &monitors {
+            text.push_str(&turn_line(&m.name, m.turn));
         }
         text.push_str(&format!("locked {}\n", layers::locked() as u8));
         if let Some(w) = self.focus.and_then(|s| self.slots.get(s)).and_then(Option::as_ref) {
@@ -5469,6 +5471,20 @@ fn write_control_entry() {
     }
 }
 
+/// The `desktop` file's line for a monitor: `monitor NAME W H X Y MHZ FOCUSED SCALE`, eight
+/// fields and never more —pleamar (the cursor), `--report` and every pleamar-wm before read it
+/// as exactly eight, and a line of nine would be no monitor to them—.
+fn monitor_line(name: &str, size: (u32, u32), x: i32, y: i32, mhz: i32, focused: bool, scale: f64) -> String {
+    format!("monitor {name} {} {} {x} {y} {mhz} {} {scale}\n", size.0, size.1, focused as u8)
+}
+
+/// A monitor's quarter turns on a line of their own, `turn NAME N` (0 to 3): what came after
+/// the monitor lines, so whoever reads only `monitor ` lines passes it by. `hyprctl monitors -j`
+/// says the size unturned and the turn apart, as Hyprland does; with no line, upright.
+fn turn_line(name: &str, turn: u8) -> String {
+    format!("turn {name} {}\n", turn % 4)
+}
+
 /// The `desktop` file's line for the window with the keyboard: `window X Y W H APP<TAB>TITLE`.
 /// The app and the title are the program's to choose, so whatever they carry that is not
 /// text (a newline, a carriage return, a tab, ESC, any control character) is said as a space:
@@ -5482,7 +5498,29 @@ fn window_line(r: [i32; 4], app: &str, title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::follow_monitors;
-    use super::window_line;
+    use super::{monitor_line, turn_line, window_line};
+
+    /// The monitor lines stay as every reader before the turn knows them, eight fields each,
+    /// and the turns go on lines of their own that such a reader passes by: read the way
+    /// pleamar reads them (exactly eight), both monitors are there.
+    #[test]
+    fn the_turn_does_not_change_the_monitor_lines() {
+        let mut text = monitor_line("DP-1", (1440, 2560), 0, 0, 164834, false, 1.0);
+        text += &monitor_line("DP-2", (2560, 1440), 1440, 733, 164834, true, 1.5);
+        text += &turn_line("DP-1", 5);
+        text += &turn_line("DP-2", 0);
+        assert_eq!(text, "monitor DP-1 1440 2560 0 0 164834 0 1\nmonitor DP-2 2560 1440 1440 733 164834 1 1.5\nturn DP-1 1\nturn DP-2 0\n");
+        let read: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("monitor "))
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split(' ').collect();
+                let [name, _w, _h, _x, _y, _mhz, _focused, _scale] = f[..] else { return None };
+                Some(name)
+            })
+            .collect();
+        assert_eq!(read, ["DP-1", "DP-2"]);
+    }
 
     /// A title with a newline and a `monitor` line after it stays one `window` line: the
     /// desktop file has the monitors the session wrote and no other, and the title reads

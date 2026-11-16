@@ -310,12 +310,10 @@ fn hyprctl(what: &str, json: bool) -> i32 {
             let mut list = Vec::new();
             for (id, line) in text.lines().filter_map(|l| l.strip_prefix("monitor ")).enumerate() {
                 let f: Vec<&str> = line.split(' ').collect();
-                // The turn came later: a session from before says none (upright).
-                let (name, w, h, x, y, mhz, focused, scale, turn) = match f[..] {
-                    [name, w, h, x, y, mhz, focused, scale, turn] => (name, w, h, x, y, mhz, focused, scale, turn),
-                    [name, w, h, x, y, mhz, focused, scale] => (name, w, h, x, y, mhz, focused, scale, "0"),
-                    _ => continue,
-                };
+                let [name, w, h, x, y, mhz, focused, scale] = f[..] else { continue };
+                // The turn on a line of its own (`turn NAME N`), so the monitor lines stay as
+                // every reader knows them: a session from before has none (upright).
+                let turn = text.lines().filter_map(|l| l.strip_prefix("turn ")).filter_map(|l| l.split_once(' ')).find(|(n, _)| *n == name).map_or("0", |(_, t)| t);
                 let hz = mhz.parse::<f64>().unwrap_or(60_000.0) / 1000.0;
                 let scale = scale.parse::<f64>().unwrap_or(1.0);
                 if !json {
@@ -349,12 +347,16 @@ fn hyprctl(what: &str, json: bool) -> i32 {
             0
         }
         "activewindow" => {
-            let window = text.lines().find_map(|l| l.strip_prefix("window ")).and_then(|line| {
-                let f: Vec<&str> = line.splitn(5, ' ').collect();
-                let [x, y, w, h, names] = f[..] else { return None };
-                let (app, title) = names.split_once('\t').unwrap_or((names, ""));
-                Some((x, y, w, h, app, title))
-            });
+            // No window line is no window (`Invalid`, `{}`); one that cannot be read is an error, as before.
+            let window = match text.lines().find_map(|l| l.strip_prefix("window ")) {
+                None => None,
+                Some(line) => {
+                    let f: Vec<&str> = line.splitn(5, ' ').collect();
+                    let [x, y, w, h, names] = f[..] else { return 1 };
+                    let (app, title) = names.split_once('\t').unwrap_or((names, ""));
+                    Some((x, y, w, h, app, title))
+                }
+            };
             match (window, json) {
                 (Some((x, y, w, h, app, title)), false) => {
                     println!("Window 0 -> {title}:\n\tat: {x},{y}\n\tsize: {w},{h}\n\tclass: {app}\n\ttitle: {title}\n")

@@ -2,7 +2,8 @@
 //! written here (`PLEAMAR_SOCKETS/desktop`, as a session writes it): no session
 //! is started. The JSON is Hyprland's: a turned monitor's size unturned with its
 //! turn in `transform`, `-j` before or after the word, `{}` with no window, and a
-//! session from before the turn was written (eight fields) read as upright.
+//! session from before the turn was written (no `turn` line) read as upright, and
+//! a `window` line that cannot be read an error.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -25,8 +26,10 @@ fn hyprctl(dir: &PathBuf, args: &[&str]) -> (i32, String) {
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-const TWO: &str = "monitor DP-1 1440 2560 0 0 164834 0 1 1\n\
-                   monitor DP-2 2560 1440 1440 733 164834 1 1.5 0\n\
+const TWO: &str = "monitor DP-1 1440 2560 0 0 164834 0 1\n\
+                   monitor DP-2 2560 1440 1440 733 164834 1 1.5\n\
+                   turn DP-1 1\n\
+                   turn DP-2 0\n\
                    locked 0\n\
                    window 2726 795 1250 1311 kitty\tA title with spaces\n";
 
@@ -67,7 +70,7 @@ fn activewindow_json_and_none() {
     assert_eq!(w["class"], "kitty");
     assert_eq!(w["title"], "A title with spaces");
 
-    let dir = desktop("nowindow", "monitor DP-2 2560 1440 0 0 60000 1 1 0\nlocked 1\n");
+    let dir = desktop("nowindow", "monitor DP-2 2560 1440 0 0 60000 1 1\nturn DP-2 0\nlocked 1\n");
     let (_, out) = hyprctl(&dir, &["activewindow", "-j"]);
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), serde_json::json!({}));
     let (_, out) = hyprctl(&dir, &["-j", "locked"]);
@@ -82,4 +85,13 @@ fn session_from_before_the_turn_is_upright() {
     let list: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(list[0]["transform"], 0);
     assert_eq!((list[0]["width"].as_u64(), list[0]["height"].as_u64()), (Some(1920), Some(1080)));
+}
+
+#[test]
+fn a_window_line_that_cannot_be_read_is_an_error() {
+    let dir = desktop("bad", "monitor DP-1 1920 1080 0 0 60000 1 1\nlocked 0\nwindow 1 2\n");
+    for args in [&["activewindow"][..], &["-j", "activewindow"][..]] {
+        let (code, _) = hyprctl(&dir, args);
+        assert_eq!(code, 1, "{args:?}");
+    }
 }
