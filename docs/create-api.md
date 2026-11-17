@@ -109,6 +109,10 @@ password) is never asked: the engine is told no and finds another way.
 - its permissions are allowed (Build's rules, and the kind's `allow_run`);
 - where pleamar has it, `pleamar --layout`: text over text, text cut or outside
   its surface, too little contrast, a shadow cut by its surface.
+  Its warnings come too, with `"level":"warning"`: texts nearly but not quite on
+  one edge (`misaligned`), a gap in a column of texts off the others
+  (`uneven_spacing`). The engine is told them to mend, but they never keep a
+  creation from being kept, and `ok` counts only what is not a warning.
 
 ### What the engine may do
 

@@ -452,6 +452,11 @@ fn domains(texts: &[String]) -> Vec<String> {
 
 // ── the check of a revision ──
 
+/// No problem but warnings: what is nearly right (alignment) never keeps it from being kept.
+fn ok_of(problems: &[Value]) -> bool {
+    problems.iter().all(|p| p["level"] == "warning")
+}
+
 fn me() -> PathBuf {
     crate::link::own_exe()
 }
@@ -535,8 +540,13 @@ fn layout(path: &Path) -> Vec<Value> {
     if !o.status.success() && o.stdout.is_empty() {
         return Vec::new(); // an older pleamar: no report, no problem made up
     }
-    let Ok(v) = serde_json::from_slice::<Value>(&o.stdout) else { return Vec::new() };
-    v.get("problems").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().map(|mut p| {
+    // Its last line is the report (a film says a word or two before it).
+    let Some(v) = String::from_utf8_lossy(&o.stdout).lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok().filter(|v| v["type"] == "layout")) else { return Vec::new() };
+    let warnings = v.get("warnings").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().map(|mut w| {
+        w["level"] = json!("warning");
+        w
+    });
+    v.get("problems").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().chain(warnings).map(|mut p| {
         if p.get("file").is_none() {
             p["file"] = json!(path.file_name().and_then(|n| n.to_str()).unwrap_or(""));
         }
@@ -569,7 +579,7 @@ pub fn run(args: &[String]) {
                 let c = Creation::open(id);
                 c.copy_in();
                 let problems = check(&c);
-                say(json!({ "type": "check", "id": id, "rev": c.rev(), "ok": problems.is_empty(), "problems": problems }));
+                say(json!({ "type": "check", "id": id, "rev": c.rev(), "ok": ok_of(&problems), "problems": problems }));
             }
             None => fail("usage", USAGE),
         },
@@ -876,7 +886,7 @@ fn prompt(id: &str, user: &str) {
         }
         status("checking", "Checking the result");
         let problems = check(&t.c);
-        say(json!({ "type": "check", "id": t.c.id, "rev": t.c.rev(), "ok": problems.is_empty(), "problems": problems }));
+        say(json!({ "type": "check", "id": t.c.id, "rev": t.c.rev(), "ok": ok_of(&problems), "problems": problems }));
         if problems.is_empty() || round >= MEND_ROUNDS {
             break;
         }
