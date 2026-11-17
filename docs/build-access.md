@@ -36,6 +36,9 @@ running it. Only a pleamar-wm that has these carries their error words:
 grep -qa engine_missing "$(command -v pleamar-wm)" && echo "has build status"
 ```
 
+From 0.6.28 its answer also lists `create`, the same engine for a desktop
+that draws its own «create with AI»: [create-api.md](create-api.md).
+
 ## What they print
 
 One JSON object a line on stdout, and exit 0. Field names are stable; new

@@ -192,7 +192,7 @@ pub fn run(args: &[String]) {
     if args.first().map(String::as_str) == Some("--version") {
         let mut words: Vec<&str> = vec!["on", "off", "ask"];
         words.extend_from_slice(crate::build_access::COMMANDS);
-        println!("{}", serde_json::json!({ "type": "version", "version": env!("CARGO_PKG_VERSION"), "commands": words }));
+        println!("{}", serde_json::json!({ "type": "version", "version": env!("CARGO_PKG_VERSION"), "commands": words, "create": crate::create::COMMANDS }));
         return;
     }
     // Running: told. `pleamar-wm build` toggles; `on` and `off` say which;

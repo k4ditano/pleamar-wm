@@ -7,7 +7,7 @@ import { Type } from "typebox";
 //  on a card when it has to—, does it, and answers. Every file goes through
 //  it: it keeps the version before, checks what it asks the system for, and
 //  answers with pleamar's verdict.
-const file = Type.String({ pattern: "^[a-z0-9_-]+\\.(plm|luau|svg)$", maxLength: 40, description: "A file of the creation: scene.plm, scene.luau, another .plm or .luau beside them, icon.svg" });
+const file = Type.String({ pattern: "^[a-z0-9_-]+\\.(plm|luau|svg|json)$", maxLength: 40, description: "A file of the creation: scene.plm, scene.luau, another .plm or .luau beside them, icon.svg" });
 
 export const TOOLS = [
     {

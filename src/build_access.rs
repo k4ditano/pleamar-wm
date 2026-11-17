@@ -18,18 +18,18 @@ use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 /// Build's model when build.conf names none (logic/engine.luau's `DEFAULT_MODEL`).
-const DEFAULT_MODEL: &str = "openai-codex/gpt-6-astra";
+pub(crate) const DEFAULT_MODEL: &str = "openai-codex/gpt-6-astra";
 
 /// The subcommands this answers; anything else is build mode's own.
 pub const COMMANDS: &[&str] = &["status", "models", "model", "login", "logout"];
 
-fn say(v: Value) {
+pub(crate) fn say(v: Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{v}");
     let _ = out.flush();
 }
 
-fn fail(code: &str, message: impl Into<String>) -> ! {
+pub(crate) fn fail(code: &str, message: impl Into<String>) -> ! {
     say(json!({ "type": "error", "error": code, "message": message.into() }));
     std::process::exit(if code == "usage" { 2 } else { 1 });
 }
@@ -42,7 +42,7 @@ fn conf_path() -> std::path::PathBuf {
 }
 
 /// The model build.conf chooses, if it chooses one.
-fn chosen() -> Option<String> {
+pub(crate) fn chosen() -> Option<String> {
     let text = std::fs::read_to_string(conf_path()).ok()?;
     text.lines().filter_map(|l| l.trim().strip_prefix("model")).filter(|r| r.starts_with(char::is_whitespace)).map(|r| r.trim().to_owned()).filter(|m| !m.is_empty()).last()
 }
@@ -72,7 +72,7 @@ pub fn with_model(old: &str, model: &str) -> String {
     out
 }
 
-struct Engine {
+pub(crate) struct Engine {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
@@ -80,7 +80,7 @@ struct Engine {
 }
 
 impl Engine {
-    fn start() -> Engine {
+    pub(crate) fn start() -> Engine {
         let mut cmd = match std::env::var("PLEAMAR_BUILD_ENGINE").ok().filter(|v| !v.trim().is_empty()) {
             Some(fake) => {
                 let mut c = Command::new("sh");
@@ -142,7 +142,7 @@ impl Engine {
         Engine { child, stdin, lines: rx, said }
     }
 
-    fn send(&mut self, v: Value) {
+    pub(crate) fn send(&mut self, v: Value) {
         if let Some(w) = self.stdin.as_mut() {
             let _ = writeln!(w, "{v}");
             let _ = w.flush();
@@ -179,7 +179,22 @@ impl Engine {
         }
     }
 
-    fn stop(&mut self) {
+    /// The next message from it within `wait`: `Ok(None)` when none came, and
+    /// `Err` with its last words when it is gone. Nothing here ends the program.
+    pub(crate) fn recv(&mut self, wait: Duration) -> Result<Option<Value>, String> {
+        match self.lines.recv_timeout(wait) {
+            Ok(line) => Ok(serde_json::from_str::<Value>(&line).ok()),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = self.child.wait();
+                std::thread::sleep(Duration::from_millis(50));
+                let why = self.said.lock().unwrap().clone();
+                Err(if why.is_empty() { "the engine stopped without answering".to_owned() } else { why })
+            }
+        }
+    }
+
+    pub(crate) fn stop(&mut self) {
         self.send(json!({ "type": "shutdown" }));
         self.stdin = None;
         let end = Instant::now() + Duration::from_secs(2);
@@ -196,7 +211,7 @@ impl Engine {
 
 /// One line, short, and nothing that looks like a token (a run of 40 or more
 /// letters, digits and -_.=/+), as the worker cleans its own.
-fn clean(text: &str) -> String {
+pub(crate) fn clean(text: &str) -> String {
     let mut out = String::new();
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {

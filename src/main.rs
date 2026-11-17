@@ -5,6 +5,7 @@
 
 mod a11y;
 mod build_access;
+mod create;
 mod a11y_tree;
 mod a11y_act;
 mod marks;
@@ -191,6 +192,12 @@ fn main() {
     // `pleamar-wm build` (Super+B): build mode, to build your desktop by asking.
     if args.first().map(String::as_str) == Some("build") {
         build::run(&args[1..]);
+        return;
+    }
+    // `pleamar-wm create …`: Build's engine as a service a desktop drives
+    // (docs/create-api.md): drafts, revisions, questions, a check; it starts nothing.
+    if args.first().map(String::as_str) == Some("create") {
+        create::run(&args[1..]);
         return;
     }
     // `pleamar-wm control`: the control centre, a window to choose how each
