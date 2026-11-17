@@ -1150,7 +1150,9 @@ impl Talk {
         }
     }
 
-    /// A picture of the scene with no screen (pleamar's `--film`), where the engine can see it.
+    /// A picture of the scene with no screen (pleamar's `--film`), where the engine can see it:
+    /// with no permissions —it runs nothing, uses no service, reaches no network—, as `--layout`
+    /// does: a draft is looked at, never run as itself (the host does that, once it is approved).
     fn look(&mut self) -> (bool, String, bool, Option<String>) {
         self.looks += 1;
         let main = self.c.files().join(self.c.kind().main());
@@ -1158,7 +1160,7 @@ impl Talk {
         let out = engine_state().join(&rel);
         let _ = std::fs::remove_dir_all(&out);
         let _ = std::fs::create_dir_all(&out);
-        let ran = std::process::Command::new(me()).arg("--scene").arg(&main).args(["--no-hud", "--seconds", "1.5", "--fps", "4", "--film"]).arg(&out).current_dir(self.c.files()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+        let ran = std::process::Command::new(me()).arg("--scene").arg(&main).args(["--no-permissions", "--no-hud", "--seconds", "1.5", "--fps", "4", "--film"]).arg(&out).current_dir(self.c.files()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
         let last = std::fs::read_dir(&out).ok().and_then(|d| d.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".png")).max());
         match (ran, last) {
             (Ok(_), Some(png)) => (true, "This is how it looks now, with no screen (the host shows it where it goes).".into(), false, Some(format!("/state/{rel}/{png}"))),

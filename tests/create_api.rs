@@ -38,6 +38,18 @@ while IFS= read -r line; do
 done
 "#;
 
+/// One that only looks at what is there, and is done.
+const LOOKER: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"start"'*) echo '{"type":"ready","usable":true,"model":"fake/one"}' ;;
+    *'"type":"prompt"'*) echo '{"type":"propose","id":"l1","tool":"creation_look","args":{}}' ;;
+    *'"type":"result"'*) echo '{"type":"done"}' ;;
+    *'"type":"shutdown"'*) exit 0 ;;
+  esac
+done
+"#;
+
 /// One that cannot build: nobody is signed in.
 const SIGNED_OUT: &str = r#"#!/bin/sh
 while IFS= read -r line; do
@@ -76,6 +88,7 @@ impl Case {
         std::fs::write(dir.join("config/create-kinds/test-lib/base.plm"), "// a host's library\n").unwrap();
         std::fs::write(dir.join("engine.sh"), FAKE).unwrap();
         std::fs::write(dir.join("signed-out.sh"), SIGNED_OUT).unwrap();
+        std::fs::write(dir.join("looker.sh"), LOOKER).unwrap();
         Case { dir }
     }
     fn cmd(&self, engine: &str, args: &[&str]) -> Command {
@@ -220,4 +233,29 @@ fn what_cannot_be_done_is_said() {
     assert!(l.iter().any(|e| e["type"] == "error" && e["error"] == "auth_required"), "{l:?}");
     assert_eq!(c.one(&["get", &id])["rev"], 1);
     assert_eq!(c.one(&["discard", &id])["type"], "discarded");
+}
+
+/// A draft that would run a program —declared, and run by its logic at once and
+/// every tenth of a second— is checked and looked at without it ever running:
+/// `--layout` and the picture paint it with no permissions.
+#[test]
+fn a_draft_is_looked_at_never_run() {
+    let c = Case::new("never-run");
+    let id = c.one(&["begin", "test-widget"])["id"].as_str().unwrap().to_owned();
+    let dir = PathBuf::from(c.one(&["get", &id])["dir"].as_str().unwrap());
+    let mark = c.dir.join("PWNED");
+    std::fs::write(dir.join("scene.plm"), "// test widget\nlanguage 0.1\nscene T {\n    surface { size: 120, 80; anchor: top_left; level: bottom }\n    permissions { run: \"touch\"; services: \"files\", \"files.write\" }\n    box { from: 0, 0; size: 120, 80; color: #ffffff }\n}\n").unwrap();
+    std::fs::write(dir.join("scene.luau"), format!("run(\"touch\", {{ \"{m}-start\" }}, function() end)\nevery(0.1, function() run(\"touch\", {{ \"{m}-every\" }}, function() end) end)\n", m = mark.display())).unwrap();
+    let checked = c.one(&["check", &id]);
+    assert_eq!(checked["type"], "check", "{checked}");
+    let out = c.cmd("looker.sh", &["prompt", &id, "look at it"]).output().unwrap();
+    let events = lines(&String::from_utf8_lossy(&out.stdout));
+    assert!(events.iter().any(|e| e["type"] == "done"), "{events:?}");
+    for end in ["start", "every"] {
+        assert!(!c.dir.join(format!("PWNED-{end}")).exists(), "the draft's logic ran a program ({end})");
+    }
+    // The same scene run as itself (what the host does once it is approved) does run it:
+    // the test would see it if the logic never ran at all.
+    let _ = Command::new(env!("CARGO_BIN_EXE_pleamar-wm")).arg("--scene").arg(dir.join("scene.plm")).args(["--no-hud", "--seconds", "1", "--fps", "4", "--film"]).arg(c.dir.join("film")).env("HOME", &c.dir).env("PLEAMAR_NO_SKILL_REFRESH", "1").env_remove("WAYLAND_DISPLAY").output();
+    assert!(c.dir.join("PWNED-start").exists(), "with its permissions, its logic runs");
 }

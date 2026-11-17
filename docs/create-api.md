@@ -114,6 +114,15 @@ password) is never asked: the engine is told no and finds another way.
   (`uneven_spacing`). The engine is told them to mend, but they never keep a
   creation from being kept, and `ok` counts only what is not a warning.
 
+### A draft is never run as itself here
+
+The picture the engine looks at and `pleamar --layout` paint the scene **with
+no permissions** (pleamar's `--no-permissions`): its logic runs no program,
+uses no service and so reaches no network, and its terminals start nothing,
+whatever the scene declares. `pleamar --check` only reads it. Running it with
+its permissions —the preview where it goes, and the piece once kept— is the
+host's, once the user has said yes to what it asks.
+
 ### What the engine may do
 
 As in Build: read and write the creation's files (`.plm`, `.luau`, `.svg`,
