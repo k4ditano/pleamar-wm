@@ -38,6 +38,9 @@ the open windows without closing anything.
 
 # What's new
 
+- **The check of what `create` makes reads the letters** (0.6.29): with pleamar
+  0.8.0-exp.31, `--layout` measures each text where its letters are, not the
+  box it was given, so a word in a wide `width` is no longer taken as faint.
 - **Build's engine for a desktop's own «create with AI»** (0.6.28): `pleamar-wm
   create` keeps drafts, revisions and the conversation, asks before what needs
   asking, checks each revision (with pleamar's `--layout` where it has it) and
