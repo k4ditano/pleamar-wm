@@ -128,14 +128,44 @@ fn loads(dir: &std::path::Path) -> Result<(), String> {
 /// so, in its folder's bin/. Made again when this program has moved.
 pub fn link_pleamar() -> Option<String> {
     let bin = format!("{}/bin", dir());
-    let link = format!("{bin}/pleamar");
     let me = crate::link::own_exe();
-    if std::fs::read_link(&link).ok().as_deref() != Some(me.as_path()) {
-        std::fs::create_dir_all(&bin).ok()?;
-        let _ = std::fs::remove_file(&link);
-        std::os::unix::fs::symlink(&me, &link).ok()?;
+    // `pleamar` and `pleamar-wm`, both this program: a scene that runs
+    // `pleamar-wm hyprctl` or `pleamar-wm build status` finds the one it runs in,
+    // installed or not.
+    for name in ["pleamar", "pleamar-wm"] {
+        let link = format!("{bin}/{name}");
+        if std::fs::read_link(&link).ok().as_deref() != Some(me.as_path()) {
+            std::fs::create_dir_all(&bin).ok()?;
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&me, &link).ok()?;
+        }
     }
     Some(bin)
+}
+
+/// What a session hands to everything it starts (its scene, Build, autostart):
+/// `PLEAMAR_WM`, the path of this program, and —only when no `pleamar-wm` is on
+/// the `PATH` already, as with one run from where it was built— the folder of
+/// its own links put first on the `PATH`. One that is installed changes nothing.
+/// Call it before any thread starts.
+pub fn session_path() {
+    let me = crate::link::own_exe();
+    let on_path = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("pleamar-wm").is_file()));
+    let path = if on_path { None } else { link_pleamar().map(|bin| path_with(&bin, std::env::var("PATH").ok().as_deref())) };
+    // SAFETY: called before any thread is started (main, session and headless).
+    unsafe {
+        std::env::set_var("PLEAMAR_WM", &me);
+        if let Some(p) = path {
+            std::env::set_var("PATH", p);
+        }
+    }
+}
+
+fn path_with(first: &str, rest: Option<&str>) -> String {
+    match rest.filter(|r| !r.is_empty()) {
+        Some(r) => format!("{first}:{r}"),
+        None => first.to_owned(),
+    }
 }
 
 /// Its files where they run, or why not (`build status` and the others: build_access.rs).
@@ -199,11 +229,7 @@ pub fn run(args: &[String]) {
     }
     // `pleamar` first on its PATH: the one inside this program, whether
     // another is installed or not.
-    let path = match (link_pleamar(), std::env::var("PATH")) {
-        (Some(bin), Ok(p)) => Some(format!("{bin}:{p}")),
-        (Some(bin), Err(_)) => Some(bin),
-        _ => None,
-    };
+    let path = link_pleamar().map(|bin| path_with(&bin, std::env::var("PATH").ok().as_deref()));
     // SAFETY: one thread still: nothing else reads the environment yet.
     unsafe {
         std::env::set_var("BUILD_ON", if order == "emit ask" { "ask" } else { "1" });
@@ -217,6 +243,13 @@ pub fn run(args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_links_folder_goes_first_on_the_path() {
+        assert_eq!(path_with("/b", Some("/usr/bin:/bin")), "/b:/usr/bin:/bin");
+        assert_eq!(path_with("/b", Some("")), "/b");
+        assert_eq!(path_with("/b", None), "/b");
+    }
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("pleamar-wm-build-theme-{name}-{}", std::process::id()));

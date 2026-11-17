@@ -685,7 +685,9 @@ one of that piece, the box round what the monitor repainted, not all of it each
 time: a recorder or a remote desktop copies that, not the whole screen. All of it
 is said where that is not known (a program's first picture, another piece, the
 pointer drawn into it, or glass on the monitor, which is put together whole).
-`pleamar-wm hyprctl`
+What the session starts —its scene, Build, autostart— has `PLEAMAR_WM`, the
+path of the `pleamar-wm` it runs in, and finds `pleamar-wm` on its `PATH` even
+when it was not installed (run from where it was built). `pleamar-wm hyprctl`
 `monitors|activewindow|locked` says the desktop the way Hyprland does, for
 what used to ask it, and with `-j` (before or after the word) in Hyprland's
 JSON: a monitor's `width` and `height` unturned and its quarter turns in

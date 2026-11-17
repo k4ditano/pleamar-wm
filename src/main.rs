@@ -242,6 +242,7 @@ fn main() {
     // `pleamar-wm headless scene.plm [options]`: the session's painting with no screen, to check it.
     if args.first().map(String::as_str) == Some("headless") {
         args.remove(0);
+        build::session_path();
         let scene = if args.first().is_some_and(|a| !a.starts_with("--")) { args.remove(0) } else { default_scene(true) };
         nest::set_scene_name(&scene);
         layers::expect_monitors();
@@ -279,6 +280,8 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("session") {
         args.remove(0);
+        // What it starts finds `pleamar-wm` (this one) and `PLEAMAR_WM`.
+        build::session_path();
         // Rebuilt under it, it would start again and every window would go with it.
         pleamar::stay_on_update();
         let scene = if args.first().is_some_and(|a| !a.starts_with("--")) { args.remove(0) } else { default_scene(false) };
