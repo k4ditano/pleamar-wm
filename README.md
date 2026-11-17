@@ -38,6 +38,12 @@ the open windows without closing anything.
 
 # What's new
 
+- **Build's engine for a desktop's own «create with AI»** (0.6.28): `pleamar-wm
+  create` keeps drafts, revisions and the conversation, asks before what needs
+  asking, checks each revision (with pleamar's `--layout` where it has it) and
+  never starts what it makes: the desktop draws it all and hosts the piece
+  ([docs/create-api.md](docs/create-api.md)). What the session starts finds
+  `pleamar-wm` on its `PATH` even when it was not installed, and has `PLEAMAR_WM`.
 - **`pleamar-wm hyprctl -j`** (0.6.27, thanks to @natepayn3): `monitors`,
   `activewindow` and `locked` in Hyprland's JSON, `-j` before or after the word,
   for a shell written for Hyprland (`jq '.[] | select(.focused) | .name'`). A
