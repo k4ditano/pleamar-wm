@@ -392,7 +392,9 @@ pub fn private_on(monitor: &str) -> Vec<[i32; 4]> {
 
 /// A program dragging something: its icon, one surface per monitor (which
 /// one, and its id there), and where the pointer is on the desktop, in units.
-static DRAG: Mutex<(Vec<(usize, u64)>, (f64, f64))> = Mutex::new((Vec::new(), (0.0, 0.0)));
+/// The drag icon's layers (monitor, id), where the pointer is (desktop units), and where the icon's corner goes
+/// from the pointer (units): the offset its program gave its surface (`wl_surface.offset`), less the shadow's margin.
+static DRAG: Mutex<(Vec<(usize, u64)>, (f64, f64), (f64, f64))> = Mutex::new((Vec::new(), (0.0, 0.0), (0.0, 0.0)));
 
 /// Whether a program is dragging something (its icon is up): the pointer then
 /// goes to whatever is under it, not to the surface the press began on.
@@ -401,35 +403,50 @@ pub fn dragging() -> bool {
 }
 
 pub fn set_drag_icon(ids: Vec<(usize, u64)>) {
-    DRAG.lock().unwrap().0 = ids;
+    let mut d = DRAG.lock().unwrap();
+    d.0 = ids;
+    if d.0.is_empty() {
+        d.2 = (0.0, 0.0);
+    }
+}
+
+/// Where the icon's corner goes from the pointer, in units (its program's offset, less the shadow's margin).
+pub fn set_drag_offset(offset: (f64, f64)) {
+    DRAG.lock().unwrap().2 = offset;
 }
 
 /// Where the drag icon goes on that monitor, in its pixels: at the pointer
 /// if the pointer is on it, far away if not.
 pub fn drag_rect(monitor: usize, w: i32, h: i32) -> [i32; 4] {
-    let pos = DRAG.lock().unwrap().1;
+    let (pos, off) = { let d = DRAG.lock().unwrap(); (d.1, d.2) };
     let monitors = MONITORS.lock().unwrap();
     match monitors.get(monitor) {
-        Some((m, _)) => rect_on(m, pos, w, h),
+        Some((m, _)) => icon_rect_on(m, pos, off, w, h),
         None => [-100_000, -100_000, w, h],
     }
 }
 
 fn rect_on(m: &MonitorInfo, pos: (f64, f64), w: i32, h: i32) -> [i32; 4] {
+    icon_rect_on(m, pos, (0.0, 0.0), w, h)
+}
+
+/// The icon on that monitor: on it if the POINTER is (an icon half over the edge is still drawn there), its corner
+/// `off` units from the pointer.
+fn icon_rect_on(m: &MonitorInfo, pos: (f64, f64), off: (f64, f64), w: i32, h: i32) -> [i32; 4] {
     let (lw, lh) = (m.size.0 as f64 / m.scale, m.size.1 as f64 / m.scale);
     let (x, y) = (pos.0 - m.x as f64, pos.1 - m.y as f64);
-    if x >= 0.0 && y >= 0.0 && x < lw && y < lh { [(x * m.scale) as i32, (y * m.scale) as i32, w, h] } else { [-100_000, -100_000, w, h] }
+    if x >= 0.0 && y >= 0.0 && x < lw && y < lh { [((x + off.0) * m.scale).round() as i32, ((y + off.1) * m.scale).round() as i32, w, h] } else { [-100_000, -100_000, w, h] }
 }
 
 /// The pointer moved on the desktop (units): a drag icon goes with it.
 pub fn move_drag(pos: (f64, f64)) {
-    let ids = {
+    let (ids, off) = {
         let mut d = DRAG.lock().unwrap();
         d.1 = pos;
         if d.0.is_empty() {
             return;
         }
-        d.0.clone()
+        (d.0.clone(), d.2)
     };
     // The monitors as they are, copied: with a monitor's lock held, `MONITORS`
     // is not to be asked for. Whoever has it (a window's buffers let go,
@@ -443,7 +460,7 @@ pub fn move_drag(pos: (f64, f64)) {
         let mut st = lock.lock().unwrap();
         let Some(i) = st.clients.iter().position(|c| c.id == id) else { continue };
         let old = st.clients[i].rect;
-        let new = rect_on(m, pos, old[2], old[3]);
+        let new = icon_rect_on(m, pos, off, old[2], old[3]);
         if new != old {
             st.clients[i].rect = new;
             st.note_change(old, 0);
@@ -1258,5 +1275,27 @@ pub(crate) mod tests {
         mover.join().unwrap();
         redraws.join().unwrap();
         set_drag_icon(Vec::new());
+    }
+
+    /// The icon goes where its program put it from the pointer (pleamar centres it: −28, −28), at the
+    /// monitor's scale; and on a monitor the pointer is not on, far away.
+    #[test]
+    fn the_drag_icon_keeps_its_offset_from_the_pointer() {
+        let _drag = DRAGGING.lock().unwrap_or_else(|e| e.into_inner());
+        let a = MonitorInfo { name: "A".into(), size: (1920, 1080), x: 0, y: 0, mhz: 60_000, scale: 1.0, ..Default::default() };
+        let b = MonitorInfo { name: "B".into(), size: (2560, 1440), x: 1920, y: 0, mhz: 60_000, scale: 2.0, ..Default::default() };
+        register(vec![
+            (a, crate::screen::screen("A".into(), (1920, 1080), Box::new(Nowhere))),
+            (b, crate::screen::screen("B".into(), (2560, 1440), Box::new(Nowhere))),
+        ]);
+        set_drag_icon(vec![(0, 8), (1, 9)]);
+        set_drag_offset((-28.0, -28.0));
+        move_drag((500.0, 400.0));
+        assert_eq!(drag_rect(0, 64, 64), [472, 372, 64, 64]);
+        assert_eq!(drag_rect(1, 128, 128)[0], -100_000, "not on the other monitor");
+        move_drag((1920.0 + 100.0, 50.0));
+        assert_eq!(drag_rect(1, 128, 128), [144, 44, 128, 128], "at that monitor's scale: (100 − 28) × 2, (50 − 28) × 2");
+        set_drag_icon(Vec::new());
+        assert_eq!(DRAG.lock().unwrap().2, (0.0, 0.0), "the offset goes with the drag");
     }
 }

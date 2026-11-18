@@ -487,6 +487,85 @@ struct Drag {
     icon: Option<WlSurface>,
     ids: Vec<(usize, u64, Vec<u64>)>,
     text: Arc<Mutex<Option<(String, String)>>>,
+    /// Where the icon's corner is from the pointer (units): what its program said with `wl_surface.offset` (or
+    /// `attach x, y`), added up commit after commit, as the protocol says for a drag icon.
+    offset: (i32, i32),
+    /// The program's surface the pointer is over, and the action it and the source agreed on there (`None`:
+    /// not yet): what the cursor says (copy, move, not allowed).
+    over: Option<WlSurface>,
+    action: Option<smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction>,
+}
+
+/// The margin round a drag icon for its shadow, in units, and how opaque the icon is (macOS's is not quite).
+const DRAG_SHADOW: i32 = 8;
+const DRAG_OPACITY: f32 = 0.85;
+
+/// A drag icon as it is drawn: its pixels (BGRA, premultiplied, `w`×`h`) a little transparent, over a soft shadow,
+/// in a picture `pad` pixels bigger on each side. The shadow is the icon's own shape, blurred and a little lower.
+fn icon_with_shadow(px: &[u8], w: usize, h: usize, pad: usize) -> Vec<u8> {
+    let (ow, oh) = (w + 2 * pad, h + 2 * pad);
+    // The shape (alpha), in the bigger picture, moved down a little.
+    let drop = (pad / 4).max(1);
+    let mut a = vec![0f32; ow * oh];
+    for y in 0..h {
+        for x in 0..w {
+            let (ty, tx) = (y + pad + drop, x + pad);
+            if ty < oh {
+                a[ty * ow + tx] = px[(y * w + x) * 4 + 3] as f32 / 255.0;
+            }
+        }
+    }
+    // Blurred: three box passes each way are near enough a gaussian.
+    let r = (pad / 2).max(1);
+    for _ in 0..3 {
+        a = box_blur(&a, ow, oh, r, true);
+        a = box_blur(&a, ow, oh, r, false);
+    }
+    let mut out = vec![0u8; ow * oh * 4];
+    for y in 0..oh {
+        for x in 0..ow {
+            let o = (y * ow + x) * 4;
+            let shadow = a[y * ow + x] * 0.32;
+            let (mut c, mut ia) = ([0f32; 3], 0f32);
+            if y >= pad && x >= pad && y < pad + h && x < pad + w {
+                let i = ((y - pad) * w + (x - pad)) * 4;
+                for k in 0..3 {
+                    c[k] = px[i + k] as f32 / 255.0 * DRAG_OPACITY;
+                }
+                ia = px[i + 3] as f32 / 255.0 * DRAG_OPACITY;
+            }
+            // Premultiplied «icon over shadow»: the shadow is black, so it only adds alpha.
+            let alpha = ia + shadow * (1.0 - ia);
+            for k in 0..3 {
+                out[o + k] = (c[k] * 255.0).round() as u8;
+            }
+            out[o + 3] = (alpha * 255.0).round().min(255.0) as u8;
+        }
+    }
+    out
+}
+
+fn box_blur(a: &[f32], w: usize, h: usize, r: usize, across: bool) -> Vec<f32> {
+    let mut out = vec![0f32; a.len()];
+    let n = (2 * r + 1) as f32;
+    let (lines, len) = if across { (h, w) } else { (w, h) };
+    for l in 0..lines {
+        let at = |i: usize| if across { l * w + i } else { i * w + l };
+        let mut sum = 0f32;
+        for i in 0..=r.min(len - 1) {
+            sum += a[at(i)];
+        }
+        for i in 0..len {
+            out[at(i)] = sum / n;
+            if i + r + 1 < len {
+                sum += a[at(i + r + 1)];
+            }
+            if i >= r {
+                sum -= a[at(i - r)];
+            }
+        }
+    }
+    out
 }
 
 /// What a program's surface of its own is: a layer (layer-shell), or the
@@ -1282,6 +1361,7 @@ impl State {
                 p.motion(self, under, &MotionEvent { location: at, serial, time });
                 p.frame(self);
                 self.update_constraint();
+                self.drag_moved();
                 self.activity();
             }
             ToNest::PointerOut => {
@@ -1291,6 +1371,7 @@ impl State {
                     p.motion(self, None, &MotionEvent { location: (0.0, 0.0).into(), serial, time });
                     p.frame(self);
                     self.update_constraint();
+                    self.drag_moved();
                 }
             }
             ToNest::Button { code, down } => {
@@ -2413,6 +2494,7 @@ impl State {
                 p.motion(self, under, &MotionEvent { location: at, serial, time });
                 p.frame(self);
                 self.update_constraint();
+                self.drag_moved();
             }
             ToLayers::PointerOut => {
                 if self.panel_pointer.take().is_some() {
@@ -3393,13 +3475,68 @@ impl State {
         let scales: Vec<f64> = (0..self.outputs.len()).map(|k| self.scale_of(k)).collect();
         let owner = owner_of(&icon);
         let Some(d) = self.drag.as_mut() else { return };
+        let mut shadowed = false;
         for (k, id, sent) in d.ids.iter_mut() {
             let s = scales.get(*k).copied().unwrap_or(1.0);
             let mut pieces = Vec::new();
             panel_pieces(&icon, (0, 0), sent, s, &mut pieces);
+            // One surface of pixels (what pleamar and most programs send): a little transparent, over a soft shadow,
+            // in a piece of its own a margin bigger. Anything else (a GPU buffer, subsurfaces) goes as it is.
+            let mut rect_size = ((w as f64 * s) as i32, (h as f64 * s) as i32);
+            if let [p] = pieces.as_mut_slice() {
+                if p.buffer.is_none() && p.px.0 > 0 && p.px.1 > 0 {
+                    let pad_px = ((DRAG_SHADOW as f64) * p.px.0 as f64 / w as f64).round().max(1.0) as usize;
+                    let pad = (DRAG_SHADOW as f64 * s).round() as i32;
+                    if let Some(pleamar::scene::PieceContent::Pixels(px)) = p.content.take() {
+                        if px.len() == p.px.0 as usize * p.px.1 as usize * 4 {
+                            p.content = Some(pleamar::scene::PieceContent::Pixels(icon_with_shadow(&px, p.px.0 as usize, p.px.1 as usize, pad_px)));
+                        } else {
+                            p.content = Some(pleamar::scene::PieceContent::Pixels(px));
+                        }
+                    }
+                    p.key ^= 1 << 62;
+                    p.size = (p.size.0 + 2 * pad as u32, p.size.1 + 2 * pad as u32);
+                    p.px = (p.px.0 + 2 * pad_px as u32, p.px.1 + 2 * pad_px as u32);
+                    rect_size = (p.size.0 as i32, p.size.1 as i32);
+                    shadowed = true;
+                }
+            }
             *sent = pieces.iter().map(|p| p.key).collect();
-            let rect = layers::drag_rect(*k, (w as f64 * s) as i32, (h as f64 * s) as i32);
+            let rect = layers::drag_rect(*k, rect_size.0, rect_size.1);
             layers::show(*k, ClientLayer { id: *id, level: 3, rect, pieces, region: Some(Vec::new()), keyboard: 0, blur: Vec::new(), blur_cut: 0.0, owner, zoom: 1.0, ghost: false, drawn: true });
+        }
+        // Where its corner goes from the pointer: the program's offset, less the shadow's margin.
+        let m = if shadowed { DRAG_SHADOW } else { 0 };
+        layers::set_drag_offset(((d.offset.0 - m) as f64, (d.offset.1 - m) as f64));
+    }
+
+    /// What the cursor says while something is dragged: copy (an arrow with +) where it would be copied, an
+    /// arrow where moved, «not allowed» over a program that will not take it; the arrow before any of them says.
+    fn drag_cursor(&mut self) {
+        use smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction;
+        let Some(d) = self.drag.as_ref() else { return };
+        let name = match (d.over.is_some(), d.action) {
+            (true, Some(a)) if a.contains(DndAction::Copy) => "copy",
+            (true, Some(a)) if a.contains(DndAction::Move) || a.contains(DndAction::Ask) => "default",
+            (true, Some(_)) => "not-allowed",
+            _ => "default",
+        };
+        let kind = pleamar::scene::Cursor::from_name(name).unwrap_or_default();
+        if self.panel_pointer.is_some() {
+            layers::cursor(true, kind);
+        } else {
+            self.tell(NestEvent::Cursor(kind));
+        }
+    }
+
+    /// The pointer moved during a drag: over another program's surface (or off them), what it said no longer holds.
+    fn drag_moved(&mut self) {
+        let under = self.last_under.as_ref().map(|(s, _)| s.clone());
+        let Some(d) = self.drag.as_mut() else { return };
+        if d.over != under {
+            d.over = under;
+            d.action = None;
+            self.drag_cursor();
         }
     }
 
@@ -4164,6 +4301,11 @@ impl CompositorHandler for State {
         } else if self.cursor_surface.as_ref() == Some(&root) {
             self.send_cursor_picture();
         } else if self.drag.as_ref().is_some_and(|d| d.icon.as_ref() == Some(&root)) {
+            // A drag icon's offset is added to the one it had (wl_surface.offset, attach x, y).
+            let delta = with_states(&root, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take());
+            if let (Some(dl), Some(d)) = (delta, self.drag.as_mut()) {
+                d.offset = (d.offset.0 + dl.x, d.offset.1 + dl.y);
+            }
             self.show_drag_icon();
         } else if let Some(x) = self.unmanaged.iter().find(|x| x.wl_surface().as_ref() == Some(&root)).cloned() {
             // An X11 menu or tooltip: drawn with its window.
@@ -4609,6 +4751,21 @@ impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device
     }
+
+    /// The action a program dragging and the one under the pointer agree on: as smithay chooses it, and told to
+    /// the cursor (copy, move, not allowed).
+    fn action_choice(
+        &mut self,
+        available: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
+        preferred: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
+    ) -> smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction {
+        let chosen = smithay::wayland::selection::data_device::default_action_chooser(available, preferred);
+        if let Some(d) = self.drag.as_mut() {
+            d.action = Some(chosen);
+            self.drag_cursor();
+        }
+        chosen
+    }
 }
 
 /// A program starts dragging (a file, some text): the pointer goes to
@@ -4628,8 +4785,11 @@ impl ClientDndGrabHandler for State {
             ids.push((k, self.next_number, Vec::new()));
         }
         layers::set_drag_icon(ids.iter().map(|(k, id, _)| (*k, *id)).collect());
-        self.drag = Some(Drag { icon, ids, text });
+        // The offset of the commits before the drag (pleamar puts the icon's centre on the pointer before it starts).
+        let offset = icon.as_ref().and_then(|i| with_states(i, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take())).map_or((0, 0), |p| (p.x, p.y));
+        self.drag = Some(Drag { icon, ids, text, offset, over: None, action: None });
         self.show_drag_icon();
+        self.drag_cursor();
     }
 
     fn dropped(&mut self, target: Option<WlSurface>, validated: bool, _: Seat<Self>) {
@@ -4640,6 +4800,13 @@ impl ClientDndGrabHandler for State {
             layers::hide(*id);
         }
         layers::set_drag_icon(Vec::new());
+        // The arrow again; the program under the pointer sets its own with the next motion.
+        let kind = pleamar::scene::Cursor::Normal;
+        if self.panel_pointer.is_some() {
+            layers::cursor(true, kind);
+        } else {
+            self.tell(NestEvent::Cursor(kind));
+        }
         // On the scene —no window, no program's surface under it—: to its `drop` zones.
         if target.is_none() && self.pointer_on.is_none() && self.panel_pointer.is_none() {
             if let Some((kind, text)) = d.text.lock().unwrap().take() {
@@ -5561,5 +5728,32 @@ mod tests {
         let (stay, gone) = follow_monitors(vec![("on DP-2", 1), ("on DP-1", 0)], new_index);
         assert_eq!(stay, vec![("on DP-1", 0)]);
         assert_eq!(gone, vec!["on DP-2"]);
+    }
+}
+
+#[cfg(test)]
+mod drag_icon_tests {
+    use super::icon_with_shadow;
+
+    /// A 4×4 opaque white square: the picture grows by the margin, the square is 85 % opaque, and round it there
+    /// is a faint shadow (more below than above) that fades to nothing at the edge.
+    #[test]
+    fn a_drag_icon_is_a_little_transparent_over_a_soft_shadow() {
+        let px = vec![255u8; 4 * 4 * 4];
+        let pad = 8;
+        let out = icon_with_shadow(&px, 4, 4, pad);
+        let ow = 4 + 2 * pad;
+        assert_eq!(out.len(), ow * ow * 4);
+        let alpha = |x: usize, y: usize| out[(y * ow + x) * 4 + 3];
+        let centre = alpha(pad + 2, pad + 2);
+        assert!((216..=230).contains(&centre), "85 % and a little shadow under it: {centre}");
+        assert_eq!(out[((pad + 2) * ow + pad + 2) * 4], 217, "white at 85 %, premultiplied");
+        let below = alpha(pad + 2, pad + 5);
+        let above = alpha(pad + 2, pad - 2);
+        assert!(below > 0 && below < 90, "a faint shadow below: {below}");
+        assert!(below > above, "the shadow falls below: {below} > {above}");
+        assert_eq!(alpha(0, 0), 0, "nothing at the corner");
+        // Premultiplied: no colour beyond its alpha.
+        assert!(out.chunks_exact(4).all(|p| p[0] <= p[3] && p[1] <= p[3] && p[2] <= p[3]));
     }
 }
