@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "pleamar-wm"
-version = "0.6.29"
+version = "0.6.30"
 dependencies = [
  "async-channel",
  "async-executor",

@@ -38,6 +38,13 @@ the open windows without closing anything.
 
 # What's new
 
+- **Dragging and closing look right** (0.6.30): a program's drag icon sits where
+  it puts it from the pointer, a little transparent over a soft shadow, and the
+  cursor says what dropping would do (copy, move, not allowed). A window whose
+  program takes its picture away before closing (GTK, Qt, Firefox) keeps its last
+  picture for the scene to see it leave, instead of turning empty; and a program
+  that hid a window and showed it again no longer waits for ever. With pleamar
+  0.8.0-exp.34 the check of what `create` makes gets its new layout warnings.
 - **The check of what `create` makes reads the letters** (0.6.29): with pleamar
   0.8.0-exp.31, `--layout` measures each text where its letters are, not the
   box it was given, so a word in a wide `width` is no longer taken as faint.
