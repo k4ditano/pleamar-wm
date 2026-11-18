@@ -1,0 +1,9 @@
+language 0.1
+// What tests/close_picture.rs looks at: one window drawn always (`show: true`), so what the scene still has of it
+// after it goes is seen. A dark background, the window at 100, 100.
+scene ClosePicture {
+    surface { size: full, full }
+    windows win max 2
+    box { from: 0, 0; size: 1920, 1080; color: #102030 }
+    window win.0 { at: 100, 100; size: 300, 200; ask: 300, 200; show: true }
+}
