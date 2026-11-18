@@ -319,6 +319,9 @@ struct Window {
     /// Put away (minimized): out of the order too, and where it was in it,
     /// to go back there.
     minimized: bool,
+    /// Its program took its picture away (a null buffer: GTK, Qt and Firefox hide or close a window so): told
+    /// as closed, with its last picture left to the scene; it opens again when it draws again.
+    unmapped: bool,
     was_at: usize,
     /// The scene floats it over the layout (`float`): unlike `floating`, it
     /// keeps its turn in the order (the keyboard, `promote`); only the
@@ -3169,7 +3172,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -3251,6 +3254,39 @@ impl State {
             let (t, s) = self.waiting.remove(0);
             self.place(t, s);
         }
+    }
+
+    /// Its program took its picture away: closed for the scene (`open` 0, its last picture kept by the render
+    /// for the scene to see it leave), and the keyboard goes to the window before it. Nothing else of it is
+    /// forgotten: it may draw again (`window_remapped`).
+    fn window_unmapped(&mut self, slot: usize) {
+        let Some(w) = self.slots[slot].as_mut() else { return };
+        w.unmapped = true;
+        // Hidden, it has to begin again: its next commit is answered with a configure, as the first one was
+        // (xdg-shell; smithay does it only for those that use its rendering). Without this a program that hid
+        // a window and showed it again waited for ever.
+        if let Toplevel::Xdg(t) = &w.toplevel {
+            t.reset_initial_configure_sent();
+        }
+        println!("windows · {slot} hidden by its program (a null buffer): closed for the scene, its last picture kept");
+        self.tell(NestEvent::Closed(slot));
+        if self.focus == Some(slot) {
+            let next = self.order.iter().copied().find(|s| *s != slot && self.slots[*s].as_ref().is_some_and(|w| !w.unmapped && !w.minimized));
+            self.set_focus(next);
+        }
+    }
+
+    /// It draws again after being hidden: it opens again, as new for the scene, and its picture is sent whole.
+    fn window_remapped(&mut self, slot: usize) {
+        let Some(w) = self.slots[slot].as_mut() else { return };
+        w.unmapped = false;
+        w.sent.clear();
+        w.told.clear();
+        let (title, app, screen) = (w.title.clone(), w.app.clone(), w.screen);
+        println!("windows · {slot} shown again by its program");
+        self.tell(NestEvent::Opened { slot, title: title.clone(), app: app.clone(), screen });
+        self.set_title(slot, title);
+        self.set_app(slot, app);
     }
 
     /// Whether windows' menus are surfaces of the monitor (a session of its
@@ -3438,6 +3474,11 @@ impl State {
                 continue;
             }
             let Some(slot) = self.window_of(&root) else { continue };
+            // Hidden by its program: nothing is sent (a menu or a subsurface of it drawing again would send an
+            // empty or half window over the last picture the scene keeps).
+            if self.slots[slot].as_ref().is_some_and(|w| w.unmapped) {
+                continue;
+            }
             // It may say it is a dialog only now (a parent, a fixed size).
             if let Some(dialog) = self.slots[slot].as_ref().map(|w| w.floating || w.toplevel.is_dialog(&root)) {
                 self.set_dialog(slot, dialog);
@@ -3998,6 +4039,7 @@ impl CompositorHandler for State {
         }
         let feedback = with_states(surface, |s| std::mem::take(&mut s.cached_state.get::<PresentationFeedbackCachedState>().current().callbacks));
         let buffer_was_removed = matches!(buffer, Some(BufferAssignment::Removed));
+        let buffer_is_new = matches!(buffer, Some(BufferAssignment::NewBuffer(_)));
         self.tally[0] += 1;
         self.tally[1] += matches!(buffer, Some(BufferAssignment::NewBuffer(_))) as u32;
         // Each surface has its number for the render the first time it shows something.
@@ -4144,7 +4186,17 @@ impl CompositorHandler for State {
                     t.send_configure();
                 }
             }
-            self.dirty.push(root);
+            let unmapped = self.slots[slot].as_ref().is_some_and(|w| w.unmapped);
+            let had_picture = self.slots[slot].as_ref().is_some_and(|w| !w.sent.is_empty());
+            if surface == &root && buffer_was_removed && !unmapped && had_picture {
+                // Not an empty window for the scene: it closed, and its last picture stays for it to see it leave.
+                self.window_unmapped(slot);
+            } else if surface == &root && buffer_is_new && unmapped {
+                self.window_remapped(slot);
+                self.dirty.push(root);
+            } else if !unmapped {
+                self.dirty.push(root);
+            }
         } else if let Some(popup) = self.popups.find_popup(&root) {
             if let PopupKind::Xdg(p) = &popup {
                 if !p.is_initial_configure_sent() {
