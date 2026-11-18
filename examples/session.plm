@@ -3311,6 +3311,18 @@ scene Session {
     on move_right while fscreen < 0.5 { send win(win.focus) to 1 }
     on move_up { swap win(win.focus) with win(previous) }
     on move_down { swap win(win.focus) with win(next) }
+    // One layout for the monitor under the mouse, by its number in the strip's
+    // order (0 leader, 1 columns, 2 rows, 3 grid, 4 leader-right, 5 scrolling,
+    // 6 marea, 7 fractal, 8 free, a canvas): Marea's finder asks for it
+    // (`pleamar-wm --say wm "emit layout_set 5"`).
+    event layout_set
+    repeat j in 0..4 {
+        on layout_set(v) while mon == j {
+            lay.$j = if(v < 7.5, clamp(round(v), 0, 7), lay.$j)
+            free.$j = if(v > 7.5, 1, 0)
+            cv.$j = if(v > 7.5, 1, 0)
+        }
+    }
     // The leader narrower or wider.
     on narrower while not zf and not zc { ratio = clamp(ratio - 0.05, 0.25, 0.8) }
     on wider while not zf and not zc { ratio = clamp(ratio + 0.05, 0.25, 0.8) }
