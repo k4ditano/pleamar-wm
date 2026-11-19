@@ -456,7 +456,7 @@ scene Session {
     fact g.w = 0
     fact g.h = 0
     fact sizing = -1
-    fact sedge = -1                      // which of its edges: 0 left · 1 right · 2 bottom · 3 corner
+    fact sedge = -1                      // which of its edges: 0 left · 1 right · 2 bottom · 3 bottom-right corner · 4 bottom-left · 5 top-left · 6 top-right
     let lay.here = lay[mon]
     let strip.x = screen[mon].width / 2 - 9 * 60 / 2
     let strip.y = win.reserved[mon].top + 6
@@ -3633,7 +3633,7 @@ scene Session {
         let dlg.all = keys.super > 0.5 or win.$i.held > 0.5
         zone box dlgz.$i { from: dx, dy; size: dw, if(dlg.all, dh, dlg.bar); cursor: move; active: dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and (dlg.bar > 0 or dlg.all); label: "Move {win.$i.title}"; role: region; handle: i }
         on press dlgz.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; focus win.$i }
-        on drag dlgz.$i { dlg.ox.$i = dlg.gx.$i + drag.dx; dlg.oy.$i = dlg.gy.$i + drag.dy }
+        on drag dlgz.$i { dlg.ox.$i = clamp(dlg.gx.$i + drag.dx, -max(W - dw, 0) / 2, max(W - dw, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i + drag.dy, -max(H - dh, 0) / 2, max(H - dh, 0) / 2) }
         //  (After the strip's zone, so its ends are the edges'. A grow of d moves the middle d / 2. Not while Super is
         //  held: then all of it carries it, and a press that began a few pixels from an edge stretched it instead.)
         let dlg.rs = dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and keys.super < 0.5
@@ -3651,13 +3651,13 @@ scene Session {
         on press dlgbl.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
         on press dlgtl.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
         on press dlgtr.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
-        on drag dlgl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2 }
-        on drag dlgr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2 }
-        on drag dlgb.$i { dlg.w.$i = dlg.gw.$i; dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
-        on drag dlgc.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
-        on drag dlgbl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
-        on drag dlgtl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2 }
-        on drag dlgtr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2 }
+        on drag dlgl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = clamp(dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2) }
+        on drag dlgr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = clamp(dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2) }
+        on drag dlgb.$i { dlg.w.$i = dlg.gw.$i; dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.oy.$i = clamp(dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2, -max(H - dlg.h.$i - dlg.bar, 0) / 2, max(H - dlg.h.$i - dlg.bar, 0) / 2) }
+        on drag dlgc.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = clamp(dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2, -max(H - dlg.h.$i - dlg.bar, 0) / 2, max(H - dlg.h.$i - dlg.bar, 0) / 2) }
+        on drag dlgbl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = clamp(dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2, -max(H - dlg.h.$i - dlg.bar, 0) / 2, max(H - dlg.h.$i - dlg.bar, 0) / 2) }
+        on drag dlgtl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = clamp(dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2, -max(H - dlg.h.$i - dlg.bar, 0) / 2, max(H - dlg.h.$i - dlg.bar, 0) / 2) }
+        on drag dlgtr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = clamp(dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2, -max(W - dlg.w.$i, 0) / 2, max(W - dlg.w.$i, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2, -max(H - dlg.h.$i - dlg.bar, 0) / 2, max(H - dlg.h.$i - dlg.bar, 0) / 2) }
     }
 
     // The rain itself, in front of everything: streaks, slanted a little.
