@@ -38,6 +38,11 @@ the open windows without closing anything.
 
 # What's new
 
+- **How a window looks is the scene's to say** (0.6.31): a window rule's `set
+  NAME VALUE` reaches the scene as `win.$i.rule.NAME` (its own words: opacity,
+  no shadow…), and `win.$i.translucent` says, with no rule, that a window may be
+  seen through (both with the experimental pleamar, 0.8.0-exp.35). Dialogs and windows floated by a rule can be carried and stretched,
+  and free windows stretched by all four corners.
 - **Dragging and closing look right** (0.6.30): a program's drag icon sits where
   it puts it from the pointer, a little transparent over a soft shadow, and the
   cursor says what dropping would do (copy, move, not allowed). A window whose
@@ -540,6 +545,7 @@ window app=discord workspace 3 monitor 1
 window title="Picture in Picture" float     # `*` for anything: app=org.gnome.*
 window app=org.keepassxc.KeePassXC private  # pixelated when a whole screen is shared
 window app=zen frame=own                    # it draws its own title bar (its tabs up there)
+window app=com.mitchellh.ghostty set opacity 0.9 set glass on  # values for the scene: win.$i.rule.opacity, win.$i.rule.glass
 terminals off                               # the terminals' shells as they are (see below)
 ```
 
@@ -549,6 +555,17 @@ and the portals (`pleamar-portals.conf`) do the rest through GTK's. Which
 desktop it is (`XDG_CURRENT_DESKTOP=pleamar`) is told before anything else
 runs: a portal woken earlier without it would never read that file, and a
 program's «Open» would get GTK's dialog instead of the one it names (Sonda's).
+
+**How a window looks is the scene's to say**: a window rule's `set NAME
+VALUE` (a number, `85%`, or on/off) reaches it as `win.$i.rule.NAME`, 0 while
+no rule sets it, and pleamar-wm does nothing else with it: the words and what
+they mean are the scene's (`opacity`, `noshadow`, `glass`…). Without any rule,
+`win.$i.translucent` says that a window may be seen through: it asked for a
+blurred background (`ext-background-effect`), or neither its buffer nor its
+opaque region covers all of it, as a terminal with a see-through background.
+A scene can then put glass behind it instead of a solid backing. Both need
+the experimental pleamar (0.8.0-exp.35 or newer, `--features exp`); with
+pleamar main the rules are read and nothing reaches the scene.
 
 **Sharing the screen is pleamar-wm's own**: it is its own portal
 (`pleamar.portal`, `org.freedesktop.impl.portal.ScreenCast`). When Discord, a
