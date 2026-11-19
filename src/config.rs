@@ -317,6 +317,9 @@ pub struct WindowRule {
     /// browser's tabs up there); `frame=ours`: the scene draws them, if the
     /// program lets it. Without it, the scene's, for whoever lets it.
     pub frame: Option<bool>,
+    /// `set NAME VALUE`: a value for the scene, `win.$i.rule.NAME`. The
+    /// compositor does nothing with it: the words and what they mean are the scene's.
+    pub set: Vec<(String, f32)>,
 }
 
 /// What the rules say for a window: float, size, monitor, workspace, private, frame.
@@ -329,6 +332,26 @@ pub struct ForWindow {
     pub private: bool,
     /// Some(true) the scene's frame, Some(false) its own.
     pub frame: Option<bool>,
+    /// The scene's values (`set NAME VALUE`), each name once: the last rule that says it.
+    pub set: Vec<(String, f32)>,
+}
+
+/// A name for `set`: what the scene reads as `win.$i.rule.NAME`, so a word of the language.
+fn rule_name(n: &str) -> bool {
+    n.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A value for `set`: a number (`0.85`), a percentage (`85%`, 0.85) or on/off (1/0).
+fn rule_value(v: &str) -> Option<f32> {
+    match v.to_lowercase().as_str() {
+        "on" | "yes" | "true" => Some(1.0),
+        "off" | "no" | "false" => Some(0.0),
+        v => match v.strip_suffix('%') {
+            Some(p) => p.parse::<f32>().ok().map(|p| p / 100.0),
+            None => v.parse::<f32>().ok(),
+        }
+        .filter(|x| x.is_finite()),
+    }
 }
 
 /// `*` for anything, no case: `org.gnome.*`, `*Picture*`, `firefox`.
@@ -364,6 +387,10 @@ impl Config {
             out.monitor = r.monitor.clone().or(out.monitor);
             out.workspace = r.workspace.or(out.workspace);
             out.frame = r.frame.or(out.frame);
+            for (name, v) in &r.set {
+                out.set.retain(|(n, _)| n != name);
+                out.set.push((name.clone(), *v));
+            }
         }
         out
     }
@@ -715,6 +742,14 @@ pub fn parse(text: &str, c: &mut Config) {
                         r.size = rest.get(k + 1).and_then(|s| s.split_once('x')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
                         ok &= r.size.is_some();
                         k += 1;
+                    } else if w == "set" {
+                        let name = rest.get(k + 1).filter(|n| rule_name(n));
+                        let v = rest.get(k + 2).and_then(|v| rule_value(v));
+                        match (name, v) {
+                            (Some(n), Some(v)) => r.set.push((n.clone(), v)),
+                            _ => ok = false,
+                        }
+                        k += 2;
                     } else if w == "monitor" {
                         r.monitor = rest.get(k + 1).cloned();
                         ok &= r.monitor.is_some();
@@ -731,7 +766,7 @@ pub fn parse(text: &str, c: &mut Config) {
                 if ok && (r.app.is_some() || r.title.is_some()) {
                     c.windows.push(r);
                 } else {
-                    eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private] [frame=own|ours]`", n + 1);
+                    eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private] [frame=own|ours] [set NAME VALUE]…`, NAME a word (letters, digits, _) and VALUE a number, N% or on/off", n + 1);
                 }
             }
             "layout" => match rest {
@@ -1083,6 +1118,19 @@ mod tests {
         assert_eq!(c.for_window("zen", "Inicio").frame, Some(false));
         assert_eq!(c.for_window("cA", "sh").frame, Some(true));
         assert_eq!(c.for_window("kitty", "zsh").frame, None, "an unknown frame word is no rule");
+    }
+
+    #[test]
+    fn a_window_rule_sets_values_for_the_scene_in_its_own_words() {
+        let mut c = Config::default();
+        parse("window app=com.mitchellh.ghostty set opacity 0.9 set see on\nwindow app=mpv set noshadow 1 float\nwindow app=com.mitchellh.* set opacity 85%\nwindow app=foot set 2bad 1\nwindow app=foot set dim\nwindow app=foot set dim much", &mut c);
+        let g = c.for_window("com.mitchellh.ghostty", "~");
+        // Each name once, the last rule that says it.
+        assert_eq!(g.set, [("see".to_owned(), 1.0), ("opacity".to_owned(), 0.85)]);
+        let m = c.for_window("mpv", "film");
+        assert!(m.float && m.set == [("noshadow".to_owned(), 1.0)], "`set` sits among the other words");
+        assert!(c.for_window("foot", "~").set.is_empty(), "a name that is not a word, or no number, is no rule");
+        assert_eq!(c.windows.len(), 3);
     }
 
     #[test]

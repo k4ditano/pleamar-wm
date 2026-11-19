@@ -154,6 +154,8 @@ struct Content {
     data: Vec<u8>,
     dmabuf: Option<(u64, Dmabuf)>,
     changed: bool,
+    /// Its buffer has no alpha (XRGB, an opaque format on the card, a solid pixel).
+    opaque: bool,
 }
 
 /// The longest the windows wait for the scene to paint a frame of theirs
@@ -322,6 +324,10 @@ struct Window {
     /// Its program took its picture away (a null buffer: GTK, Qt and Firefox hide or close a window so): told
     /// as closed, with its last picture left to the scene; it opens again when it draws again.
     unmapped: bool,
+    /// It may be seen through, as the scene was last told (`win.$i.translucent`).
+    translucent: bool,
+    /// What the window rules set for the scene (`set NAME VALUE`), as it was told.
+    rules: Vec<(String, f32)>,
     was_at: usize,
     /// The scene floats it over the layout (`float`): unlike `floating`, it
     /// keeps its turn in the order (the keyboard, `promote`); only the
@@ -1817,6 +1823,13 @@ impl State {
         layers::set_private(slot, rules.private);
         let size = rules.size.map(|(a, b)| (a as i32, b as i32));
         let screen = w.screen;
+        if !rules.set.is_empty() {
+            if let Some(Some(w)) = self.slots.get_mut(slot) {
+                w.rules = rules.set.clone();
+            }
+            #[cfg(feature = "exp")]
+            self.tell(NestEvent::Rules(slot, rules.set.clone()));
+        }
         if let Some(Some(w)) = self.slots.get_mut(slot) {
             w.ruled = Some(size);
             w.floating |= rules.float;
@@ -3258,7 +3271,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, translucent: false, rules: Vec::new(), was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -3373,6 +3386,36 @@ impl State {
         self.tell(NestEvent::Opened { slot, title: title.clone(), app: app.clone(), screen });
         self.set_title(slot, title);
         self.set_app(slot, app);
+        // Opened again, the scene starts it from nothing: its look is told again.
+        if let Some(w) = self.slots[slot].as_mut() {
+            w.translucent = false;
+            #[cfg(feature = "exp")]
+            if !w.rules.is_empty() {
+                let rules = w.rules.clone();
+                self.tell(NestEvent::Rules(slot, rules));
+            }
+        }
+    }
+
+    /// Whether a window may be seen through, told when it changes: it asked for
+    /// a blurred background (`ext-background-effect`), or neither its buffer
+    /// (no alpha) nor its opaque region covers all of it —its window geometry,
+    /// not the shadow round it—. Not while hidden: it leaves as it looked.
+    fn tell_translucent(&mut self, slot: usize) {
+        let Some(w) = self.slots.get(slot).and_then(Option::as_ref) else { return };
+        if w.unmapped {
+            return;
+        }
+        let g = w.geometry;
+        let surface = w.surface.clone();
+        let yes = see_through(&surface, g);
+        let Some(w) = self.slots[slot].as_mut() else { return };
+        if w.translucent != yes {
+            w.translucent = yes;
+            // (pleamar main has no such value: only the experimental one hears it.)
+            #[cfg(feature = "exp")]
+            self.tell(NestEvent::Translucent(slot, yes));
+        }
     }
 
     /// Whether windows' menus are surfaces of the monitor (a session of its
@@ -3952,6 +3995,37 @@ fn covers_opaque(surface: &WlSurface, px: (usize, usize)) -> bool {
     })
 }
 
+/// Whether a window's surface may be seen through, where `g` is its window
+/// (x, y, width, height in its own units; width 0: all of the surface).
+fn see_through(surface: &WlSurface, g: [i32; 4]) -> bool {
+    use smithay::wayland::compositor::{RectangleKind, SurfaceAttributes};
+    with_states(surface, |s| {
+        if s.data_map.get::<Blur>().is_some_and(|b| !b.0.lock().unwrap().is_empty()) {
+            return true;
+        }
+        let (opaque, size) = match s.data_map.get::<Mutex<Content>>() {
+            Some(c) => {
+                let c = c.lock().unwrap();
+                (c.opaque, c.size)
+            }
+            None => return false,
+        };
+        if size.0 == 0 || size.1 == 0 {
+            return false;
+        }
+        if opaque {
+            return false;
+        }
+        let [x, y, w, h] = if g[2] > 0 && g[3] > 0 { g } else { [0, 0, size.0 as i32, size.1 as i32] };
+        let mut attrs = s.cached_state.get::<SurfaceAttributes>();
+        let Some(region) = &attrs.current().opaque_region else { return true };
+        // Added rectangles only, none taken away from it: one of them over all of the window.
+        let covered = !region.rects.iter().any(|(k, _)| matches!(k, RectangleKind::Subtract))
+            && region.rects.iter().any(|(k, r)| matches!(k, RectangleKind::Add) && r.loc.x <= x && r.loc.y <= y && r.loc.x + r.size.w >= x + w && r.loc.y + r.size.h >= y + h);
+        !covered
+    })
+}
+
 /// What the render needs to read a program's buffer on the card: its own copy
 /// of the handle, and the layout.
 fn dmabuf_piece(number: u64, d: &Dmabuf) -> Option<DmabufPiece> {
@@ -4194,6 +4268,13 @@ impl CompositorHandler for State {
         match buffer {
             Some(BufferAssignment::NewBuffer(b)) => {
                 let on_card = get_dmabuf(&b).ok().cloned();
+                let opaque_format = match &on_card {
+                    Some(d) => pleamar::dmabuf::opaque(d.format().code as u32),
+                    None => with_buffer_contents(&b, |_, _, d| d.format == wl_shm::Format::Xrgb8888)
+                        .ok()
+                        .or_else(|| smithay::wayland::single_pixel_buffer::get_single_pixel_buffer(&b).ok().map(|p| p.a == u32::MAX))
+                        .unwrap_or(false),
+                };
                 let fresh = match on_card {
                     // On the card: lent to the render, and handed back once copied.
                     Some(d) => {
@@ -4244,6 +4325,7 @@ impl CompositorHandler for State {
                     let mut c = s.data_map.get::<Mutex<Content>>().unwrap().lock().unwrap();
                     // One that never reached the render goes back now: a newer one takes its place.
                     let unsent = c.changed.then(|| c.dmabuf.as_ref().map(|(n, _)| *n)).flatten();
+                    c.opaque = opaque_format;
                     match fresh {
                         Some((size, data, dmabuf)) => {
                             c.px = size;
@@ -4329,6 +4411,7 @@ impl CompositorHandler for State {
             }
             let unmapped = self.slots[slot].as_ref().is_some_and(|w| w.unmapped);
             let had_picture = self.slots[slot].as_ref().is_some_and(|w| !w.sent.is_empty());
+            let is_root = surface == &root;
             if surface == &root && buffer_was_removed && !unmapped && had_picture {
                 // Not an empty window for the scene: it closed, and its last picture stays for it to see it leave.
                 self.window_unmapped(slot);
@@ -4337,6 +4420,9 @@ impl CompositorHandler for State {
                 self.dirty.push(root);
             } else if !unmapped {
                 self.dirty.push(root);
+            }
+            if is_root {
+                self.tell_translucent(slot);
             }
         } else if let Some(popup) = self.popups.find_popup(&root) {
             if let PopupKind::Xdg(p) = &popup {
