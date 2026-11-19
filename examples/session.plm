@@ -1618,7 +1618,7 @@ scene Session {
     let Hmon = screen[mon].height
     let on.dialog.n = 0
     repeat k in 0..16 {
-        on.dialog.n += win.$k.dialog and win.$k.open and win.$k.screen == mon and win.$k.workspace == win.shown[mon] and abs(mouse.x - Wmon / 2) <= max(win.$k.width, 120) / 2 and abs(mouse.y - Hmon / 2) <= (max(win.$k.height, 40) + tb) / 2
+        on.dialog.n += win.$k.dialog and win.$k.open and win.$k.screen == mon and win.$k.workspace == win.shown[mon] and abs(mouse.x - (Wmon / 2 + dlg.ox.$k)) <= max(win.$k.width, 120) / 2 and abs(mouse.y - (Hmon / 2 + dlg.oy.$k)) <= (max(win.$k.height, 40) + if(win.$k.framed, tb, 0)) / 2
     }
     let on.dialog = on.dialog.n > 0.5
 
@@ -2136,6 +2136,11 @@ scene Session {
             zone box right_edge.$i { from: ex + ew - 5, ey + tb; size: 10, eh - tb - 12; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, right }
             zone box bottom_edge.$i { from: ex + 12, ey + eh - 5; size: ew - 24, 10; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, bottom }
             zone box corner.$i { from: ex + ew - 14, ey + eh - 14; size: 20, 20; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, bottom_right }
+            // The other three corners too. (The top two only on the corner itself, a square across it: just inside
+            // are the title bar's port and its cross.)
+            zone box corner_bl.$i { from: ex - 6, ey + eh - 14; size: 20, 20; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, bottom_left }
+            zone box corner_tl.$i { from: ex - 7, ey - 7; size: 14, 14; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, top_left }
+            zone box corner_tr.$i { from: ex + ew - 7, ey - 7; size: 14, 14; cursor: grab; active: here and fr and not maxed.$i and not overview; label: "Resize {win.$i.title}"; role: region; handle: i, top_right }
         }
         group {
             // Over the others as it was last touched (free, they overlap).
@@ -2545,6 +2550,30 @@ scene Session {
             g.w = fw.$i
             g.h = fh.$i
         }
+        on press corner_bl.$i {
+            sizing = i
+            sedge = 4
+            g.x = fx.$i
+            g.y = fy.$i
+            g.w = fw.$i
+            g.h = fh.$i
+        }
+        on press corner_tl.$i {
+            sizing = i
+            sedge = 5
+            g.x = fx.$i
+            g.y = fy.$i
+            g.w = fw.$i
+            g.h = fh.$i
+        }
+        on press corner_tr.$i {
+            sizing = i
+            sedge = 6
+            g.x = fx.$i
+            g.y = fy.$i
+            g.w = fw.$i
+            g.h = fh.$i
+        }
         // Taken by an edge with the camera far away: it comes close first
         // (as Super and the wheel would, all the way in), the point taken
         // staying under the pointer. Resized from far away it was made huge
@@ -2553,6 +2582,9 @@ scene Session {
         on press right_edge.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
         on press bottom_edge.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
         on press corner.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
+        on press corner_bl.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
+        on press corner_tl.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
+        on press corner_tr.$i while C and cz < 0.95 { cvw.k = sc; cvw.d = 100; cvw.x = mouse.x; cvw.y = mouse.y; cvw.n = cvw.n + 1 }
         // Let go of an edge: the camera comes to the window, whole and in the
         // middle (as close as it fits, never closer than as it is).
         on change cvc.n while cvc.w == i and C and fr and not maxed.$i and not win.$i.minimized {
@@ -2621,6 +2653,23 @@ scene Session {
         on drag corner.$i while sizing == i and sedge == 3 {
             fw.$i = max(g.w + drag.dx / cz, 240)
             fh.$i = max(g.h + drag.dy / cz, 140)
+        }
+        //  (The left and the top move with the mouse, and the corner across stays where it was.)
+        on drag corner_bl.$i while sizing == i and sedge == 4 {
+            fx.$i = min(g.x + drag.dx / cz, g.x + g.w - 240)
+            fw.$i = max(g.w - drag.dx / cz, 240)
+            fh.$i = max(g.h + drag.dy / cz, 140)
+        }
+        on drag corner_tl.$i while sizing == i and sedge == 5 {
+            fx.$i = min(g.x + drag.dx / cz, g.x + g.w - 240)
+            fw.$i = max(g.w - drag.dx / cz, 240)
+            fy.$i = min(g.y + drag.dy / cz, g.y + g.h - 140)
+            fh.$i = max(g.h - drag.dy / cz, 140)
+        }
+        on drag corner_tr.$i while sizing == i and sedge == 6 {
+            fw.$i = max(g.w + drag.dx / cz, 240)
+            fy.$i = min(g.y + drag.dy / cz, g.y + g.h - 140)
+            fh.$i = max(g.h - drag.dy / cz, 140)
         }
         on press lead_zone.$i while fr {
             focus win.$i
@@ -3531,15 +3580,34 @@ scene Session {
     // fullscreen viewer was hidden behind it, and being modal, the viewer
     // took nothing until it went —nobody could see it to close it—.
     // rest, at the size it chooses, in the middle of its monitor ──
+    //  It can be carried: by its strip, from anywhere on it with Super held, or from its own frame when its program
+    //  asks (`handle: i`: a window floated by a `window … float` rule is one of these, and one that draws its own
+    //  frame has no strip of ours). Where it is let go is kept, from the middle, until it closes. Its edges and its
+    //  corner stretch it: the size is asked of its program (`dlg.w`, `dlg.h`; 0 is the one it chooses), which keeps
+    //  to what it can be —one of a single size stays as it is—, and the edge across stays where it was.
     repeat i in 0..16 {
-        let dw = max(win.$i.width, 120)
-        let dh = max(win.$i.height, 40) + tb
-        let dx = (W - dw) / 2
-        let dy = (H - dh) / 2
+        fact dlg.ox.$i = 0
+        fact dlg.oy.$i = 0
+        fact dlg.gx.$i = 0
+        fact dlg.gy.$i = 0
+        fact dlg.w.$i = 0
+        fact dlg.h.$i = 0
+        fact dlg.gw.$i = 0
+        fact dlg.gh.$i = 0
+        on change win.$i.open while win.$i.open { dlg.ox.$i = 0; dlg.oy.$i = 0; dlg.w.$i = 0; dlg.h.$i = 0 }
+        let dlg.bar = if(win.$i.framed, tb, 0)
+        //  (Stretched, it is drawn at the size asked of it, as a free window is: a box of another size than the one
+        //  asked scales the picture, and it came out skewed.)
+        let dlg.iw = if(dlg.w.$i > 0, dlg.w.$i, win.$i.width)
+        let dlg.ih = if(dlg.h.$i > 0, dlg.h.$i, win.$i.height)
+        let dw = max(dlg.iw, 120)
+        let dh = max(dlg.ih, 40) + dlg.bar
+        let dx = clamp((W - dw) / 2 + dlg.ox.$i, 0, max(W - dw, 0))
+        let dy = clamp((H - dh) / 2 + dlg.oy.$i, 0, max(H - dh, 0))
         prop dlg.$i = 0 ~220ms
         let dlg.ws = win.$i.pool == inpool[max(win.$i.screen, 0)]
         // The mouse going into it gives it the keyboard, as it does a window.
-        let dlg.pointed = win.$i.dialog and win.$i.open and not win.$i.fullscreen and dlg.ws and win.$i.screen == mon and abs(mouse.x - Wmon / 2) <= dw / 2 and abs(mouse.y - Hmon / 2) <= dh / 2
+        let dlg.pointed = win.$i.dialog and win.$i.open and not win.$i.fullscreen and dlg.ws and win.$i.screen == mon and abs(mouse.x - (Wmon / 2 + dlg.ox.$i)) <= dw / 2 and abs(mouse.y - (Hmon / 2 + dlg.oy.$i)) <= dh / 2
         on change dlg.pointed while dlg.pointed and dragging < 0 and not overview { focus win.$i }
         // (Once it has drawn: until then it has no size, and it would be a
         // little empty box in the middle for as long as its program takes.)
@@ -3556,12 +3624,40 @@ scene Session {
             }
             group {
                 clip box { from: dx, dy; size: dw, dh; corner: 12 }
-                box { from: dx, dy; size: dw, tb; color: #1d2b27 }
-                text win.$i.title { at: dx + 14, dy + tb / 2; anchor: left center; size: 12; weight: 500; width: max(dw - 40, 10); lines: 1; color: ink }
-                window win.$i { at: dx, dy + tb; size: win.$i.width, win.$i.height; ask: 0, 0; show: win.$i.dialog and win.$i.open and win.$i.screen == screen.index and dlg.ws }
+                box { from: dx, dy; size: dw, tb; color: #1d2b27; show: dlg.bar > 0 }
+                text win.$i.title { at: dx + 14, dy + tb / 2; anchor: left center; size: 12; weight: 500; width: max(dw - 40, 10); lines: 1; color: ink; show: dlg.bar > 0 }
+                window win.$i { at: dx, dy + dlg.bar; size: dlg.iw, dlg.ih; ask: dlg.w.$i, dlg.h.$i; show: win.$i.dialog and win.$i.open and win.$i.screen == screen.index and dlg.ws }
             }
             box { from: dx, dy; size: dw, dh; corner: 12; stroke: 1.5; color: mint; opacity: 70% * win.$i.focused }
         }
+        let dlg.all = keys.super > 0.5 or win.$i.held > 0.5
+        zone box dlgz.$i { from: dx, dy; size: dw, if(dlg.all, dh, dlg.bar); cursor: move; active: dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and (dlg.bar > 0 or dlg.all); label: "Move {win.$i.title}"; role: region; handle: i }
+        on press dlgz.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; focus win.$i }
+        on drag dlgz.$i { dlg.ox.$i = dlg.gx.$i + drag.dx; dlg.oy.$i = dlg.gy.$i + drag.dy }
+        //  (After the strip's zone, so its ends are the edges'. A grow of d moves the middle d / 2. Not while Super is
+        //  held: then all of it carries it, and a press that began a few pixels from an edge stretched it instead.)
+        let dlg.rs = dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and keys.super < 0.5
+        zone box dlgl.$i { from: dx - 5, dy + dlg.bar; size: 10, dh - dlg.bar - 12; cursor: ew_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, left }
+        zone box dlgr.$i { from: dx + dw - 5, dy + dlg.bar; size: 10, dh - dlg.bar - 12; cursor: ew_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, right }
+        zone box dlgb.$i { from: dx + 12, dy + dh - 5; size: dw - 24, 10; cursor: ns_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, bottom }
+        zone box dlgc.$i { from: dx + dw - 14, dy + dh - 14; size: 20, 20; cursor: nwse_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, bottom_right }
+        zone box dlgbl.$i { from: dx - 6, dy + dh - 14; size: 20, 20; cursor: nesw_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, bottom_left }
+        zone box dlgtl.$i { from: dx - 7, dy - 7; size: 14, 14; cursor: nwse_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, top_left }
+        zone box dlgtr.$i { from: dx + dw - 7, dy - 7; size: 14, 14; cursor: nesw_resize; active: dlg.rs; label: "Resize {win.$i.title}"; role: region; handle: i, top_right }
+        on press dlgl.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgr.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgb.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgc.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgbl.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgtl.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on press dlgtr.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.gw.$i = dlg.iw; dlg.gh.$i = dlg.ih; focus win.$i }
+        on drag dlgl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2 }
+        on drag dlgr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = dlg.gh.$i; dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2 }
+        on drag dlgb.$i { dlg.w.$i = dlg.gw.$i; dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
+        on drag dlgc.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
+        on drag dlgbl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i + drag.dy, 40); dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i + (dlg.h.$i - dlg.gh.$i) / 2 }
+        on drag dlgtl.$i { dlg.w.$i = max(dlg.gw.$i - drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = dlg.gx.$i - (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2 }
+        on drag dlgtr.$i { dlg.w.$i = max(dlg.gw.$i + drag.dx, 120); dlg.h.$i = max(dlg.gh.$i - drag.dy, 40); dlg.ox.$i = dlg.gx.$i + (dlg.w.$i - dlg.gw.$i) / 2; dlg.oy.$i = dlg.gy.$i - (dlg.h.$i - dlg.gh.$i) / 2 }
     }
 
     // The rain itself, in front of everything: streaks, slanted a little.

@@ -1336,8 +1336,12 @@ impl State {
                     // Floated by a rule, it is never a tile: a tile's size
                     // the scene asked before it knew (it heard of the window
                     // first, and of the rule a frame later) is not passed on.
+                    // Only until it has drawn: after that a size asked of it is
+                    // somebody stretching it by its edges, and it was dropped
+                    // too —the scene's box grew or shrank, the program never
+                    // heard, and its picture was cut or scaled—.
                     // Fullscreen it is the monitor's size it must be told.
-                    if win.dialog && win.ruled.is_some() && win.floating && !win.fullscreen && (w, h) != (0, 0) {
+                    if win.dialog && win.ruled.is_some() && win.floating && !win.fullscreen && (w, h) != (0, 0) && win.geometry[2] <= 0 {
                         if let Some(a) = self.asked.get_mut(slot) {
                             *a = Some((0, 0));
                         }
