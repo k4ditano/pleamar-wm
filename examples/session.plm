@@ -3624,28 +3624,49 @@ scene Session {
         // (Once it has drawn: until then it has no size, and it would be a
         // little empty box in the middle for as long as its program takes.)
         follow dlg.$i = if(win.$i.dialog and win.$i.open and dlg.ws and win.$i.width > 0.5, 1, 0)
+        //  Carried over another monitor, it is drawn there, under the mouse, held by where it was taken (on its own
+        //  monitor, the mouse it was carried by reads nothing true once it has left it, and it went up to the top
+        //  and waited there); let go, it stays there until the compositor says it has come (`dlg.to`).
+        fact dlg.hx.$i = 0
+        fact dlg.hy.$i = 0
+        fact dlg.car.$i = 0
+        fact dlg.to.$i = -1
+        on change win.$i.screen { dlg.to.$i = -1 }
+        let dlg.away = (dlg.car.$i > 0.5 and mon != win.$i.screen) or (dlg.to.$i >= 0 and win.$i.screen != dlg.to.$i)
+        let dlg.home = if(dlg.away, if(dlg.car.$i > 0.5, mon, dlg.to.$i), win.$i.screen)
+        let dlg.px = if(dlg.away and dlg.car.$i > 0.5, clamp(mouse.x - dlg.hx.$i - dw / 2, 0, max(W - dw, 0)), dx)
+        let dlg.py = if(dlg.away and dlg.car.$i > 0.5, clamp(mouse.y - dlg.hy.$i - dh / 2, 0, max(H - dh, 0)), dy)
         group {
-            show: dlg.$i > 0.01 and not win.$i.fullscreen and win.$i.screen == screen.index
+            show: dlg.$i > 0.01 and not win.$i.fullscreen and dlg.home == screen.index
             opacity: dlg.$i
-            pivot: dx + dw / 2, dy + dh / 2
+            pivot: dlg.px + dw / 2, dlg.py + dh / 2
             scale: 0.94 + 0.06 * dlg.$i
             body {
                 color: #0c0e10
                 shadow: 0, 18, 44, 55%
-                box { from: dx, dy; size: dw, dh; corner: 12 }
+                box { from: dlg.px, dlg.py; size: dw, dh; corner: 12 }
             }
             group {
-                clip box { from: dx, dy; size: dw, dh; corner: 12 }
-                box { from: dx, dy; size: dw, tb; color: #1d2b27; show: dlg.bar > 0 }
-                text win.$i.title { at: dx + 14, dy + tb / 2; anchor: left center; size: 12; weight: 500; width: max(dw - 40, 10); lines: 1; color: ink; show: dlg.bar > 0 }
-                window win.$i { at: dx, dy + dlg.bar; size: dlg.iw, dlg.ih; ask: dlg.w.$i, dlg.h.$i; show: win.$i.dialog and win.$i.open and win.$i.screen == screen.index and dlg.ws }
+                clip box { from: dlg.px, dlg.py; size: dw, dh; corner: 12 }
+                box { from: dlg.px, dlg.py; size: dw, tb; color: #1d2b27; show: dlg.bar > 0 }
+                text win.$i.title { at: dlg.px + 14, dlg.py + tb / 2; anchor: left center; size: 12; weight: 500; width: max(dw - 40, 10); lines: 1; color: ink; show: dlg.bar > 0 }
+                window win.$i { at: dlg.px, dlg.py + dlg.bar; size: dlg.iw, dlg.ih; ask: dlg.w.$i, dlg.h.$i; show: win.$i.dialog and win.$i.open and dlg.home == screen.index and dlg.ws }
             }
-            box { from: dx, dy; size: dw, dh; corner: 12; stroke: 1.5; color: mint; opacity: 70% * win.$i.focused }
+            box { from: dlg.px, dlg.py; size: dw, dh; corner: 12; stroke: 1.5; color: mint; opacity: 70% * win.$i.focused }
         }
         let dlg.all = keys.super > 0.5 or win.$i.held > 0.5
         zone box dlgz.$i { from: dx, dy; size: dw, if(dlg.all, dh, dlg.bar); cursor: move; active: dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and (dlg.bar > 0 or dlg.all); label: "Move {win.$i.title}"; role: region; handle: i }
-        on press dlgz.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; focus win.$i }
-        on drag dlgz.$i { dlg.ox.$i = clamp(dlg.gx.$i + drag.dx, -max(W - dw, 0) / 2, max(W - dw, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i + drag.dy, -max(H - dh, 0) / 2, max(H - dh, 0) / 2) }
+        on press dlgz.$i { dlg.gx.$i = dlg.ox.$i; dlg.gy.$i = dlg.oy.$i; dlg.hx.$i = pointer.x - (dx + dw / 2); dlg.hy.$i = pointer.y - (dy + dh / 2); dlg.car.$i = 1; dlg.to.$i = -1; focus win.$i }
+        on drag dlgz.$i while mon == win.$i.screen { dlg.ox.$i = clamp(dlg.gx.$i + drag.dx, -max(W - dw, 0) / 2, max(W - dw, 0) / 2); dlg.oy.$i = clamp(dlg.gy.$i + drag.dy, -max(H - dh, 0) / 2, max(H - dh, 0) / 2) }
+        //  Let go over another monitor, it goes there, where it was seen: the place it was held by under the mouse,
+        //  kept inside that monitor.
+        on release dlgz.$i { dlg.car.$i = 0 }
+        on release dlgz.$i while mon != win.$i.screen {
+            dlg.ox.$i = clamp(mouse.x - dlg.hx.$i - screen[mon].width / 2, -max(screen[mon].width - dw, 0) / 2, max(screen[mon].width - dw, 0) / 2)
+            dlg.oy.$i = clamp(mouse.y - dlg.hy.$i - screen[mon].height / 2, -max(screen[mon].height - dh, 0) / 2, max(screen[mon].height - dh, 0) / 2)
+            dlg.to.$i = mon
+            send win.$i to mon
+        }
         //  (After the strip's zone, so its ends are the edges'. A grow of d moves the middle d / 2. Not while Super is
         //  held: then all of it carries it, and a press that began a few pixels from an edge stretched it instead.)
         let dlg.rs = dlg.$i > 0.5 and not win.$i.fullscreen and win.$i.screen == screen.index and not overview and keys.super < 0.5
