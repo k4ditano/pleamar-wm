@@ -38,6 +38,12 @@ the open windows without closing anything.
 
 # What's new
 
+- **The window you lend an agent stays its own** (0.6.32): the pointer passing over
+  it (focus follows the mouse) and a key in that moment, or a modifier held for
+  Ctrl+wheel, no longer takes it back from the agent; a key takes it only after the
+  keyboard has been there 600 ms, and a click still does. And with two windows of
+  the same program (two Firefox windows, one lent to the agent), the agent typing in
+  its own no longer leaves yours without the keyboard.
 - **How a window looks is the scene's to say** (0.6.31): a window rule's `set
   NAME VALUE` reaches the scene as `win.$i.rule.NAME` (its own words: opacity,
   no shadow…), and `win.$i.translucent` says, with no rule, that a window may be
