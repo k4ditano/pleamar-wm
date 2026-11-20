@@ -1560,8 +1560,10 @@ impl State {
             }
         }
         keyboard.set_focus(self, before.clone(), SERIAL_COUNTER.next_serial());
-        // In again for the agent's keys, where it was.
-        if before.as_ref() != Some(&root) {
+        // In again for the agent's keys, where it was; not if your keyboard is on another window
+        // of the same program (it has one keyboard focus: yours would lose it).
+        let shares = before.as_ref().is_some_and(|b| b != &root && b.client().as_ref() == Some(&client));
+        if before.as_ref() != Some(&root) && !shares {
             for k in self.keyboard.client_keyboards(&client) {
                 k.enter(SERIAL_COUNTER.next_serial().into(), &root, Vec::new());
                 k.modifiers(SERIAL_COUNTER.next_serial().into(), 0, 0, 0, 0);
@@ -1672,8 +1674,14 @@ impl State {
             return;
         }
         let Some(client) = old.client() else { return };
+        // Your window, if it is one of the same program's: entered back, its keyboard is its again.
+        let yours = self.keyboard.current_focus().filter(|r| r.is_alive() && r.client().as_ref() == Some(&client));
         for k in self.keyboard.client_keyboards(&client) {
             k.leave(SERIAL_COUNTER.next_serial().into(), &old);
+            if let Some(r) = &yours {
+                k.enter(SERIAL_COUNTER.next_serial().into(), r, Vec::new());
+                k.modifiers(SERIAL_COUNTER.next_serial().into(), 0, 0, 0, 0);
+            }
         }
     }
 
@@ -2133,6 +2141,28 @@ impl State {
                 k.keymap(wl_keyboard::KeymapFormat::XkbV1, y.0.as_fd(), y.1);
             }
         }
+        // Another window of the same program has your keyboard (two Firefox windows, one lent to
+        // the agent): a program has one keyboard focus for all its windows, so the agent's window
+        // is left at once and yours entered back. Kept entered, your typing went into the agent's
+        // window and yours stayed without the keyboard.
+        if let Some(r) = real.as_ref().filter(|r| !mine && *r != &root && r.is_alive() && r.client().as_ref() == Some(&client)) {
+            for k in &keyboards {
+                k.leave(SERIAL_COUNTER.next_serial().into(), &root);
+                k.enter(SERIAL_COUNTER.next_serial().into(), r, Vec::new());
+                k.modifiers(SERIAL_COUNTER.next_serial().into(), 0, 0, 0, 0);
+            }
+            if self.focus != Some(slot) {
+                if let Some(w) = self.slots.get(slot).and_then(Option::as_ref) {
+                    w.toplevel.set_activated(false);
+                }
+            }
+            if let Some(a) = self.agent.as_mut() {
+                a.kb_entered = None;
+                a.kb_slot = None;
+                a.kb_real = real;
+            }
+            return Ok(());
+        }
         if let Some(a) = self.agent.as_mut() {
             a.kb_entered = (!mine).then(|| root.clone());
             a.kb_slot = (!mine).then_some(slot);
@@ -2401,6 +2431,21 @@ impl State {
             let _ = self.hand_take(Some(slot));
         }
     }
+}
+
+/// How long the keyboard must have been on a window before a key there is the
+/// person taking it over from an agent's hands. With focus following the mouse,
+/// the pointer passing over the agent's window gives it the keyboard for a moment,
+/// and a key then (or one held for Ctrl+wheel) took the window from the agent.
+pub const TAKE_AFTER: Duration = Duration::from_millis(600);
+
+/// Whether the person's key (evdev code) in the window with the keyboard takes it
+/// over from an agent: not a modifier alone, and not right after the keyboard got
+/// there. A click is always deliberate and takes it (nest.rs).
+pub fn person_takes_over(code: u32, focus_age: Duration) -> bool {
+    // Ctrl, Shift, Alt, AltGr, Super and Caps Lock, left and right.
+    const MODIFIERS: [u32; 9] = [29, 97, 42, 54, 56, 100, 125, 126, 58];
+    !MODIFIERS.contains(&code) && focus_age >= TAKE_AFTER
 }
 
 /// The process at the other end of the socket, if it is this user's.
@@ -2864,5 +2909,21 @@ mod tests {
         assert_eq!(super::look_picture(usize::MAX, &p, [0, 0, 1, 10], [0, 0, i32::MAX, i32::MAX], false, None).err(), Some("too-big"));
         let (small, d) = super::look_picture(usize::MAX, &p, [0, 0, 1, 10], [0, 0, 100, 10], false, Some([90, 0, 10, 10])).unwrap();
         assert_eq!((small.dimensions(), d), ((10, 10), 1.0));
+    }
+
+    #[test]
+    fn passing_over_a_window_does_not_take_it_from_the_agent() {
+        use super::{person_takes_over, TAKE_AFTER};
+        use std::time::Duration;
+        // A letter in a window that has had the keyboard a while: the person takes it over.
+        assert!(person_takes_over(30, Duration::from_secs(5)));
+        // The same letter right after the pointer passed over it and gave it the keyboard: not.
+        assert!(!person_takes_over(30, Duration::from_millis(80)));
+        assert!(!person_takes_over(30, TAKE_AFTER - Duration::from_millis(1)));
+        assert!(person_takes_over(30, TAKE_AFTER));
+        // A modifier alone (Ctrl held for Ctrl+wheel, Shift for sideways scrolling): never.
+        for m in [29, 97, 42, 54, 56, 100, 125, 126, 58] {
+            assert!(!person_takes_over(m, Duration::from_secs(60)), "modifier {m}");
+        }
     }
 }

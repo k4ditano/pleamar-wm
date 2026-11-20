@@ -714,6 +714,10 @@ struct State {
     /// stretched: until the button is let go.
     held: Option<usize>,
     focus: Option<usize>,
+    /// When the keyboard last went to another window: a key that comes right
+    /// after the pointer only passed over a window is not the person taking it
+    /// over from an agent (agent.rs, `person_takes_over`).
+    focus_at: Instant,
     /// The last new window given your keyboard, the one that had it before,
     /// and when: a dialog that says only afterwards whose it is (a portal's)
     /// gives it back if it is of the program the agent works with.
@@ -1050,6 +1054,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         kde_frames: std::collections::HashMap::new(),
         held: None,
         focus: None,
+        focus_at: Instant::now(),
         focus_given: None,
         on_screen: 0,
         host_focus: true,
@@ -1461,8 +1466,12 @@ impl State {
                 let Some(focus) = self.focus else {
                     return;
                 };
-                // The person's key where an agent's hands are: they take it over (hands.rs).
-                self.agent_person_touched(focus);
+                // The person's key where an agent's hands are: they take it over (hands.rs),
+                // unless it is only a modifier or the keyboard got there a moment ago by
+                // the pointer passing over it (focus follows the mouse).
+                if agent::person_takes_over(code, self.focus_at.elapsed()) {
+                    self.agent_person_touched(focus);
+                }
                 // The keyboard was on a program's surface: back to the windows.
                 if self.panel_keyboard.take().is_some() {
                     self.set_focus(self.focus);
@@ -2062,6 +2071,9 @@ impl State {
     fn set_focus(&mut self, slot: Option<usize>) {
         let before = self.focus;
         self.focus = slot.filter(|s| self.slots.get(*s).is_some_and(Option::is_some));
+        if self.focus != before {
+            self.focus_at = Instant::now();
+        }
         // Active: the one with your keyboard, and the one the agent types in
         // (agent.rs, `kb_slot`).
         let agent_typing = self.agent.as_ref().and_then(|a| a.kb_slot);
