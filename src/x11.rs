@@ -15,10 +15,128 @@ use smithay::wayland::selection::data_device::{clear_data_device_selection, curr
 use smithay::wayland::selection::primary_selection::{clear_primary_selection, current_primary_selection_userdata, request_primary_client_selection, set_primary_selection};
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
-use smithay::xwayland::xwm::{Reorder, ResizeEdge, WmWindowProperty, X11Window, XwmId};
+use smithay::xwayland::xwm::{Reorder, ResizeEdge, WmWindowProperty, WmWindowType, X11Window, XwmId};
 use smithay::xwayland::{X11Surface, X11Wm, XWayland, XWaylandEvent, XwmHandler};
 
+/// How long XWayland waits for the card to be offered to programs before it
+/// starts without it (it is usually there in a tenth of a second).
+pub(super) const CARD_PATIENCE: Duration = Duration::from_secs(3);
+
+/// How many lines of what XWayland says (its errors: glamor, EGL, the card)
+/// go to the session's log, and how long each may be.
+const XWAYLAND_LINES: usize = 200;
+const XWAYLAND_LINE: usize = 300;
+
+/// The monitor a rectangle of X11 covers whole (`x, y, w, h`), of those given
+/// as `x, y, w, h` in units and `w, h` in pixels: of its size, at its corner,
+/// or at 0,0 (an X11 window here keeps its own place on the desktop, and a
+/// game going fullscreen asks for 0,0).
+pub(super) fn covers(r: (i32, i32, i32, i32), monitors: &[(i32, i32, i32, i32, i32, i32)]) -> Option<usize> {
+    let sized = |m: &(i32, i32, i32, i32, i32, i32)| (r.2, r.3) == (m.2, m.3) || (r.2, r.3) == (m.4, m.5);
+    monitors.iter().position(|m| sized(m) && (r.0, r.1) == (m.0, m.1)).or_else(|| if (r.0, r.1) == (0, 0) { monitors.iter().position(sized) } else { None })
+}
+
 impl State {
+    /// XWayland, once the card is offered to programs (see `x_deferred`);
+    /// what is launched meanwhile waits for it, as while it starts.
+    pub(super) fn want_xwayland(&mut self) {
+        if std::env::var_os("PLEAMAR_WM_NO_X11").is_some() {
+            return;
+        }
+        self.x_starting = true;
+        self.x_deferred = Some(Instant::now());
+    }
+
+    /// XWayland started now, if it was waiting.
+    pub(super) fn xwayland_due(&mut self, why: &str) {
+        let Some(since) = self.x_deferred.take() else { return };
+        println!("windows · XWayland starts after {} ms: {why}", since.elapsed().as_millis());
+        self.start_xwayland();
+    }
+
+    /// The monitors as `covers` takes them.
+    fn monitor_rects(&self) -> Vec<(i32, i32, i32, i32, i32, i32)> {
+        (0..self.outputs.len())
+            .map(|k| {
+                let at = self.outputs[k].current_location();
+                let (pw, ph) = self.monitor_pixels(k);
+                let s = self.scale_of(k).max(0.1);
+                (at.x, at.y, (pw as f64 / s).round() as i32, (ph as f64 / s).round() as i32, pw, ph)
+            })
+            .collect()
+    }
+
+    /// Whether an X11 window may be taken for fullscreen because it covers a
+    /// monitor: a normal one (not a menu, dialog or splash, not maximized),
+    /// and its program not ruled `fullscreen=never`.
+    fn x11_may_cover(&self, x: &X11Surface) -> bool {
+        !x.is_maximized()
+            && x.is_transient_for().is_none()
+            && !x.is_popup()
+            && matches!(x.window_type(), None | Some(WmWindowType::Normal))
+            && crate::config::get().for_window(&x.class(), &x.title()).fullscreen != Some(false)
+    }
+
+    /// Fullscreen as it enters its slot: `Some(false)` it is or asked to be
+    /// (`_NET_WM_STATE`), `Some(true)` it covers a monitor without saying so.
+    pub(super) fn x11_full_at_map(&mut self, x: &X11Surface) -> Option<bool> {
+        let asked = self.x11_fs_asked.contains(x);
+        self.x11_fs_asked.retain(|w| w != x);
+        if asked || x.is_fullscreen() {
+            return Some(false);
+        }
+        let g = x.geometry();
+        (self.x11_may_cover(x) && covers((g.loc.x, g.loc.y, g.size.w, g.size.h), &self.monitor_rects()).is_some()).then_some(true)
+    }
+
+    /// A window in a slot asked for a size: the whole monitor (a Proton game
+    /// going fullscreen without `_NET_WM_STATE`) makes it fullscreen; smaller,
+    /// it is no longer, if it was only for that.
+    fn x11_asked_size(&mut self, slot: usize, x: &X11Surface, r: (i32, i32, i32, i32)) {
+        let Some(w) = self.slots[slot].as_ref() else { return };
+        let (full, auto) = (w.fullscreen, w.auto_full);
+        let covering = self.x11_may_cover(x) && covers(r, &self.monitor_rects()).is_some();
+        if covering && !full {
+            println!("windows · {} «{}» covers a monitor: fullscreen", x.class(), x.title());
+            self.set_fullscreen(slot, true);
+            if let Some(Some(w)) = self.slots.get_mut(slot) {
+                w.auto_full = true;
+            }
+        } else if !covering && full && auto {
+            println!("windows · {} «{}» no longer covers a monitor: not fullscreen", x.class(), x.title());
+            self.set_fullscreen(slot, false);
+        }
+    }
+
+    /// The monitors X11 windows that place themselves (override-redirect)
+    /// cover whole: fullscreen there (bars step aside), and so the window
+    /// they belong to for the scene (`win.$i.fullscreen`).
+    fn x11_recheck_covering(&mut self) {
+        let rects = self.monitor_rects();
+        let now: Vec<(usize, Option<usize>)> = self
+            .unmanaged
+            .iter()
+            .filter(|x| crate::config::get().for_window(&x.class(), &x.title()).fullscreen != Some(false))
+            .filter_map(|x| {
+                let g = x.geometry();
+                covers((g.loc.x, g.loc.y, g.size.w, g.size.h), &rects).map(|m| (m, self.unmanaged_owner(x)))
+            })
+            .collect();
+        if now == self.x11_or_full {
+            return;
+        }
+        let owners = |v: &[(usize, Option<usize>)]| v.iter().filter_map(|(_, o)| *o).collect::<Vec<_>>();
+        let (before, after) = (owners(&self.x11_or_full), owners(&now));
+        self.x11_or_full = now;
+        for (slot, yes) in before.iter().filter(|o| !after.contains(o)).map(|o| (*o, false)).chain(after.iter().filter(|o| !before.contains(o)).map(|o| (*o, true))) {
+            // (One fullscreen of its own already says so.)
+            if self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| !w.fullscreen) {
+                self.tell(NestEvent::Fullscreen(slot, yes));
+            }
+        }
+        self.tell_fullscreen();
+    }
+
     /// XWayland started, if it is there and not turned off
     /// (`PLEAMAR_WM_NO_X11`). Programs started meanwhile wait for it (see
     /// `x_starting`), so that an X11 one in the autostart finds its display.
@@ -26,7 +144,28 @@ impl State {
         if std::env::var_os("PLEAMAR_WM_NO_X11").is_some() {
             return;
         }
-        let spawned = XWayland::spawn(&self.dh, None, std::iter::empty::<(String, String)>(), true, std::process::Stdio::null(), std::process::Stdio::null(), |_| ());
+        // What it says goes to the log, a few lines: why it could not use the
+        // card, if it could not, was nowhere to be read.
+        let said: std::process::Stdio = match std::io::pipe() {
+            Ok((reader, writer)) => {
+                let _ = std::thread::Builder::new().name("xwayland-said".into()).spawn(move || {
+                    use std::io::BufRead;
+                    for (n, line) in std::io::BufReader::new(reader).lines().map_while(Result::ok).enumerate() {
+                        if n == XWAYLAND_LINES {
+                            println!("xwayland · (what else it says is not kept)");
+                        }
+                        if n >= XWAYLAND_LINES {
+                            continue;
+                        }
+                        let cut = line.char_indices().nth(XWAYLAND_LINE).map_or(line.len(), |(i, _)| i);
+                        println!("xwayland · {}", &line[..cut]);
+                    }
+                });
+                writer.into()
+            }
+            Err(_) => std::process::Stdio::null(),
+        };
+        let spawned = XWayland::spawn(&self.dh, None, std::iter::empty::<(String, String)>(), true, std::process::Stdio::null(), said, |_| ());
         let (xwayland, client) = match spawned {
             Ok(x) => x,
             Err(e) => {
@@ -127,9 +266,11 @@ impl State {
 
     fn let_go(&mut self, window: &X11Surface) {
         self.x11_pending.retain(|w| w != window);
+        self.x11_fs_asked.retain(|w| w != window);
         if window.is_override_redirect() {
             self.dirty_owner_of(window);
             self.unmanaged.retain(|w| w != window);
+            self.x11_recheck_covering();
         } else {
             self.forget(&Toplevel::X11(window.clone()));
         }
@@ -156,6 +297,7 @@ impl XwmHandler for State {
             self.unmanaged.push(window.clone());
         }
         self.dirty_owner_of(&window);
+        self.x11_recheck_covering();
     }
 
     fn unmapped_window(&mut self, _: XwmId, window: X11Surface) {
@@ -173,6 +315,9 @@ impl XwmHandler for State {
     /// a slot, the one it asks for.
     fn configure_request(&mut self, _: XwmId, window: X11Surface, x: Option<i32>, y: Option<i32>, w: Option<u32>, h: Option<u32>, _: Option<Reorder>) {
         let mut g = window.geometry();
+        if let (Some(slot), Some(rw), Some(rh)) = (self.x11_slot(&window), w, h) {
+            self.x11_asked_size(slot, &window, (x.unwrap_or(g.loc.x), y.unwrap_or(g.loc.y), rw as i32, rh as i32));
+        }
         if self.x11_slot(&window).is_none() {
             if let Some(x) = x {
                 g.loc.x = x;
@@ -193,6 +338,7 @@ impl XwmHandler for State {
     fn configure_notify(&mut self, _: XwmId, window: X11Surface, _: smithay::utils::Rectangle<i32, Logical>, _: Option<X11Window>) {
         if window.is_override_redirect() {
             self.dirty_owner_of(&window);
+            self.x11_recheck_covering();
         }
     }
 
@@ -208,6 +354,9 @@ impl XwmHandler for State {
     fn fullscreen_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
             self.set_fullscreen(slot, true);
+        } else if !self.x11_fs_asked.contains(&window) {
+            // Asked before it has a slot: it gets it when it has one.
+            self.x11_fs_asked.push(window);
         }
     }
 
@@ -236,6 +385,8 @@ impl XwmHandler for State {
     fn unfullscreen_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
             self.set_fullscreen(slot, false);
+        } else {
+            self.x11_fs_asked.retain(|w| w != &window);
         }
     }
 
@@ -364,3 +515,23 @@ pub(super) fn wayland_pastes(state: &mut State, ty: SelectionTarget, mime_type: 
 }
 
 smithay::delegate_xwayland_shell!(State);
+
+#[cfg(test)]
+mod tests {
+    use super::covers;
+
+    // One 1920×1080 monitor at 0,0 and a 2560×1440 one at scale 2 to its right.
+    const MONITORS: [(i32, i32, i32, i32, i32, i32); 2] = [(0, 0, 1920, 1080, 1920, 1080), (1920, 0, 1280, 720, 2560, 1440)];
+
+    #[test]
+    fn a_window_covering_a_monitor_is_told_from_a_big_one() {
+        assert_eq!(covers((0, 0, 1920, 1080), &MONITORS), Some(0), "a game at 0,0 the size of the monitor");
+        assert_eq!(covers((1920, 0, 2560, 1440), &MONITORS), Some(1), "in pixels, at its corner");
+        assert_eq!(covers((1920, 0, 1280, 720), &MONITORS), Some(1), "in units");
+        assert_eq!(covers((0, 0, 1280, 720), &MONITORS), Some(1), "at 0,0, the size of another monitor");
+        assert_eq!(covers((0, 0, 1904, 929), &MONITORS), None, "a window, however big");
+        assert_eq!(covers((0, 32, 1920, 1048), &MONITORS), None, "maximized under a bar");
+        assert_eq!(covers((100, 0, 1920, 1080), &MONITORS), None, "the size, somewhere else");
+        assert_eq!(covers((0, 0, 1920, 1080), &[]), None);
+    }
+}

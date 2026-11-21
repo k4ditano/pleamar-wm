@@ -320,6 +320,10 @@ pub struct WindowRule {
     /// `set NAME VALUE`: a value for the scene, `win.$i.rule.NAME`. The
     /// compositor does nothing with it: the words and what they mean are the scene's.
     pub set: Vec<(String, f32)>,
+    /// `fullscreen=never`: an X11 window of it is not taken for fullscreen
+    /// because it covers a monitor without saying so (`fullscreen=auto`, the
+    /// default: it is).
+    pub fullscreen: Option<bool>,
 }
 
 /// What the rules say for a window: float, size, monitor, workspace, private, frame.
@@ -334,6 +338,8 @@ pub struct ForWindow {
     pub frame: Option<bool>,
     /// The scene's values (`set NAME VALUE`), each name once: the last rule that says it.
     pub set: Vec<(String, f32)>,
+    /// Some(false): `fullscreen=never` (see `WindowRule::fullscreen`).
+    pub fullscreen: Option<bool>,
 }
 
 /// A name for `set`: what the scene reads as `win.$i.rule.NAME`, so a word of the language.
@@ -387,6 +393,7 @@ impl Config {
             out.monitor = r.monitor.clone().or(out.monitor);
             out.workspace = r.workspace.or(out.workspace);
             out.frame = r.frame.or(out.frame);
+            out.fullscreen = r.fullscreen.or(out.fullscreen);
             for (name, v) in &r.set {
                 out.set.retain(|(n, _)| n != name);
                 out.set.push((name.clone(), *v));
@@ -738,6 +745,13 @@ pub fn parse(text: &str, c: &mut Config) {
                             _ => None,
                         };
                         ok &= r.frame.is_some();
+                    } else if let Some(v) = w.strip_prefix("fullscreen=") {
+                        r.fullscreen = match v {
+                            "auto" => Some(true),
+                            "never" => Some(false),
+                            _ => None,
+                        };
+                        ok &= r.fullscreen.is_some();
                     } else if w == "size" {
                         r.size = rest.get(k + 1).and_then(|s| s.split_once('x')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
                         ok &= r.size.is_some();
@@ -766,7 +780,7 @@ pub fn parse(text: &str, c: &mut Config) {
                 if ok && (r.app.is_some() || r.title.is_some()) {
                     c.windows.push(r);
                 } else {
-                    eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private] [frame=own|ours] [set NAME VALUE]…`, NAME a word (letters, digits, _) and VALUE a number, N% or on/off", n + 1);
+                    eprintln!("config · line {}: a window rule is `window app=NAME|title=TEXT [float] [size WxH] [monitor N|NAME] [workspace N] [private] [frame=own|ours] [fullscreen=auto|never] [set NAME VALUE]…`, NAME a word (letters, digits, _) and VALUE a number, N% or on/off", n + 1);
                 }
             }
             "layout" => match rest {
@@ -1118,6 +1132,10 @@ mod tests {
         assert_eq!(c.for_window("zen", "Inicio").frame, Some(false));
         assert_eq!(c.for_window("cA", "sh").frame, Some(true));
         assert_eq!(c.for_window("kitty", "zsh").frame, None, "an unknown frame word is no rule");
+        parse("window app=steam_app_* fullscreen=never\nwindow app=mpv fullscreen=auto\nwindow app=foot fullscreen=yes", &mut c);
+        assert_eq!(c.for_window("steam_app_123", "Rune Dice").fullscreen, Some(false));
+        assert_eq!(c.for_window("mpv", "film").fullscreen, Some(true));
+        assert_eq!(c.for_window("foot", "~").fullscreen, None, "an unknown fullscreen word is no rule");
     }
 
     #[test]

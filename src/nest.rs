@@ -308,6 +308,9 @@ struct Window {
     /// Its entry in ext-foreign-toplevel-list (what a screen share lists).
     listed: ForeignToplevelHandle,
     fullscreen: bool,
+    /// Fullscreen because it covered a monitor (an X11 game that does not
+    /// say so), not because it asked: back when it asks for a smaller size.
+    auto_full: bool,
     /// A dialog floats: it is not in the layout's order.
     dialog: bool,
     /// A rule says it floats (`window app=… float`): as a dialog does.
@@ -827,6 +830,15 @@ struct State {
     /// launched waits for it.
     x_display: Option<String>,
     x_starting: bool,
+    /// Since when XWayland waits for the card to be offered to programs
+    /// (dmabuf, linux-drm-syncobj) before it starts: started before them, it
+    /// draws without the card (no DRI3, GL in software) for the whole session.
+    x_deferred: Option<Instant>,
+    /// X11 windows that asked for fullscreen before they had a slot.
+    x11_fs_asked: Vec<X11Surface>,
+    /// Monitors an X11 menu-less window (override-redirect) covers whole,
+    /// and the window it belongs to: fullscreen there, as a game's.
+    x11_or_full: Vec<(usize, Option<usize>)>,
     xwm: Option<X11Wm>,
     xwayland_shell: XWaylandShellState,
     /// X11 windows mapped whose surface has not arrived yet.
@@ -1077,6 +1089,9 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         socket: socket.clone(),
         x_display: None,
         x_starting: false,
+        x_deferred: None,
+        x11_fs_asked: Vec::new(),
+        x11_or_full: Vec::new(),
         xwm: None,
         xwayland_shell: XWaylandShellState::new::<State>(&dh),
         x11_pending: Vec::new(),
@@ -1101,7 +1116,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
     }
     agent::start(&mut state);
     crate::a11y::start(&state.socket);
-    state.start_xwayland();
+    state.want_xwayland();
     state.export_environment();
     println!("windows · programs connect at WAYLAND_DISPLAY={socket}");
     // And so do the ones the scene's logic starts (a screenshot, an app from
@@ -1213,6 +1228,9 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         state.prune_menus();
         state.prune_inhibitors();
         state.compose_dirty();
+        if state.x_deferred.is_some_and(|t| t.elapsed() > x11::CARD_PATIENCE) {
+            state.xwayland_due("the card was not offered in time: X11 programs will draw without it (no DRI3)");
+        }
         let x_ready = !state.x_starting || state.start.elapsed() > Duration::from_secs(5);
         if !state.autostart.is_empty() && x_ready && (state.dmabuf_global.is_some() || state.start.elapsed() > Duration::from_secs(3)) {
             for line in std::mem::take(&mut state.autostart) {
@@ -1634,6 +1652,8 @@ impl State {
                     }
                     Err(e) => eprintln!("windows · no frames on the card: {e}"),
                 }
+                // Now XWayland finds them when it starts (see `x_deferred`).
+                self.xwayland_due("the card is offered to programs");
             }
             ToNest::Released(numbers) => self.release(numbers),
             ToNest::Picked(what) => crate::portal::picked(what),
@@ -1940,6 +1960,7 @@ impl State {
     /// told which have one.
     fn set_fullscreen(&mut self, slot: usize, yes: bool) {
         let Some(Some(w)) = self.slots.get_mut(slot) else { return };
+        w.auto_full = false;
         if w.fullscreen == yes {
             return;
         }
@@ -1959,6 +1980,11 @@ impl State {
         let mut on = vec![false; self.outputs.len()];
         for w in self.slots.iter().flatten().filter(|w| w.fullscreen) {
             if let Some(o) = on.get_mut(w.screen) {
+                *o = true;
+            }
+        }
+        for (m, _) in &self.x11_or_full {
+            if let Some(o) = on.get_mut(*m) {
                 *o = true;
             }
         }
@@ -3267,6 +3293,12 @@ impl State {
         // sides, so it does not draw a shadow or round corners of its own: the
         // scene decides how it looks.
         let size = self.asked[slot];
+        // An X11 one that is fullscreen already, asked before it had a slot,
+        // or covers a monitor (a game): before the scene's size replaces its own.
+        let x11_full = match &toplevel {
+            Toplevel::X11(x) => self.x11_full_at_map(x),
+            Toplevel::Xdg(_) => None,
+        };
         match &toplevel {
             Toplevel::Xdg(t) => t.with_pending_state(|s| {
                 // `0 × 0` is «the one it chooses», not 1 × 1 (which froze browsers).
@@ -3283,7 +3315,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, translucent: false, rules: Vec::new(), was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, auto_full: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, translucent: false, rules: Vec::new(), was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -3298,6 +3330,14 @@ impl State {
         }
         self.tell(NestEvent::Order(self.order.clone()));
         self.apply_rules(slot);
+        if let Some(auto) = x11_full {
+            let (app, title) = self.slots[slot].as_ref().map_or((String::new(), String::new()), |w| (w.app.clone(), w.title.clone()));
+            println!("windows · {app} «{title}» opens fullscreen{}", if auto { " (it covers a monitor)" } else { "" });
+            self.set_fullscreen(slot, true);
+            if let Some(Some(w)) = self.slots.get_mut(slot) {
+                w.auto_full = auto;
+            }
+        }
         for m in self.toplevel_managers.clone() {
             self.announce(&m, slot);
         }

@@ -38,6 +38,15 @@ the open windows without closing anything.
 
 # What's new
 
+- **X11 games draw on the graphics card, and fullscreen is seen** (0.6.33): XWayland
+  started before the card was offered to programs, so it ran without it (no DRI3,
+  GL in software) and games through Proton were stuck around 20 fps. It now starts
+  once the card is there (3 s at most), and what it says goes to the session's log
+  (`xwayland ·`). An X11 window that covers a whole monitor without saying it is
+  fullscreen (a Proton game), that was fullscreen before it opened, or that asked
+  for it too soon, is now fullscreen, so bars and docks step aside;
+  `window app=NAME fullscreen=never` turns that off for a program.
+
 - **The window you lend an agent stays its own** (0.6.32): the pointer passing over
   it (focus follows the mouse) and a key in that moment, or a modifier held for
   Ctrl+wheel, no longer takes it back from the agent; a key takes it only after the
@@ -551,6 +560,7 @@ window app=discord workspace 3 monitor 1
 window title="Picture in Picture" float     # `*` for anything: app=org.gnome.*
 window app=org.keepassxc.KeePassXC private  # pixelated when a whole screen is shared
 window app=zen frame=own                    # it draws its own title bar (its tabs up there)
+window app=steam_app_* fullscreen=never     # an X11 window covering a monitor is not taken for fullscreen
 window app=com.mitchellh.ghostty set opacity 0.9 set glass on  # values for the scene: win.$i.rule.opacity, win.$i.rule.glass
 terminals off                               # the terminals' shells as they are (see below)
 ```
