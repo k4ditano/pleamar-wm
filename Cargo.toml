@@ -28,6 +28,9 @@ libc = "0.2"
 vt100 = "0.18"
 # `pleamar-wm link mcp` (the MCP protocol) and `link setup` (an agent's settings): JSON.
 serde_json = { version = "1", features = ["preserve_order"] }
+# X11 programs' keyboard focus (x11.rs, `XFocus`): the window manager's own
+# connection to XWayland (smithay's) only sets it for its own keyboard targets.
+x11rb = { version = "0.13", default-features = false }
 # The checksums of a zip of files sent to the remote page.
 crc32fast = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

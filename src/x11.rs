@@ -36,7 +36,146 @@ pub(super) fn covers(r: (i32, i32, i32, i32), monitors: &[(i32, i32, i32, i32, i
     monitors.iter().position(|m| sized(m) && (r.0, r.1) == (m.0, m.1)).or_else(|| if (r.0, r.1) == (0, 0) { monitors.iter().position(sized) } else { None })
 }
 
+/// What X11's focus is told for a window, by its `WM_HINTS` input field
+/// (`None`: no hints, as Wine's) and whether it takes `WM_TAKE_FOCUS`:
+/// (`SetInputFocus`, `WM_TAKE_FOCUS`), as ICCCM 4.1.7 has it.
+pub(super) fn x_focus_plan(input: Option<bool>, takes_focus: bool) -> (bool, bool) {
+    // No hints is input true (Wine sets none); WM_TAKE_FOCUS whenever it takes it.
+    (input.unwrap_or(true), takes_focus)
+}
+
+/// X11's keyboard focus, to a window or to nobody, on XWayland's display.
+pub(super) struct XFocus {
+    display: String,
+    window: Option<u32>,
+    input: Option<bool>,
+}
+
+/// Where X11's focus goes, told on a thread of its own with a connection of
+/// its own: the windows' loop never waits for XWayland. `None`: no thread.
+fn x_focus_sender() -> Option<&'static Mutex<std::sync::mpsc::SyncSender<XFocus>>> {
+    static SENDER: std::sync::OnceLock<Option<Mutex<std::sync::mpsc::SyncSender<XFocus>>>> = std::sync::OnceLock::new();
+    SENDER
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(32);
+            match std::thread::Builder::new().name("x11-focus".into()).spawn(move || x_focus_loop(rx)) {
+                Ok(_) => Some(Mutex::new(tx)),
+                Err(e) => {
+                    eprintln!("windows · X11 focus: no thread for it ({e}): X11 windows get keys under the pointer only");
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+struct XFocusConn {
+    display: String,
+    conn: x11rb::rust_connection::RustConnection,
+    root: u32,
+    protocols: u32,
+    take_focus: u32,
+    active: u32,
+}
+
+fn x_focus_open(display: &str) -> Result<XFocusConn, Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    let (conn, screen) = x11rb::connect(Some(display))?;
+    let root = conn.setup().roots.get(screen).ok_or("no screen")?.root;
+    let atom = |name: &[u8]| -> Result<u32, Box<dyn std::error::Error>> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
+    let (protocols, take_focus, active) = (atom(b"WM_PROTOCOLS")?, atom(b"WM_TAKE_FOCUS")?, atom(b"_NET_ACTIVE_WINDOW")?);
+    Ok(XFocusConn { display: display.to_owned(), conn, root, protocols, take_focus, active })
+}
+
+fn x_focus_apply(c: &XFocusConn, f: &XFocus) -> Result<(), Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, InputFocus, PropMode};
+    use x11rb::wrapper::ConnectionExt as _;
+    match f.window {
+        Some(w) => {
+            // (A window already gone answers with an error: it takes nothing.)
+            let takes = c.conn.get_property(false, w, c.protocols, AtomEnum::ATOM, 0, 64)?.reply().ok().and_then(|r| r.value32().map(|mut v| v.any(|a| a == c.take_focus))).unwrap_or(false);
+            let (set, take) = x_focus_plan(f.input, takes);
+            if set {
+                c.conn.set_input_focus(InputFocus::NONE, w, x11rb::CURRENT_TIME)?.ignore_error();
+            }
+            if take {
+                let event = ClientMessageEvent::new(32, w, c.protocols, [c.take_focus, x11rb::CURRENT_TIME, 0, 0, 0]);
+                c.conn.send_event(false, w, EventMask::NO_EVENT, event)?.ignore_error();
+            }
+            c.conn.change_property32(PropMode::REPLACE, c.root, c.active, AtomEnum::WINDOW, &[w])?.ignore_error();
+        }
+        None => {
+            c.conn.set_input_focus(InputFocus::NONE, x11rb::NONE, x11rb::CURRENT_TIME)?.ignore_error();
+            c.conn.change_property32(PropMode::REPLACE, c.root, c.active, AtomEnum::WINDOW, &[x11rb::NONE])?.ignore_error();
+        }
+    }
+    c.conn.flush()?;
+    Ok(())
+}
+
+fn x_focus_loop(rx: std::sync::mpsc::Receiver<XFocus>) {
+    let mut conn: Option<XFocusConn> = None;
+    let mut failed: Option<String> = None;
+    while let Ok(mut f) = rx.recv() {
+        // Only where it goes last matters.
+        while let Ok(next) = rx.try_recv() {
+            f = next;
+        }
+        if conn.as_ref().is_some_and(|c| c.display != f.display) {
+            conn = None;
+        }
+        if conn.is_none() {
+            match x_focus_open(&f.display) {
+                Ok(c) => {
+                    conn = Some(c);
+                    failed = None;
+                }
+                Err(e) => {
+                    if failed.as_deref() != Some(f.display.as_str()) {
+                        eprintln!("windows · X11 focus: no connection to {} ({e}): X11 windows get keys under the pointer only", f.display);
+                        failed = Some(f.display.clone());
+                    }
+                    continue;
+                }
+            }
+        }
+        if let Some(c) = conn.as_ref() {
+            if let Err(e) = x_focus_apply(c, &f) {
+                eprintln!("windows · X11 focus: {e} (connecting again next time)");
+                conn = None;
+            }
+        }
+    }
+}
+
 impl State {
+    /// X11's focus, with the keyboard: to the X11 window in a slot that has it,
+    /// or to nobody when a Wayland window, a program's surface or nobody has
+    /// it. Without it X11's stayed «under the pointer», and Wine (Proton's
+    /// games) took that for not being in front: its keys went nowhere.
+    pub(super) fn x_focus_to(&mut self, slot: Option<usize>) {
+        let Some(display) = self.x_display.clone() else {
+            self.x_focused = None;
+            return;
+        };
+        let target = slot.and_then(|s| self.slots.get(s)).and_then(Option::as_ref).and_then(|w| match &w.toplevel {
+            Toplevel::X11(x) if !x.is_override_redirect() => Some((x.window_id(), x.hints().and_then(|h| h.input))),
+            _ => None,
+        });
+        let window = target.map(|t| t.0);
+        if self.x_focused == Some(window) {
+            return;
+        }
+        let Some(tx) = x_focus_sender() else { return };
+        let told = tx.lock().unwrap().try_send(XFocus { display, window, input: target.and_then(|t| t.1) });
+        match told {
+            Ok(()) => self.x_focused = Some(window),
+            Err(_) => eprintln!("windows · X11 focus: not told (its thread is busy or gone)"),
+        }
+    }
+
     /// XWayland, once the card is offered to programs (see `x_deferred`);
     /// what is launched meanwhile waits for it, as while it starts.
     pub(super) fn want_xwayland(&mut self) {
@@ -475,6 +614,7 @@ impl XwmHandler for State {
         println!("windows · XWayland is gone");
         self.xwm = None;
         self.x_display = None;
+        self.x_focused = None;
         pleamar::set_child_env("DISPLAY", None);
     }
 }
@@ -518,7 +658,17 @@ smithay::delegate_xwayland_shell!(State);
 
 #[cfg(test)]
 mod tests {
-    use super::covers;
+    use super::{covers, x_focus_plan};
+
+    #[test]
+    fn x11_focus_follows_what_the_window_says() {
+        assert_eq!(x_focus_plan(None, false), (true, false), "no hints (Wine): focus set");
+        assert_eq!(x_focus_plan(None, true), (true, true), "no hints, takes focus: both");
+        assert_eq!(x_focus_plan(Some(true), false), (true, false), "passive");
+        assert_eq!(x_focus_plan(Some(true), true), (true, true), "locally active");
+        assert_eq!(x_focus_plan(Some(false), true), (false, true), "globally active: only WM_TAKE_FOCUS");
+        assert_eq!(x_focus_plan(Some(false), false), (false, false), "no input: nothing");
+    }
 
     // One 1920×1080 monitor at 0,0 and a 2560×1440 one at scale 2 to its right.
     const MONITORS: [(i32, i32, i32, i32, i32, i32); 2] = [(0, 0, 1920, 1080, 1920, 1080), (1920, 0, 1280, 720, 2560, 1440)];

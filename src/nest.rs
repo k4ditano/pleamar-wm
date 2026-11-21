@@ -834,6 +834,9 @@ struct State {
     /// (dmabuf, linux-drm-syncobj) before it starts: started before them, it
     /// draws without the card (no DRI3, GL in software) for the whole session.
     x_deferred: Option<Instant>,
+    /// The X11 window X11's focus was last told to go to (`Some(None)`:
+    /// nobody; `None`: not told yet), see `x_focus_to`.
+    x_focused: Option<Option<u32>>,
     /// X11 windows that asked for fullscreen before they had a slot.
     x11_fs_asked: Vec<X11Surface>,
     /// Monitors an X11 menu-less window (override-redirect) covers whole,
@@ -1090,6 +1093,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         x_display: None,
         x_starting: false,
         x_deferred: None,
+        x_focused: None,
         x11_fs_asked: Vec::new(),
         x11_or_full: Vec::new(),
         xwm: None,
@@ -1508,6 +1512,7 @@ impl State {
                 let target = if yes { self.focus.and_then(|s| self.slots[s].as_ref()).map(|w| w.surface.clone()) } else { None };
                 let k = self.keyboard.clone();
                 k.set_focus(self, target, serial);
+                self.x_focus_to(if yes { self.focus } else { None });
             }
             // The scene gives the keyboard to the window the pointer is over. A
             // window of the program the agent is working with this moment, while
@@ -2118,6 +2123,8 @@ impl State {
         let to_window = target.is_some();
         let k = self.keyboard.clone();
         k.set_focus(self, target, SERIAL_COUNTER.next_serial());
+        // And X11's, the same one (or nobody).
+        self.x_focus_to(if self.host_focus { self.focus } else { None });
         // A window has the keyboard now, not the program's surface that took
         // it when it was clicked (Marea's box): neither this side nor the
         // route (`key_client`) may go on thinking it is hers. Left so, the next
@@ -2606,6 +2613,7 @@ impl State {
                     self.exclusive_keyboard = false;
                     let k = self.keyboard.clone();
                     k.set_focus(self, Some(surface), serial);
+                    self.x_focus_to(None);
                 }
                 let k = self.keyboard.clone();
                 let state = if down { smithay::backend::input::KeyState::Pressed } else { smithay::backend::input::KeyState::Released };

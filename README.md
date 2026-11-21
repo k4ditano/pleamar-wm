@@ -46,6 +46,10 @@ the open windows without closing anything.
   fullscreen (a Proton game), that was fullscreen before it opened, or that asked
   for it too soon, is now fullscreen, so bars and docks step aside;
   `window app=NAME fullscreen=never` turns that off for a program.
+  And an X11 window with the keyboard now has X11's focus too (`SetInputFocus`, or
+  `WM_TAKE_FOCUS` as the window asks), and nobody has it when a Wayland window does:
+  Proton games took X11's «focus under the pointer» for not being in front, and
+  their keys went nowhere.
 
 - **The window you lend an agent stays its own** (0.6.32): the pointer passing over
   it (focus follows the mouse) and a key in that moment, or a modifier held for
