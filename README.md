@@ -38,6 +38,13 @@ the open windows without closing anything.
 
 # What's new
 
+- **Closing a window gives the keyboard to the one you used last** (0.6.35): with a terminal
+  maximized under a program that you close (Telegram over a terminal, with a browser below
+  both), the keyboard went to the first window of the layout's order, which could be the
+  browser, and that is what the scene then showed. It now goes back to the window that had
+  the keyboard last and is seen on that monitor; a window that opened the one closed (a
+  «Save as» dialog) or one fullscreen still comes first, and putting a window away does the
+  same. Without a history (a window never used) it is the order, as before.
 - **Two things the session scene learns** (0.6.34): `pleamar-wm --say wm "emit layout_set N"`
   gives the monitor under the mouse a layout by its number (0 leader, 1 columns, 2 rows,
   3 grid, 4 leader-right, 5 scrolling, 6 marea, 7 fractal, 8 free), which is how Marea's

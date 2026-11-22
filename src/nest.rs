@@ -721,6 +721,9 @@ struct State {
     /// after the pointer only passed over a window is not the person taking it
     /// over from an agent (agent.rs, `person_takes_over`).
     focus_at: Instant,
+    /// The windows that had the keyboard, the last one first: where it goes back to when the one that has it
+    /// closes or is put away (the one below it, not the one that leads).
+    focus_history: Vec<usize>,
     /// The last new window given your keyboard, the one that had it before,
     /// and when: a dialog that says only afterwards whose it is (a portal's)
     /// gives it back if it is of the program the agent works with.
@@ -1070,6 +1073,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         held: None,
         focus: None,
         focus_at: Instant::now(),
+        focus_history: Vec::new(),
         focus_given: None,
         on_screen: 0,
         host_focus: true,
@@ -1768,7 +1772,7 @@ impl State {
             // first in the order, which may be on another workspace: it had
             // the keys, unseen, and the next Super+M put it away too—.
             let monitor = layers::shown(slot).map(|(m, _)| m);
-            let next = self.order.iter().copied().find(|s| *s != slot && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref()));
+            let next = self.last_used_on(slot, monitor.as_ref()).or_else(|| self.order.iter().copied().find(|s| *s != slot && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref())));
             self.set_focus(next);
         } else if !yes {
             self.set_focus(Some(slot));
@@ -2104,6 +2108,11 @@ impl State {
         self.focus = slot.filter(|s| self.slots.get(*s).is_some_and(Option::is_some));
         if self.focus != before {
             self.focus_at = Instant::now();
+        }
+        if let Some(s) = self.focus {
+            self.focus_history.retain(|k| *k != s);
+            self.focus_history.insert(0, s);
+            self.focus_history.truncate(64);
         }
         // Active: the one with your keyboard, and the one the agent types in
         // (agent.rs, `kb_slot`).
@@ -3362,6 +3371,16 @@ impl State {
         }
     }
 
+    /// Where the keyboard goes back to when `gone` leaves the monitor: the one that had it last and is seen on
+    /// that monitor, and not the first of the order, which is the layout's (the leader): with a terminal
+    /// under a program that closes, the terminal is what is left, not another window put first.
+    fn last_used_on(&self, gone: usize, monitor: Option<&String>) -> Option<usize> {
+        let monitor = monitor?;
+        last_used(&self.focus_history, gone, |s| {
+            self.slots.get(s).and_then(Option::as_ref).is_some_and(|w| !w.unmapped && !w.minimized) && layers::shown(s).is_some_and(|(m, _)| &m == monitor)
+        })
+    }
+
     fn forget(&mut self, toplevel: &Toplevel) {
         self.waiting.retain(|(t, _)| t != toplevel);
         let Some(slot) = self.slots.iter().position(|w| w.as_ref().is_some_and(|w| &w.toplevel == toplevel)) else { return };
@@ -3379,7 +3398,7 @@ impl State {
         let back_to = parent.and_then(|p| self.window_of(&p)).filter(|s| *s != slot).or_else(|| {
             let screen = self.slots[slot].as_ref().map(|w| w.screen);
             self.order.iter().copied().find(|s| *s != slot && self.slots[*s].as_ref().is_some_and(|w| w.fullscreen && Some(w.screen) == screen))
-        }).or_else(|| self.order.iter().copied().find(|s| *s != slot && monitor.is_some() && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref())));
+        }).or_else(|| self.last_used_on(slot, monitor.as_ref())).or_else(|| self.order.iter().copied().find(|s| *s != slot && monitor.is_some() && layers::shown(*s).is_some_and(|(m, _)| Some(&m) == monitor.as_ref())));
         crate::a11y_tree::forget(self.pid_of(slot), slot);
         if let Some(w) = self.slots[slot].take() {
             self.thumb_closed(&w.listed.identifier());
@@ -3389,6 +3408,7 @@ impl State {
             }
         }
         self.order.retain(|s| *s != slot);
+        self.focus_history.retain(|s| *s != slot);
         for (_, h) in self.toplevel_handles.iter().filter(|(s, _)| *s == slot) {
             h.closed();
         }
@@ -5864,8 +5884,26 @@ fn window_line(r: [i32; 4], app: &str, title: &str) -> String {
     format!("window {} {} {} {} {}\t{}\n", r[0], r[1], r[2], r[3], one_line(app), one_line(title))
 }
 
+/// The window that had the keyboard last, other than `gone`, among those `usable` says are seen where it was.
+fn last_used(history: &[usize], gone: usize, usable: impl Fn(usize) -> bool) -> Option<usize> {
+    history.iter().copied().find(|s| *s != gone && usable(*s))
+}
+
 #[cfg(test)]
 mod tests {
+    /// A program closes over a terminal that was under it, and Zen, put first by the layout, was below the terminal:
+    /// the keyboard goes back to the terminal, the one used last, not to the one that leads.
+    #[test]
+    fn the_keyboard_goes_back_to_the_window_used_last() {
+        // Used: Zen (0), then the terminal (1), then the program (2) that closes now.
+        let history = [2, 1, 0];
+        assert_eq!(super::last_used(&history, 2, |_| true), Some(1));
+        // Not the one that is not seen on that monitor, nor the one gone.
+        assert_eq!(super::last_used(&history, 2, |s| s != 1), Some(0));
+        assert_eq!(super::last_used(&history, 2, |_| false), None);
+        assert_eq!(super::last_used(&[], 2, |_| true), None);
+    }
+
     use super::follow_monitors;
     use super::{monitor_line, turn_line, window_line};
 
