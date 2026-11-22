@@ -38,6 +38,12 @@ the open windows without closing anything.
 
 # What's new
 
+- **Two things the session scene learns** (0.6.34): `pleamar-wm --say wm "emit layout_set N"`
+  gives the monitor under the mouse a layout by its number (0 leader, 1 columns, 2 rows,
+  3 grid, 4 leader-right, 5 scrolling, 6 marea, 7 fractal, 8 free), which is how Marea's
+  finder applies the one you pick (thanks @Guilherme4Colamarco); and a dialog or a window
+  floated by a rule can be carried over another monitor, follows the mouse there and stays
+  where it is let go (thanks @natepayn3).
 - **X11 games draw on the graphics card, and fullscreen is seen** (0.6.33): XWayland
   started before the card was offered to programs, so it ran without it (no DRI3,
   GL in software) and games through Proton were stuck around 20 fps. It now starts
