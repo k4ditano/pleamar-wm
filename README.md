@@ -38,6 +38,13 @@ the open windows without closing anything.
 
 # What's new
 
+- **The file dialogs are Sonda's, if it is installed** (0.6.36): `pleamar-portals.conf` now says
+  `FileChooser=sonda;gtk;`, so a program's «Open» and «Save as» get the Finder of Bahía
+  when `sonda.portal` is installed, and GTK's dialog when it is not or does not answer. Before,
+  `default=gtk` was the only line for files and Sonda's was never asked. Update the file
+  (`pleamar-update --session` puts it in `/usr/share/xdg-desktop-portal`, with sudo) and restart
+  `xdg-desktop-portal` (`systemctl --user restart xdg-desktop-portal`); Firefox also needs
+  `widget.use-xdg-desktop-portal.file-picker=1`.
 - **Closing a window gives the keyboard to the one you used last** (0.6.35): with a terminal
   maximized under a program that you close (Telegram over a terminal, with a browser below
   both), the keyboard went to the first window of the layout's order, which could be the
