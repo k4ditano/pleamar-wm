@@ -334,6 +334,10 @@ the open windows without closing anything.
 - **Qt programs get their theme** (0.3.6): the session reads your UWSM
   environment, as Hyprland does. And a program that asks to come forward
   without you behind it asks for attention instead.
+- **A click on a tray icon brings its window back** (0.6.37, with pleamar
+  0.8.0-exp.46 and `--features exp`): the icon, or «Open» from its menu, hands
+  the program a token first, and its window comes forward with the keyboard,
+  even put away or on another workspace.
 
 Every release, with what changed: [Releases].
 
