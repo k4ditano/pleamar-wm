@@ -781,6 +781,9 @@ struct State {
     activation: XdgActivationState,
     /// The windows asking for attention (see `request_activation`), until they get the keyboard.
     urgent: std::collections::HashSet<usize>,
+    /// The tokens the scene's tray handed a program right before a click of the person's on its
+    /// icon or its menu, and when: the window that comes with one comes forward (`request_activation`).
+    tray_tokens: Vec<(String, Instant)>,
     primary: PrimarySelectionState,
     _wlr_data_control: WlrDataControlState,
     _ext_data_control: ExtDataControlState,
@@ -913,6 +916,30 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
             ChannelEvent::Closed => state.quit = true,
         })
         .map_err(|e| e.to_string())?;
+    // The scene's tray, before a click on an icon or its menu, asks for a token to hand the
+    // program (pleamar's `provide_activation_token`): made here, where the tokens are known.
+    #[cfg(pleamar_activation)]
+    {
+        let (token_tx, token_rx) = channel::channel::<std::sync::mpsc::Sender<String>>();
+        event_loop
+            .handle()
+            .insert_source(token_rx, |event, _, state: &mut State| {
+                if let ChannelEvent::Msg(answer) = event {
+                    let (token, _) = state.activation.create_external_token(None);
+                    let token = token.to_string();
+                    state.tray_tokens.retain(|(_, at)| at.elapsed() < TRAY_TOKEN_LIFE);
+                    state.tray_tokens.push((token.clone(), Instant::now()));
+                    let _ = answer.send(token);
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        let token_tx = std::sync::Mutex::new(token_tx);
+        pleamar::provide_activation_token(Box::new(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            token_tx.lock().ok()?.send(tx).ok()?;
+            rx.recv_timeout(Duration::from_millis(500)).ok()
+        }));
+    }
 
     dh.create_global::<State, ZwlrForeignToplevelManagerV1, _>(3, ());
     // What is behind a program's surface, blurred where it asks (Marea's glass).
@@ -1001,6 +1028,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
         popups: PopupManager::default(),
         activation: XdgActivationState::new::<State>(&dh),
         urgent: std::collections::HashSet::new(),
+        tray_tokens: Vec::new(),
         _wlr_data_control: WlrDataControlState::new::<State, _>(&dh, Some(&primary), |_| true),
         _ext_data_control: ExtDataControlState::new::<State, _>(&dh, Some(&primary), |_| true),
         primary,
@@ -5419,15 +5447,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, usize> for State {
     fn request(state: &mut Self, _: &Client, handle: &ZwlrForeignToplevelHandleV1, request: toplevel_handle::Request, slot: &usize, _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
         match request {
             // Given the keyboard, a window put away comes back.
-            toplevel_handle::Request::Activate { .. } => {
-                // Asked for, it is seen: its monitor shows its workspace.
-                state.tell(NestEvent::Reveal(*slot));
-                if state.slots.get(*slot).and_then(Option::as_ref).is_some_and(|w| w.minimized) {
-                    state.set_minimized(*slot, false);
-                } else {
-                    state.set_focus(Some(*slot));
-                }
-            }
+            toplevel_handle::Request::Activate { .. } => state.bring_forward(*slot),
             toplevel_handle::Request::SetMinimized => state.set_minimized(*slot, true),
             toplevel_handle::Request::UnsetMinimized => state.set_minimized(*slot, false),
             toplevel_handle::Request::Close => {
@@ -5511,6 +5531,18 @@ impl XdgActivationHandler for State {
     }
 
     fn request_activation(&mut self, token: XdgActivationToken, data: XdgActivationTokenData, surface: WlSurface) {
+        // With a token the tray handed it right before a click of the person's on its icon or
+        // its menu («Open Telegram»): it is the person asking. Put away, it comes back; on
+        // another workspace, that one is shown; and it gets the keyboard.
+        let from_tray = self.tray_tokens.iter().position(|(t, at)| *t == *token && at.elapsed() < TRAY_TOKEN_LIFE);
+        if let Some(k) = from_tray {
+            self.tray_tokens.remove(k);
+            if let Some(slot) = self.window_of(&surface) {
+                self.bring_forward(slot);
+            }
+            self.activation.remove_token(&token);
+            return;
+        }
         // A program the agent just opened asking to come forward (Chrome's
         // new window; Discord, already running, shown again): to the
         // agent's monitor, and your keyboard stays where it is.
@@ -5541,8 +5573,7 @@ impl XdgActivationHandler for State {
         let yours = !self.host_focus || (data.client_id.is_some() && data.client_id == focused_client);
         if data.timestamp.elapsed() < Duration::from_secs(10) && yours {
             if let Some(slot) = self.window_of(&surface) {
-                self.tell(NestEvent::Reveal(slot));
-                self.set_focus(Some(slot));
+                self.bring_forward(slot);
             }
         } else if let Some(slot) = self.window_of(&surface).filter(|s| Some(*s) != self.focus) {
             // Asking with nothing of yours behind it —a message arrived while
@@ -5553,6 +5584,23 @@ impl XdgActivationHandler for State {
             }
         }
         self.activation.remove_token(&token);
+    }
+}
+
+/// How long a token the tray handed a program is good for: what a program takes to show its
+/// window after the click, with room to spare.
+const TRAY_TOKEN_LIFE: Duration = Duration::from_secs(10);
+
+impl State {
+    /// Asked for by the person (a dock, the tray, a link of the program they are in): seen, its
+    /// monitor showing its workspace; put away, back; and with the keyboard.
+    fn bring_forward(&mut self, slot: usize) {
+        self.tell(NestEvent::Reveal(slot));
+        if self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| w.minimized) {
+            self.set_minimized(slot, false);
+        } else {
+            self.set_focus(Some(slot));
+        }
     }
 }
 

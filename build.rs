@@ -9,22 +9,32 @@
 //!
 //! With the feature and another pleamar, the build stops here and says why, instead of failing
 //! later on names that pleamar does not have. Without the feature this does nothing.
+//!
+//! With or without it, `activation = true` there (pleamar 0.8.0-exp.46 on) turns on
+//! `pleamar_activation`: the tokens the tray hands a program before a click (see nest.rs).
 
 fn main() {
     println!("cargo:rerun-if-changed=../pleamar/Cargo.toml");
+    println!("cargo::rustc-check-cfg=cfg(pleamar_activation)");
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pleamar/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap_or_default();
+    let says = |key: &str| {
+        let mut inside = false;
+        text.lines().map(str::trim).any(|line| {
+            if line.starts_with('[') {
+                inside = line == "[package.metadata.pleamar-wm]";
+                return false;
+            }
+            inside && line.split_once('=').is_some_and(|(k, v)| k.trim() == key && v.trim() == "true")
+        })
+    };
+    if says("activation") {
+        println!("cargo:rustc-cfg=pleamar_activation");
+    }
     if std::env::var_os("CARGO_FEATURE_EXP").is_none() {
         return;
     }
-    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pleamar/Cargo.toml");
-    let text = std::fs::read_to_string(&manifest).unwrap_or_default();
-    let mut inside = false;
-    let marked = text.lines().map(str::trim).any(|line| {
-        if line.starts_with('[') {
-            inside = line == "[package.metadata.pleamar-wm]";
-            return false;
-        }
-        inside && line.split_once('=').is_some_and(|(k, v)| k.trim() == "desk" && v.trim() == "true")
-    });
+    let marked = says("desk");
     if !marked {
         panic!(
             "\n\n`--features exp` needs the experimental pleamar, 0.8.0-exp.22 or newer, beside pleamar-wm ({}): \
