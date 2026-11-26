@@ -64,6 +64,9 @@ fn main() {
             let _ = tx.send(m);
         }))
     });
+    // On the way out its compositor stops and takes its socket with it (a session and headless say their
+    // own, which end the same way).
+    pleamar::provide_before_quit(Box::new(nest::shutdown));
     // `pleamar-wm session scene.plm [options]`: a session of its own, from a
     // TTY, without a compositor underneath. Otherwise, pleamar as ever.
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -278,6 +281,7 @@ fn main() {
             if own.contains("pleamar-headless-") {
                 let _ = std::fs::remove_dir_all(&own);
             }
+            nest::shutdown();
         }));
         pleamar::provide_platform(Box::new(headless::Headless));
         let mut options = vec!["--scene".to_owned(), scene, "--no-hud".to_owned()];
@@ -298,6 +302,7 @@ fn main() {
             layers::stop_all();
             nest::stop_launched();
             nest::stop_clients();
+            nest::shutdown();
         }));
         pleamar::provide_platform(Box::new(session::Session));
         // Before the scene (and its first look at the portal).

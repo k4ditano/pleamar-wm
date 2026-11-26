@@ -865,15 +865,60 @@ struct State {
 pub fn start(max: usize, to_render: Sender<ToRender>) -> Option<channel::Sender<ToNest>> {
     let (tx, rx) = channel::channel::<ToNest>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     std::thread::Builder::new()
         .name("windows".into())
         .spawn(move || {
             if let Err(e) = run(max, to_render, rx, ready_tx) {
                 eprintln!("windows · the compositor stopped: {e}");
             }
+            // Gone (its socket with it, as the loop let go of it): what the scene starts from now on is
+            // not sent to a display with nobody behind it.
+            forget_display();
+            let _ = done_tx.send(());
         })
         .ok()?;
-    ready_rx.recv_timeout(Duration::from_secs(6)).ok().flatten().map(|()| tx)
+    let tx = ready_rx.recv_timeout(Duration::from_secs(6)).ok().flatten().map(|()| tx)?;
+    *RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((tx.clone(), done_rx));
+    Some(tx)
+}
+
+/// The compositor's thread, for `shutdown`: how to tell it to stop, and how it says it has.
+static RUNNING: Mutex<Option<(channel::Sender<ToNest>, std::sync::mpsc::Receiver<()>)>> = Mutex::new(None);
+/// Its socket's name (`pleamar-N`), once it has one.
+static SOCKET_NAME: Mutex<Option<String>> = Mutex::new(None);
+/// How long the way out waits for the compositor to stop before taking its socket away itself.
+const SHUTDOWN_PATIENCE: Duration = Duration::from_millis(600);
+
+/// On the way out (pleamar's `quit`, a scene that ends or a SIGTERM): the compositor is told to stop and,
+/// for a moment at most, waited for. Its thread was never stopped before: the process ended under it, the
+/// socket's `Drop` never ran, and `pleamar-N`, `pleamar-N.lock` and the folder `pleamar-pleamar-N` stayed with
+/// nobody behind them. A program that still had that display (one started from Fhinder's window, which runs
+/// a compositor of its own) found nobody there, or, once another compositor took the number, the wrong one.
+/// If it has not stopped in time, the two files are taken away here. Killed outright (SIGKILL), nothing can
+/// be done; the next compositor that takes the number clears them (wayland-server does, its lock being free).
+pub fn shutdown() {
+    let running = RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    let mut stopped = false;
+    if let Some((tx, done)) = running {
+        let _ = tx.send(ToNest::Quit);
+        stopped = done.recv_timeout(SHUTDOWN_PATIENCE).is_ok();
+    }
+    let Some(name) = SOCKET_NAME.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() else { return };
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    if !stopped {
+        let _ = std::fs::remove_file(format!("{dir}/{name}"));
+        let _ = std::fs::remove_file(format!("{dir}/{name}.lock"));
+    }
+    // Where the scenes it started listened, and the mouse was told (see `launch`): ours, by its name.
+    let _ = std::fs::remove_dir_all(format!("{dir}/pleamar-{name}"));
+}
+
+/// What the scene starts gets the display this process itself was given again (the one it is nested in,
+/// or none), not this compositor's, which is gone.
+fn forget_display() {
+    pleamar::set_child_env("WAYLAND_DISPLAY", std::env::var("WAYLAND_DISPLAY").ok().as_deref());
+    pleamar::set_child_env("DISPLAY", std::env::var("DISPLAY").ok().as_deref());
 }
 
 fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std::sync::mpsc::Sender<Option<()>>) -> Result<(), String> {
@@ -889,6 +934,7 @@ fn run(max: usize, to_render: Sender<ToRender>, rx: Channel<ToNest>, ready: std:
             ListeningSocketSource::with_name(&name).ok().map(|s| (s, name))
         })
         .ok_or("no free socket name")?;
+    *SOCKET_NAME.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(socket.clone());
     event_loop
         .handle()
         .insert_source(source, |stream, _, state: &mut State| {

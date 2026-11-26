@@ -338,6 +338,10 @@ the open windows without closing anything.
   0.8.0-exp.46 and `--features exp`): the icon, or «Open» from its menu, hands
   the program a token first, and its window comes forward with the keyboard,
   even put away or on another workspace.
+- **No socket left behind** (0.6.38): on the way out the compositor stops and
+  takes `pleamar-N`, its `.lock` and `pleamar-pleamar-N` with it, so a program
+  that still has that display is not sent to a compositor that is gone, or to
+  another one that took the number.
 
 Every release, with what changed: [Releases].
 
