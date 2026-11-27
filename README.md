@@ -346,6 +346,13 @@ the open windows without closing anything.
   that says `maximized:` on a `window` has its program told so, so its own button
   says «restore» and its corners go square; its own «maximize» or «restore»
   reaches the scene (`window_maximize`) only when it asks for what it is not.
+- **What a program asks of its own window is in the log** (0.6.40): its own «maximize»,
+  «restore», fullscreen and minimize, Wayland's or X11's, each leave a line —`windows ·
+  window 3 «com.example.App» asks to be maximized: the scene is told (window_maximize)`—,
+  so a button whose request never comes can be told from one the scene does nothing with.
+  (A program that draws its own buttons draws only those the desktop's settings name:
+  Chromium and Electron, by GTK's `gtk-decoration-layout`, which under Wayland is GNOME's
+  `button-layout`, `appmenu:close` unless set; with it, a lone «×».)
 
 Every release, with what changed: [Releases].
 
