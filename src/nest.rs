@@ -2100,11 +2100,26 @@ impl State {
     /// created, to be sure— is only answered.
     pub(crate) fn maximize_asked(&mut self, slot: usize, more: bool) -> bool {
         let now = self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| w.maximized);
+        let what = if more { "to be maximized" } else { "to be restored" };
         if now == more {
+            self.heard(Some(slot), what, "it already is: only answered");
             return false;
         }
+        self.heard(Some(slot), what, "the scene is told (window_maximize)");
         self.asked("window_maximize", slot);
         true
+    }
+
+    /// What a program asks of its own window —maximized, restored, fullscreen, minimized— and
+    /// what came of it, in the session's log: a button that does nothing can be told from one
+    /// whose request never comes (a program that draws its own buttons only draws the ones the
+    /// desktop's settings name).
+    pub(crate) fn heard(&self, slot: Option<usize>, what: &str, came: &str) {
+        let who = match slot.and_then(|s| Some((s, self.slots.get(s)?.as_ref()?))) {
+            Some((s, w)) => format!("window {s} «{}»{}", w.app, if matches!(w.toplevel, Toplevel::X11(_)) { " (X11)" } else { "" }),
+            None => "a window not laid out yet".to_string(),
+        };
+        println!("windows · {who} asks {what}: {came}");
     }
 
     fn set_fullscreen(&mut self, slot: usize, yes: bool) {
@@ -4795,11 +4810,13 @@ impl XdgShellHandler for State {
     fn fullscreen_request(&mut self, surface: ToplevelSurface, output: Option<WlOutput>) {
         let Some(slot) = self.window_of(surface.wl_surface()) else {
             // Not in a slot yet (waiting): it is answered all the same.
+            self.heard(None, "to be fullscreen", "only answered");
             if surface.is_initial_configure_sent() {
                 surface.send_configure();
             }
             return;
         };
+        self.heard(Some(slot), "to be fullscreen", "it is");
         if let Some(k) = output.and_then(|o| self.outputs.iter().position(|x| x.owns(&o))) {
             self.handle(ToNest::Send(slot, k));
         }
@@ -4808,8 +4825,12 @@ impl XdgShellHandler for State {
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
         match self.window_of(surface.wl_surface()) {
-            Some(slot) => self.set_fullscreen(slot, false),
+            Some(slot) => {
+                self.heard(Some(slot), "to leave fullscreen", "it does");
+                self.set_fullscreen(slot, false);
+            }
             None if surface.is_initial_configure_sent() => {
+                self.heard(None, "to leave fullscreen", "only answered");
                 surface.send_configure();
             }
             None => {}
@@ -4819,6 +4840,7 @@ impl XdgShellHandler for State {
     /// Its own minimize button: the scene says what it does.
     fn minimize_request(&mut self, surface: ToplevelSurface) {
         if let Some(slot) = self.window_of(surface.wl_surface()) {
+            self.heard(Some(slot), "to be minimized", "the scene is told (window_minimize)");
             self.asked("window_minimize", slot);
         }
     }
@@ -4833,8 +4855,11 @@ impl XdgShellHandler for State {
         if surface.is_initial_configure_sent() {
             surface.send_configure();
         }
-        if let Some(slot) = self.window_of(surface.wl_surface()) {
-            self.maximize_asked(slot, true);
+        match self.window_of(surface.wl_surface()) {
+            Some(slot) => {
+                self.maximize_asked(slot, true);
+            }
+            None => self.heard(None, "to be maximized", "only answered"),
         }
     }
 
@@ -4842,8 +4867,11 @@ impl XdgShellHandler for State {
         if surface.is_initial_configure_sent() {
             surface.send_configure();
         }
-        if let Some(slot) = self.window_of(surface.wl_surface()) {
-            self.maximize_asked(slot, false);
+        match self.window_of(surface.wl_surface()) {
+            Some(slot) => {
+                self.maximize_asked(slot, false);
+            }
+            None => self.heard(None, "to be restored", "only answered"),
         }
     }
 

@@ -114,7 +114,8 @@ fn socket_of(record: &Path, run: &Path, limit: Duration) -> Option<PathBuf> {
 
 /// Runs `body` against a session, or says there is no card and passes. The session is stopped
 /// (this child only, by its pid) and its directory removed, whatever `body` does.
-fn with_session(name: &str, body: impl FnOnce(UnixStream, &Path) + std::panic::UnwindSafe) {
+/// `body` gets the session's log and what it printed (its record, with the `windows ·` lines).
+fn with_session(name: &str, body: impl FnOnce(UnixStream, &Path, &Path) + std::panic::UnwindSafe) {
     let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -126,7 +127,7 @@ fn with_session(name: &str, body: impl FnOnce(UnixStream, &Path) + std::panic::U
             eprintln!("no card to paint with: not tried");
             return;
         };
-        body(UnixStream::connect(&socket).unwrap(), &log);
+        body(UnixStream::connect(&socket).unwrap(), &log, &record);
     });
     let _ = wm.kill();
     let _ = wm.wait();
@@ -138,7 +139,7 @@ fn with_session(name: &str, body: impl FnOnce(UnixStream, &Path) + std::panic::U
 
 #[test]
 fn a_program_is_told_it_is_maximized_and_its_own_buttons_reach_the_scene_only_when_they_change_something() {
-    with_session("maxi", |stream, _log| {
+    with_session("maxi", |stream, _log, record| {
         let conn = Connection::from_socket(stream).unwrap();
         let (globals, mut queue) = registry_queue_init::<App>(&conn).unwrap();
         let qh = queue.handle();
@@ -149,6 +150,7 @@ fn a_program_is_told_it_is_maximized_and_its_own_buttons_reach_the_scene_only_wh
         let xdg = base.get_xdg_surface(&surface, &qh, ());
         let top = xdg.get_toplevel(&qh, ());
         top.set_title("maxi".into());
+        top.set_app_id("maxi.test".into());
         surface.commit();
         // Until `until` holds or a few seconds go by: the scene answers on its next round.
         let mut wait = |app: &mut App, until: &dyn Fn(&App) -> bool, secs: u64| {
@@ -181,5 +183,19 @@ fn a_program_is_told_it_is_maximized_and_its_own_buttons_reach_the_scene_only_wh
         wait(&mut app, &|a| a.maximized == Some(false) && a.size == (600, 400), 10);
         assert_eq!(app.maximized, Some(false), "restored by the scene, and not told so");
         assert_eq!(app.size, (600, 400));
+        // Each of them in the session's log, with what came of it: a button whose request never
+        // comes can be told from one the scene does nothing with.
+        let printed = std::fs::read_to_string(record).unwrap_or_default();
+        let said: Vec<&str> = printed.lines().filter(|l| l.contains("«maxi.test» asks")).collect();
+        let want = [
+            "asks to be restored: it already is: only answered",
+            "asks to be maximized: the scene is told (window_maximize)",
+            "asks to be maximized: it already is: only answered",
+            "asks to be restored: the scene is told (window_maximize)",
+        ];
+        assert_eq!(said.len(), want.len(), "one line for each request: {said:#?}");
+        for (line, w) in said.iter().zip(want) {
+            assert!(line.starts_with("windows · window ") && line.ends_with(w), "{line:?} should end with {w:?}");
+        }
     });
 }

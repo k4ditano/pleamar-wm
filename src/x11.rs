@@ -492,28 +492,37 @@ impl XwmHandler for State {
 
     fn fullscreen_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
+            self.heard(Some(slot), "to be fullscreen", "it is");
             self.set_fullscreen(slot, true);
         } else if !self.x11_fs_asked.contains(&window) {
             // Asked before it has a slot: it gets it when it has one.
+            self.heard(None, "to be fullscreen (X11)", "it will be, once laid out");
             self.x11_fs_asked.push(window);
         }
     }
 
     fn minimize_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
+            self.heard(Some(slot), "to be minimized", "the scene is told (window_minimize)");
             self.asked("window_minimize", slot);
         }
     }
 
     fn maximize_request(&mut self, _: XwmId, window: X11Surface) {
-        if let Some(slot) = self.x11_slot(&window) {
-            self.maximize_asked(slot, true);
+        match self.x11_slot(&window) {
+            Some(slot) => {
+                self.maximize_asked(slot, true);
+            }
+            None => self.heard(None, "to be maximized (X11)", "not heard: it has no window yet"),
         }
     }
 
     fn unmaximize_request(&mut self, _: XwmId, window: X11Surface) {
-        if let Some(slot) = self.x11_slot(&window) {
-            self.maximize_asked(slot, false);
+        match self.x11_slot(&window) {
+            Some(slot) => {
+                self.maximize_asked(slot, false);
+            }
+            None => self.heard(None, "to be restored (X11)", "not heard: it has no window yet"),
         }
     }
 
@@ -525,6 +534,7 @@ impl XwmHandler for State {
 
     fn unfullscreen_request(&mut self, _: XwmId, window: X11Surface) {
         if let Some(slot) = self.x11_slot(&window) {
+            self.heard(Some(slot), "to leave fullscreen", "it does");
             self.set_fullscreen(slot, false);
         } else {
             self.x11_fs_asked.retain(|w| w != &window);
