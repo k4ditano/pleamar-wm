@@ -1,0 +1,12 @@
+language 0.12
+// What tests/maximize_state.rs looks at: the scene maximizes window 0 when its program asks (`window_maximize`),
+// as a desktop's green light would, and says so with `maximized:`; the program is told in its configure.
+scene Maximize {
+    surface { size: full, full }
+    windows win max 2
+    fact big = 0
+    event window_maximize
+    box { from: 0, 0; size: 1920, 1080; color: #102030 }
+    window win.0 { at: 100, 100; size: 300, 200; ask: if(big, 1000, 600), if(big, 700, 400); maximized: big }
+    on window_maximize(v) while v == 0 { big = if(big, 0, 1) }
+}

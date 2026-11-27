@@ -237,6 +237,32 @@ impl Toplevel {
         }
     }
 
+    /// Told it is maximized, or that it is not: the scene lays it out either way (`maximized:`
+    /// on its `window`), and the program draws its own button and corners accordingly.
+    fn set_maximized(&self, yes: bool) {
+        match self {
+            Toplevel::Xdg(t) => {
+                let changed = t.with_pending_state(|s| {
+                    let has = s.states.contains(xdg_toplevel::State::Maximized);
+                    if yes && !has {
+                        s.states.set(xdg_toplevel::State::Maximized);
+                    } else if !yes && has {
+                        s.states.unset(xdg_toplevel::State::Maximized);
+                    }
+                    has != yes
+                });
+                if changed && t.is_initial_configure_sent() {
+                    t.send_pending_configure();
+                }
+            }
+            Toplevel::X11(x) => {
+                if x.is_maximized() != yes {
+                    let _ = x.set_maximized(yes);
+                }
+            }
+        }
+    }
+
     fn set_activated(&self, yes: bool) {
         match self {
             Toplevel::Xdg(t) => {
@@ -308,6 +334,9 @@ struct Window {
     /// Its entry in ext-foreign-toplevel-list (what a screen share lists).
     listed: ForeignToplevelHandle,
     fullscreen: bool,
+    /// Maximized, as the scene says (`ToNest::Maximized`): what its program is told, and
+    /// what its own «maximize» and «restore» are measured against.
+    maximized: bool,
     /// Fullscreen because it covered a monitor (an X11 game that does not
     /// say so), not because it asked: back when it asks for a smaller size.
     auto_full: bool,
@@ -1626,6 +1655,8 @@ impl State {
                 let now = self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| w.fullscreen);
                 self.set_fullscreen(slot, !now);
             }
+            #[cfg(feature = "exp")]
+            ToNest::Maximized(slot, yes) => self.set_maximized(slot, yes),
             ToNest::OnScreen(screen) => {
                 if self.on_screen != screen {
                     self.on_screen = screen;
@@ -1810,6 +1841,9 @@ impl State {
         }
         if w.is_some_and(|w| w.fullscreen) {
             out.extend((toplevel_handle::State::Fullscreen as u32).to_ne_bytes());
+        }
+        if w.is_some_and(|w| w.maximized) {
+            out.extend((toplevel_handle::State::Maximized as u32).to_ne_bytes());
         }
         out
     }
@@ -2041,6 +2075,36 @@ impl State {
     /// A window to fullscreen or back: the program is told (it hides its own
     /// bars), and the scene, which decides where it goes. The monitors are
     /// told which have one.
+    /// The scene has that window maximized, or no longer: its program is told in its next
+    /// configure, and so is whoever lists the windows.
+    fn set_maximized(&mut self, slot: usize, yes: bool) {
+        let Some(Some(w)) = self.slots.get_mut(slot) else { return };
+        if w.maximized == yes {
+            return;
+        }
+        w.maximized = yes;
+        w.toplevel.set_maximized(yes);
+        for (s, h) in &self.toplevel_handles {
+            if *s == slot {
+                h.state(self.states(slot));
+                h.done();
+            }
+        }
+    }
+
+    /// A program's own «maximize» (`more`) or «restore»: the scene is told
+    /// (`window_maximize`) only when it asks for what it is not, by what the scene last said
+    /// (`maximized:`). Asking for what it already is —Electron says «unmaximize» as it is
+    /// created, to be sure— is only answered.
+    pub(crate) fn maximize_asked(&mut self, slot: usize, more: bool) -> bool {
+        let now = self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| w.maximized);
+        if now == more {
+            return false;
+        }
+        self.asked("window_maximize", slot);
+        true
+    }
+
     fn set_fullscreen(&mut self, slot: usize, yes: bool) {
         let Some(Some(w)) = self.slots.get_mut(slot) else { return };
         w.auto_full = false;
@@ -3406,7 +3470,7 @@ impl State {
         }
         self.outputs[screen.min(self.outputs.len() - 1)].enter(&surface);
         let listed = self.toplevel_list.new_toplevel::<State>(title.clone(), app.clone());
-        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, auto_full: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, translucent: false, rules: Vec::new(), was_at: 0, floated: false, home: None });
+        self.slots[slot] = Some(Window { toplevel, surface, title: title.clone(), app: app.clone(), geometry: [0, 0, 0, 0], sent: Vec::new(), told: Vec::new(), screen, shown: None, drew: Instant::now(), steady: Instant::now(), listed, fullscreen: false, maximized: false, auto_full: false, dialog: false, floating: false, ruled: None, own_frame: false, frame_ours: false, minimized: false, unmapped: false, translucent: false, rules: Vec::new(), was_at: 0, floated: false, home: None });
         self.order.push(slot);
         layers::set_private(slot, false);
         let program = (!app.is_empty()).then(|| crate::desktop::program(&app));
@@ -4758,20 +4822,27 @@ impl XdgShellHandler for State {
     }
 
     /// The layout is the scene's: a window that asks to be maximized, or
-    /// back, is answered where it is, and the scene is told
-    /// (`window_maximize`). It is never told it is maximized, so it asks
-    /// the same way each time.
+    /// back, is answered where it is, and the scene is told (`window_maximize`)
+    /// if it asks for what it is not. It is told it is maximized when the scene
+    /// says so (`maximized:` on its `window`); a scene that does not say it never
+    /// has one maximized, so its «maximize» reaches the scene each time, as before,
+    /// and its «restore» never comes.
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         if surface.is_initial_configure_sent() {
             surface.send_configure();
         }
         if let Some(slot) = self.window_of(surface.wl_surface()) {
-            self.asked("window_maximize", slot);
+            self.maximize_asked(slot, true);
         }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        XdgShellHandler::maximize_request(self, surface);
+        if surface.is_initial_configure_sent() {
+            surface.send_configure();
+        }
+        if let Some(slot) = self.window_of(surface.wl_surface()) {
+            self.maximize_asked(slot, false);
+        }
     }
 
     fn grab(&mut self, _: PopupSurface, _: WlSeat, _: Serial) {
