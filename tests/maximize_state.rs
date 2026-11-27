@@ -3,9 +3,9 @@
 //! maximized in its configure when the scene has it so. Before, every request was told as the same toggle
 //! and no program was ever told it was maximized, so its button always said «maximize». A screenless
 //! session (`pleamar-wm headless`) with `tests/maximize.plm`, which maximizes window 0 as a desktop would,
-//! and a minimal xdg-shell client in this file. Only with `--features exp` (pleamar 0.12 beside it); without
-//! a card to paint with the session says so and the test passes without trying, like the others.
-#![cfg(feature = "exp")]
+//! and a minimal xdg-shell client in this file. Only with a pleamar beside it that has `maximized:` (0.8.0-exp.51
+//! on, `pleamar_maximized`); without a card to paint with the session says so and the test passes without trying.
+#![cfg(pleamar_maximized)]
 
 use std::io::Read;
 use std::os::unix::net::UnixStream;

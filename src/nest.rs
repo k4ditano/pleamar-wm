@@ -239,6 +239,7 @@ impl Toplevel {
 
     /// Told it is maximized, or that it is not: the scene lays it out either way (`maximized:`
     /// on its `window`), and the program draws its own button and corners accordingly.
+    #[cfg_attr(not(pleamar_maximized), allow(dead_code))]
     fn set_maximized(&self, yes: bool) {
         match self {
             Toplevel::Xdg(t) => {
@@ -1655,7 +1656,7 @@ impl State {
                 let now = self.slots.get(slot).and_then(Option::as_ref).is_some_and(|w| w.fullscreen);
                 self.set_fullscreen(slot, !now);
             }
-            #[cfg(feature = "exp")]
+            #[cfg(pleamar_maximized)]
             ToNest::Maximized(slot, yes) => self.set_maximized(slot, yes),
             ToNest::OnScreen(screen) => {
                 if self.on_screen != screen {
@@ -2077,6 +2078,7 @@ impl State {
     /// told which have one.
     /// The scene has that window maximized, or no longer: its program is told in its next
     /// configure, and so is whoever lists the windows.
+    #[cfg_attr(not(pleamar_maximized), allow(dead_code))]
     fn set_maximized(&mut self, slot: usize, yes: bool) {
         let Some(Some(w)) = self.slots.get_mut(slot) else { return };
         if w.maximized == yes {

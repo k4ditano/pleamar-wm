@@ -11,11 +11,14 @@
 //! later on names that pleamar does not have. Without the feature this does nothing.
 //!
 //! With or without it, `activation = true` there (pleamar 0.8.0-exp.46 on) turns on
-//! `pleamar_activation`: the tokens the tray hands a program before a click (see nest.rs).
+//! `pleamar_activation`: the tokens the tray hands a program before a click (see nest.rs);
+//! and `maximized = true` (0.8.0-exp.51 on) `pleamar_maximized`: a scene's `maximized:` on a
+//! `window` tells its program it is maximized (`ToNest::Maximized`).
 
 fn main() {
     println!("cargo:rerun-if-changed=../pleamar/Cargo.toml");
     println!("cargo::rustc-check-cfg=cfg(pleamar_activation)");
+    println!("cargo::rustc-check-cfg=cfg(pleamar_maximized)");
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pleamar/Cargo.toml");
     let text = std::fs::read_to_string(&manifest).unwrap_or_default();
     let says = |key: &str| {
@@ -30,6 +33,9 @@ fn main() {
     };
     if says("activation") {
         println!("cargo:rustc-cfg=pleamar_activation");
+    }
+    if says("maximized") {
+        println!("cargo:rustc-cfg=pleamar_maximized");
     }
     if std::env::var_os("CARGO_FEATURE_EXP").is_none() {
         return;
