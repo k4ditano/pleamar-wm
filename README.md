@@ -342,7 +342,7 @@ the open windows without closing anything.
   takes `pleamar-N`, its `.lock` and `pleamar-pleamar-N` with it, so a program
   that still has that display is not sent to a compositor that is gone, or to
   another one that took the number.
-- **A program knows it is maximized** (with pleamar 0.12, `--features exp`): a scene
+- **A program knows it is maximized** (0.6.39, with pleamar 0.8.0-exp.51 or newer beside it): a scene
   that says `maximized:` on a `window` has its program told so, so its own button
   says «restore» and its corners go square; its own «maximize» or «restore»
   reaches the scene (`window_maximize`) only when it asks for what it is not.
